@@ -1,5 +1,46 @@
 import { useState, useEffect, useCallback } from "react";
 
+// ─── Storage compatibility shim ────────────────────────────────────────────────
+// window.storage only exists inside Claude.ai's Artifact preview. When this app
+// runs standalone (e.g. deployed on Vercel), we transparently fall back to
+// localStorage so every window.storage.get/set call in the app keeps working.
+if (typeof window !== "undefined" && !window.storage) {
+  window.storage = {
+    async get(key) {
+      try {
+        const raw = localStorage.getItem(key);
+        return raw === null ? null : { key, value: raw };
+      } catch {
+        return null;
+      }
+    },
+    async set(key, value) {
+      try {
+        localStorage.setItem(key, value);
+        return { key, value };
+      } catch {
+        return null;
+      }
+    },
+    async delete(key) {
+      try {
+        localStorage.removeItem(key);
+        return { key, deleted: true };
+      } catch {
+        return null;
+      }
+    },
+    async list(prefix) {
+      try {
+        const keys = Object.keys(localStorage).filter(k => !prefix || k.startsWith(prefix));
+        return { keys };
+      } catch {
+        return { keys: [] };
+      }
+    },
+  };
+}
+
 // ─── i18n ─────────────────────────────────────────────────────────────────────
 const T = {
   zh: {

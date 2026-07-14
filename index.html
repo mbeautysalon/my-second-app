@@ -1,10 +1,45 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-Hant">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>my-second-app</title>
+    <title>ES Online Course Platform</title>
+    <style>
+      /* CSS reset — this is what Claude's Artifact preview applies automatically.
+         Without it, browser default styles on body/button/input/table cause the
+         layout to look broken ("跑版") when deployed standalone. */
+      *, *::before, *::after {
+        box-sizing: border-box;
+      }
+      html, body {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family: system-ui, -apple-system, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
+        -webkit-font-smoothing: antialiased;
+        background: #FAFAFA;
+      }
+      button, input, select, textarea {
+        font-family: inherit;
+        font-size: inherit;
+        color: inherit;
+      }
+      button {
+        -webkit-appearance: none;
+        appearance: none;
+      }
+      table {
+        border-collapse: collapse;
+      }
+      a {
+        text-decoration: none;
+        color: inherit;
+      }
+      #root {
+        min-height: 100vh;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
