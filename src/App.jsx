@@ -313,19 +313,65 @@ const DEFAULT_ENROLLMENTS = []; // {id, courseId, studentId, payDate, totalSessi
 const DEFAULT_ATTENDANCE  = []; // {id, enrollmentId, courseId, date, dayIndex, type:"excused"|"absent"|"teacher_leave", note, recordedAt, recordedBy}
 
 // ─── Storage hook ─────────────────────────────────────────────────────────────
+// ─── Global save-sync tracker ──────────────────────────────────────────────────
+// Tracks which storage keys failed to save (after retry) so the UI can warn
+// the user instead of silently losing data.
+const _syncListeners = new Set();
+const _syncFailures = new Map(); // key -> { message, timestamp }
+function _notifySync() {
+  const snapshot = new Map(_syncFailures);
+  _syncListeners.forEach(fn => fn(snapshot));
+}
+function useSyncStatus() {
+  const [failures, setFailures] = useState(() => new Map(_syncFailures));
+  useEffect(() => {
+    _syncListeners.add(setFailures);
+    return () => _syncListeners.delete(setFailures);
+  }, []);
+  return failures;
+}
+
 function useStorage(key, def) {
   const [val, setVal] = useState(def);
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
+    let unsub = null;
+    let cancelled = false;
     (async () => {
-      try { const r = await window.storage.get(key); if (r?.value) setVal(JSON.parse(r.value)); } catch {}
-      setLoaded(true);
+      try { const r = await window.storage.get(key); if (!cancelled && r?.value) setVal(JSON.parse(r.value)); } catch (e) { console.error(`[Storage] Failed to load "${key}"`, e); }
+      if (!cancelled) setLoaded(true);
+      // If the storage backend supports real-time sync (Firestore does), subscribe
+      // so changes made on another device/tab are reflected here automatically.
+      if (window.storage.subscribe) {
+        unsub = window.storage.subscribe(key, (value) => {
+          if (cancelled) return;
+          try { if (value) setVal(JSON.parse(value)); } catch (e) { console.error(`[Storage] Failed to parse live update for "${key}"`, e); }
+        });
+      }
     })();
+    return () => { cancelled = true; if (unsub) unsub(); };
   }, [key]);
   const save = useCallback(async (v) => {
     const next = typeof v === "function" ? v(val) : v;
-    setVal(next);
-    try { await window.storage.set(key, JSON.stringify(next)); } catch {}
+    setVal(next); // update UI immediately (optimistic)
+    const payload = JSON.stringify(next);
+    let ok = false;
+    for (let attempt = 0; attempt < 2 && !ok; attempt++) {
+      if (attempt > 0) await new Promise(r => setTimeout(r, 700)); // brief retry delay
+      try {
+        const result = await window.storage.set(key, payload);
+        ok = !!result;
+      } catch (e) {
+        ok = false;
+      }
+    }
+    if (!ok) {
+      console.error(`[Storage] FAILED to save "${key}" after retry — this data has NOT persisted.`);
+      _syncFailures.set(key, { message: key, timestamp: Date.now() });
+    } else if (_syncFailures.has(key)) {
+      _syncFailures.delete(key);
+    }
+    _notifySync();
   }, [key, val]);
   return [val, save, loaded];
 }
