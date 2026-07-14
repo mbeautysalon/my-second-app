@@ -140,7 +140,7 @@ const T = {
     dirStatus:"帳號狀態", dirHasAccount:"已建立", dirNoAccount:"未建立",
     importDone:"{n} 個帳號已建立",
     stuDirList:"學生列表",
-    dirManualSessions:"手動完課數", dirRegYear:"加入年份",
+    dirManualSessions:"手動積分", dirRegYear:"加入年份",
     dirAddManual:"手動新增學生", dirEdit:"編輯", dirSave:"儲存",
     dirAgeDisplay:"歲", dirAgeFormat:"{current}（{year}：{join}加入）",
     // Student progress
@@ -259,7 +259,7 @@ const T = {
     dirStatus:"Account", dirHasAccount:"Created", dirNoAccount:"Not yet",
     importDone:"{n} account(s) created",
     stuDirList:"Student List",
-    dirManualSessions:"Manual Sessions", dirRegYear:"Join Year",
+    dirManualSessions:"Manual Points", dirRegYear:"Join Year",
     dirAddManual:"Add Student", dirEdit:"Edit", dirSave:"Save",
     dirAgeDisplay:"yrs", dirAgeFormat:"{current}（{year}: joined at {join}）",
     // Student progress
@@ -2392,7 +2392,7 @@ function StudentStats({ users, courses, absences, attendance, enrollments, lang 
       </div>
       <DateRangePicker lang={lang} dateFrom={dateFrom} dateTo={dateTo} setDateFrom={setDateFrom} setDateTo={setDateTo} allTime={allTime} setAllTime={setAllTime}/>
       {/* Medal banner */}
-      {stuMedalInfo&&(()=>{const{full,half,total:tot,current:cm,next:nm}=stuMedalInfo;const medal=cm||{icon:"🎯",zh:"尚無獎牌",en:"No medal yet",color:"#9E9E9E",bg:"#F5F5F5"};const prevT=cm?cm.sessions:0;const pct=nm?Math.min(100,Math.round(((tot-prevT)/(nm.sessions-prevT))*100)):100;const toNext=nm?Math.ceil(nm.sessions-tot):0;return(<div style={{background:medal.bg,border:`1px solid ${medal.color}44`,borderRadius:10,padding:"12px 16px",marginBottom:"1.25rem",display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}><span style={{fontSize:36,flexShrink:0}}>{medal.icon}</span><div style={{flex:1,minWidth:0}}><div style={{fontSize:14,fontWeight:700,color:medal.color}}>{lang==="zh"?medal.zh:medal.en}</div><div style={{fontSize:12,color:"#546E7A",marginTop:1}}>{lang==="zh"?"累積完課 ":"Total: "}<strong>{full}</strong>{lang==="zh"?"堂":" sessions"}{stuMedalInfo?.isConfirmed&&<span style={{fontSize:10,background:"#E8F5E9",color:"#2E7D32",borderRadius:3,padding:"1px 5px",marginLeft:4,fontWeight:600}}>✓ {lang==="zh"?"已確認":"Confirmed"}</span>}</div>{nm&&<div style={{marginTop:6}}><div style={{background:"#E0E0E0",borderRadius:99,height:5,overflow:"hidden",marginBottom:2}}><div style={{width:`${pct}%`,height:"100%",borderRadius:99,background:`linear-gradient(90deg,${medal.color},${nm.color})`}}/></div><div style={{fontSize:11,color:nm.color}}>{lang==="zh"?`距 ${nm.zh} 還差 ${toNext} 堂`:`${toNext} more to ${nm.en}`}</div></div>}</div></div>);})()}
+      {stuMedalInfo&&(()=>{const{full,half,total:tot,current:cm,next:nm}=stuMedalInfo;const medal=cm||{icon:"🎯",zh:"尚無獎牌",en:"No medal yet",color:"#9E9E9E",bg:"#F5F5F5"};const prevT=cm?cm.sessions:0;const pct=nm?Math.min(100,Math.round(((tot-prevT)/(nm.sessions-prevT))*100)):100;const toNext=nm?Math.ceil(nm.sessions-tot):0;return(<div style={{background:medal.bg,border:`1px solid ${medal.color}44`,borderRadius:10,padding:"12px 16px",marginBottom:"1.25rem",display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}><span style={{fontSize:36,flexShrink:0}}>{medal.icon}</span><div style={{flex:1,minWidth:0}}><div style={{fontSize:14,fontWeight:700,color:medal.color}}>{lang==="zh"?medal.zh:medal.en}</div><div style={{fontSize:12,color:"#546E7A",marginTop:1}}>{lang==="zh"?"累積積分 ":"Total: "}<strong>{full}</strong>{lang==="zh"?"點":" pts"}{stuMedalInfo?.isConfirmed&&<span style={{fontSize:10,background:"#E8F5E9",color:"#2E7D32",borderRadius:3,padding:"1px 5px",marginLeft:4,fontWeight:600}}>✓ {lang==="zh"?"已確認":"Confirmed"}</span>}</div>{nm&&<div style={{marginTop:6}}><div style={{background:"#E0E0E0",borderRadius:99,height:5,overflow:"hidden",marginBottom:2}}><div style={{width:`${pct}%`,height:"100%",borderRadius:99,background:`linear-gradient(90deg,${medal.color},${nm.color})`}}/></div><div style={{fontSize:11,color:nm.color}}>{lang==="zh"?`距 ${nm.zh} 還差 ${toNext} 點`:`${toNext} more to ${nm.en}`}</div></div>}</div></div>);})()}
       <StatCards {...stats} lang={lang}/>
       <div style={{fontSize:13,color:"#546E7A",marginBottom:8,fontWeight:500}}>{t.courseDetails}</div>
       {myCourses.length===0&&<p style={{color:"#9E9E9E",fontSize:13}}>—</p>}
@@ -3299,7 +3299,7 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
     t.dirStudentName, t.dirCnName, t.dirAge,
     lang==="zh"?"加入年":"Join Yr",
     t.dirRegDate, t.dirStartDate, t.dirDuration,
-    lang==="zh"?"完課數":"Sessions",
+    lang==="zh"?"積分":"Points",
     t.dirStatus, "",
   ];
 
@@ -3308,7 +3308,7 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
       {confirmDelDirId && <ConfirmModal title={lang==="zh"?"刪除學生資料":"Delete Student"} message={lang==="zh"?"確認刪除此學生的資料？":"Delete this student record?"} confirmLabel={lang==="zh"?"確認刪除":"Delete"} onConfirm={doDelDir} onCancel={()=>setConfirmDelDirId(null)} danger/>}
 
       {/* Header */}
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"1rem",flexWrap:"wrap",gap:8}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"0.6rem",flexWrap:"wrap",gap:8}}>
         <h3 style={{fontSize:16,fontWeight:500,color:"#172F39",margin:0}}>{t.studentDir} ({allStudents.length})</h3>
         <div style={{display:"flex",gap:7}}>
           <button onClick={()=>{setShowAddForm(!showAddForm);setEditingId(null);}} style={{background:showAddForm?"#546E7A":"#4CAF50",border:"none",borderRadius:7,color:"#fff",padding:"7px 14px",fontSize:12,cursor:"pointer"}}>
@@ -3318,6 +3318,14 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
             📋 {t.pasteFromExcel}
           </button>
         </div>
+      </div>
+      {/* Points rule note */}
+      <div style={{display:"inline-flex",alignItems:"center",gap:6,background:"#F5F5F5",border:"0.5px solid #E0E0E0",borderRadius:20,padding:"4px 12px",marginBottom:"1rem",fontSize:11,color:"#546E7A"}}>
+        <span style={{fontSize:12}}>🏅</span>
+        {lang==="zh"
+          ? <span>積分規則：25 分鐘 = <strong style={{color:"#1A6B8A"}}>1 點</strong>；50 分鐘 = <strong style={{color:"#7B1FA2"}}>2 點</strong></span>
+          : <span>Points: 25-min = <strong style={{color:"#1A6B8A"}}>1 pt</strong> · 50-min = <strong style={{color:"#7B1FA2"}}>2 pts</strong></span>
+        }
       </div>
 
       {/* Manual add form */}
@@ -3333,7 +3341,7 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
               {k:"regDate", l:t.dirRegDate,     ph:"2025-01-01"},
               {k:"startDate",l:t.dirStartDate,  ph:"2025-02-01"},
               {k:"duration",l:t.dirDuration,    ph:"25 or 50"},
-              {k:"manualSessions",l:lang==="zh"?"手動完課數":"Manual Sessions",ph:"0"},
+              {k:"manualSessions",l:lang==="zh"?"手動積分":"Manual Points",ph:"0"},
             ].map(({k,l,ph})=>(
               <div key={k}>
                 <label style={lStyle}>{l}</label>
@@ -3486,7 +3494,7 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
                             <div>
                               <div style={{display:"flex",alignItems:"baseline",gap:4,marginBottom:2}}>
                                 <span style={{fontSize:15,fontWeight:800,color:medal?medal.color:"#2E7D32"}}>{sess.confirmed}</span>
-                                <span style={{fontSize:10,color:"#9E9E9E"}}>{lang==="zh"?"堂":"sess."}</span>
+                                <span style={{fontSize:10,color:"#9E9E9E"}}>{lang==="zh"?"點":"pt"}</span>
                                 <span style={{fontSize:10,background:"#E8F5E9",color:"#2E7D32",borderRadius:3,padding:"1px 5px",fontWeight:600}}>✓ {lang==="zh"?"已確認":"Confirmed"}</span>
                               </div>
                               {medal&&<div style={{fontSize:10,color:medal.color,fontWeight:500}}>{lang==="zh"?medal.zh:medal.en}</div>}
@@ -3499,7 +3507,7 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
                               {/* Unconfirmed: show total prominently with confirm CTA */}
                               <div style={{display:"flex",alignItems:"baseline",gap:4,marginBottom:2}}>
                                 <span style={{fontSize:14,fontWeight:700,color:"#546E7A"}}>{sess.unofficial}</span>
-                                <span style={{fontSize:10,color:"#9E9E9E"}}>{lang==="zh"?"堂":"sess."}</span>
+                                <span style={{fontSize:10,color:"#9E9E9E"}}>{lang==="zh"?"點":"pt"}</span>
                                 <span style={{fontSize:10,background:"#FFF3E0",color:"#E65100",borderRadius:3,padding:"1px 5px"}}>{lang==="zh"?"未確認":"Pending"}</span>
                               </div>
                               <div style={{fontSize:10,color:"#9E9E9E",marginBottom:4}}>
@@ -3754,8 +3762,9 @@ function StudentProgressPanel({ currentUser, enrollments, attendance, courses, l
   const displayLabel = lang==="zh" ? medal.zh : medal.en;
   const nextLabel = next ? (lang==="zh" ? next.zh : next.en) : null;
 
-  // full = total count (25min→1, 50min→2), half is always 0 now
+  // full = total POINTS (25min class → 1pt, 50min class → 2pt), half is always 0 now
   const sessCount = full; // clean alias
+  const ptLabel = lang==="zh" ? "點" : "pt";
 
   return (
     <div style={{padding:"1.25rem 1rem"}}>
@@ -3766,15 +3775,29 @@ function StudentProgressPanel({ currentUser, enrollments, attendance, courses, l
         {current && <div style={{fontSize:11,color:"#9E9E9E"}}>{lang==="zh"?"目前等級":"Current Tier"}</div>}
       </div>
 
-      {/* Session count — clean display */}
-      <div style={{background:medal.bg,borderRadius:12,padding:"14px 16px",marginBottom:"1.25rem",textAlign:"center",border:`1px solid ${medal.color}33`}}>
+      {/* Points total — clean display */}
+      <div style={{background:medal.bg,borderRadius:12,padding:"14px 16px",marginBottom:"1rem",textAlign:"center",border:`1px solid ${medal.color}33`}}>
         <div style={{fontSize:11,color:medal.color,fontWeight:500,marginBottom:6,opacity:0.8,letterSpacing:"0.05em",textTransform:"uppercase"}}>
-          {lang==="zh"?"累積上課":"Total Classes"}
+          {lang==="zh"?"累積積分":"Total Points"}
         </div>
         {<div>
             <span style={{fontSize:36,fontWeight:800,color:medal.color}}>{full}</span>
-            <span style={{fontSize:16,color:medal.color,opacity:0.7,marginLeft:4}}>{lang==="zh"?"堂":"sessions"}</span>
+            <span style={{fontSize:16,color:medal.color,opacity:0.7,marginLeft:4}}>{ptLabel}</span>
           </div>}
+      </div>
+
+      {/* ── Points rule explainer — beautified ── */}
+      <div style={{display:"flex",gap:10,alignItems:"center",background:"#F5F5F5",borderRadius:10,padding:"10px 12px",marginBottom:"1.25rem",border:"0.5px solid #E0E0E0"}}>
+        <div style={{display:"flex",gap:6,flexShrink:0}}>
+          <div style={{width:26,height:26,borderRadius:"50%",background:"#E3F2FD",color:"#1A6B8A",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700}}>1</div>
+          <div style={{width:26,height:26,borderRadius:"50%",background:"#EDE7F6",color:"#7B1FA2",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700}}>2</div>
+        </div>
+        <div style={{fontSize:11,color:"#546E7A",lineHeight:1.5}}>
+          {lang==="zh"
+            ? <>每 <strong style={{color:"#172F39"}}>25 分鐘</strong>課堂 = <strong style={{color:"#1A6B8A"}}>1 點</strong>；每 <strong style={{color:"#172F39"}}>50 分鐘</strong>課堂 = <strong style={{color:"#7B1FA2"}}>2 點</strong></>
+            : <>Every <strong style={{color:"#172F39"}}>25-min</strong> class = <strong style={{color:"#1A6B8A"}}>1 pt</strong> · Every <strong style={{color:"#172F39"}}>50-min</strong> class = <strong style={{color:"#7B1FA2"}}>2 pts</strong></>
+          }
+        </div>
       </div>
 
       {/* Next medal progress */}
@@ -3785,7 +3808,7 @@ function StudentProgressPanel({ currentUser, enrollments, attendance, courses, l
               {lang==="zh"?`距離 ${nextLabel} 還差`:`${sessToNext} more to ${nextLabel}`}
             </span>
             <span style={{fontSize:12,fontWeight:700,color:next.color}}>
-              {lang==="zh"?`${sessToNext} 堂！`:""}
+              {lang==="zh"?`${sessToNext} 點！`:""}
             </span>
           </div>
           {/* Progress bar */}
@@ -3793,19 +3816,19 @@ function StudentProgressPanel({ currentUser, enrollments, attendance, courses, l
             <div style={{width:`${pct}%`,height:"100%",borderRadius:99,background:`linear-gradient(90deg, ${medal.color}, ${next.color})`,transition:"width 0.6s ease"}}/>
           </div>
           <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#9E9E9E"}}>
-            <span>{current ? `${current.sessions}${lang==="zh"?"堂":""}` : "0"}</span>
+            <span>{current ? `${current.sessions}${ptLabel}` : "0"}</span>
             <span style={{color:next.color,fontWeight:600}}>{pct}%</span>
-            <span>{next.sessions}{lang==="zh"?"堂":""}</span>
+            <span>{next.sessions}{ptLabel}</span>
           </div>
           {/* Motivational nudge */}
           {sessToNext <= 10 && (
             <div style={{marginTop:8,background:`${next.color}15`,border:`1px solid ${next.color}44`,borderRadius:7,padding:"7px 10px",fontSize:12,color:next.color,fontWeight:500,textAlign:"center"}}>
-              🔥 {lang==="zh"?`只差 ${sessToNext} 堂就能達到 ${nextLabel}！衝！`:`Only ${sessToNext} more to ${nextLabel}! Keep going!`}
+              🔥 {lang==="zh"?`只差 ${sessToNext} 點就能達到 ${nextLabel}！衝！`:`Only ${sessToNext} more to ${nextLabel}! Keep going!`}
             </div>
           )}
           {sessToNext > 10 && sessToNext <= 30 && (
             <div style={{marginTop:8,background:`${next.color}10`,border:`1px solid ${next.color}33`,borderRadius:7,padding:"7px 10px",fontSize:12,color:next.color,textAlign:"center"}}>
-              💪 {lang==="zh"?`再 ${sessToNext} 堂達到 ${nextLabel}！`:`${sessToNext} sessions away from ${nextLabel}!`}
+              💪 {lang==="zh"?`再 ${sessToNext} 點達到 ${nextLabel}！`:`${sessToNext} points away from ${nextLabel}!`}
             </div>
           )}
         </div>
@@ -3819,7 +3842,7 @@ function StudentProgressPanel({ currentUser, enrollments, attendance, courses, l
             <span style={{fontSize:24,flexShrink:0,opacity:0.6}}>{next.icon}</span>
             <div style={{flex:1}}>
               <span style={{fontSize:13,fontWeight:600,color:next.color}}>{lang==="zh"?next.zh:next.en}</span>
-              <span style={{fontSize:11,color:"#9E9E9E",marginLeft:6}}>{next.sessions}{lang==="zh"?"堂":""}</span>
+              <span style={{fontSize:11,color:"#9E9E9E",marginLeft:6}}>{next.sessions}{ptLabel}</span>
             </div>
           </div>
         </div>
@@ -3870,7 +3893,7 @@ function TeacherStudentsPanel({ currentUser, users, courses, enrollments, attend
                 <div style={{fontSize:13,fontWeight:500,color:"#172F39",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{stu.name}</div>
                 <div style={{fontSize:10,color:"#9E9E9E",marginTop:1,display:"flex",gap:6,alignItems:"center"}}>
                   {medal&&<span style={{color:medal.color,fontWeight:600}}>{lang==="zh"?medal.zh:medal.en}</span>}
-                  <span>{full}{lang==="zh"?"堂":"s"}</span>
+                  <span>{full}{lang==="zh"?"點":"pt"}</span>
                 </div>
               </div>
               <span style={{fontSize:11,color:"#CFD8DC",transform:isExpanded?"rotate(90deg)":"rotate(0deg)",transition:"transform 0.2s",flexShrink:0}}>▶</span>
@@ -3886,7 +3909,7 @@ function TeacherStudentsPanel({ currentUser, users, courses, enrollments, attend
                     {label:lang==="zh"?"年齡":"Age",          val: dir ? fmtAge(dir.age, dir.regYear, lang) : "—"},
                     {label:lang==="zh"?"課程長度":"Duration",  val:duration?(duration+" min"):"—"},
                     {label:lang==="zh"?"每週堂數":"Per Week",  val:weeklyCount?(weeklyCount+(lang==="zh"?"堂":"x")):"—"},
-                    {label:lang==="zh"?"完課數":"Completed",   val:full+(lang==="zh"?"堂":"s")},
+                    {label:lang==="zh"?"累積積分":"Points",   val:full+(lang==="zh"?"點":"pt")},
                   ].map(row=>(
                     <div key={row.label}>
                       <div style={{fontSize:9,color:"#9E9E9E",fontWeight:500,marginBottom:1,textTransform:"uppercase",letterSpacing:"0.04em"}}>{row.label}</div>
@@ -3904,7 +3927,7 @@ function TeacherStudentsPanel({ currentUser, users, courses, enrollments, attend
                   return (
                     <div style={{marginTop:10}}>
                       <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#9E9E9E",marginBottom:3}}>
-                        <span>{lang==="zh"?`距 ${nm?.[lang==="zh"?"zh":"en"]} 還差 ${toNext} 堂`:`${toNext} to ${nm?.en}`}</span>
+                        <span>{lang==="zh"?`距 ${nm?.[lang==="zh"?"zh":"en"]} 還差 ${toNext} 點`:`${toNext} to ${nm?.en}`}</span>
                         <span style={{color:nm.color,fontWeight:600}}>{pct2}%</span>
                       </div>
                       <div style={{background:"#E0E0E0",borderRadius:99,height:5,overflow:"hidden"}}>
@@ -4210,7 +4233,7 @@ function StudentTeacherLayout({ currentUser, users, courses, lang, absences, set
                       <span style={{fontSize:18}}>{medal.icon}</span>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{fontSize:11,fontWeight:600,color:medal.color}}>{lang==="zh"?medal.zh:medal.en}</div>
-                        <div style={{fontSize:10,color:"#9E9E9E"}}>{tot} {lang==="zh"?"堂":"sess."}{toNext?` · ${lang==="zh"?`差${toNext}堂`:`${toNext} to next`}`:""}</div>
+                        <div style={{fontSize:10,color:"#9E9E9E"}}>{tot} {lang==="zh"?"點":"pt"}{toNext?` · ${lang==="zh"?`差${toNext}點`:`${toNext} to next`}`:""}</div>
                       </div>
                     </div>
                   </div>
