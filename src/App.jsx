@@ -3573,7 +3573,7 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
 }
 
 // ─── Admin panel ──────────────────────────────────────────────────────────────
-function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, lang, setToast }) {
+function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, lang, setToast, introText, setIntroText }) {
   const t = T[lang];
   const [tab, setTab] = useState("courses");
   const tabs = [
@@ -3584,6 +3584,7 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
     {key:"users",   label:t.manageUsers},
     {key:"tstats",  label:t.teacherStats},
     {key:"sstats",  label:t.studentStats},
+    {key:"settings",label:lang==="zh"?"網站設定":"Site Settings"},
   ];
   return (
     <div>
@@ -3602,34 +3603,78 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
       {tab==="users"  &&<UserManager users={users} setUsers={setUsers} lang={lang} setToast={setToast}/>}
       {tab==="tstats" &&<TeacherStats users={users} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang}/>}
       {tab==="sstats" &&<StudentStats users={users} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang}/>}
+      {tab==="settings"&&<SiteSettings introText={introText} setIntroText={setIntroText} lang={lang} setToast={setToast}/>}
+    </div>
+  );
+}
+
+// ─── Site Settings (admin-editable login page intro text) ────────────────────
+function SiteSettings({ introText, setIntroText, lang, setToast }) {
+  const [draft, setDraft] = useState(introText||"");
+  useEffect(()=>{ setDraft(introText||""); }, [introText]);
+  const dirty = draft !== (introText||"");
+  const save = () => {
+    setIntroText(draft);
+    setToast(lang==="zh"?"已儲存":"Saved");
+  };
+  return (
+    <div>
+      <h3 style={{fontSize:15,fontWeight:600,color:"#172F39",margin:"0 0 4px"}}>{lang==="zh"?"登入頁介紹文字":"Login Page Intro Text"}</h3>
+      <p style={{fontSize:12,color:"#9E9E9E",margin:"0 0 12px"}}>
+        {lang==="zh"
+          ? "顯示在登入頁標題下方的一小段文字（例如公告、上課須知）。留空則不顯示。"
+          : "A short block of text shown below the title on the login page (e.g. announcements). Leave empty to hide it."}
+      </p>
+      <textarea
+        value={draft}
+        onChange={e=>setDraft(e.target.value)}
+        rows={5}
+        placeholder={lang==="zh"?"例如：歡迎來到 ES 課程平台！本週上課請提前 10 分鐘登入。":"e.g. Welcome! Please log in 10 minutes before class."}
+        style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13,lineHeight:1.6,resize:"vertical",fontFamily:"inherit"}}
+      />
+      <div style={{display:"flex",gap:8,marginTop:10,alignItems:"center"}}>
+        <button onClick={save} disabled={!dirty} style={{padding:"8px 20px",borderRadius:7,background:dirty?"#1A6B8A":"#E0E0E0",border:"none",color:dirty?"#fff":"#9E9E9E",fontSize:13,fontWeight:500,cursor:dirty?"pointer":"not-allowed"}}>
+            {lang==="zh"?"儲存":"Save"}
+          </button>
+        {dirty && <span style={{fontSize:11,color:"#E65100"}}>{lang==="zh"?"尚未儲存":"Unsaved changes"}</span>}
+      </div>
     </div>
   );
 }
 
 // ─── Login ────────────────────────────────────────────────────────────────────
-function LoginPage({ onLogin, lang, setLang, users }) {
+function LoginPage({ onLogin, lang, setLang, users, introText }) {
   const t=T[lang];
   const [u,setU]=useState("");const [p,setP]=useState("");const [err,setErr]=useState("");
   const go=()=>{const f=users.find(x=>x.username===u&&x.password===p);if(f){setErr("");onLogin(f);}else setErr(t.loginError);};
   return (
     <div style={{minHeight:"100vh",background:"#172F39",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:"system-ui, -apple-system, sans-serif",padding:"2rem"}}>
       <button onClick={()=>setLang(lang==="zh"?"en":"zh")} style={{position:"absolute",top:"1.5rem",right:"1.5rem",background:"rgba(26,107,138,0.15)",border:"1px solid rgba(26,107,138,0.4)",color:"#1A6B8A",borderRadius:"6px",padding:"6px 14px",cursor:"pointer",fontSize:"13px"}}>{t.langToggle}</button>
-      <div style={{marginBottom:"2rem",textAlign:"center"}}>
+      <div style={{marginBottom:"1.25rem",textAlign:"center"}}>
         <div style={{width:56,height:56,borderRadius:14,background:"#1A6B8A",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 1rem",fontSize:26}}>📚</div>
         <h1 style={{color:"#FFFFFF",fontSize:22,fontWeight:500,margin:0}}>{t.appName}</h1>
       </div>
-      <div style={{background:"#FFFFFF",borderRadius:16,border:"1px solid rgba(26,107,138,0.25)",boxShadow:"0 4px 24px rgba(23,47,57,0.15)",padding:"2rem",width:"100%",maxWidth:360}}>
-        <div style={{marginBottom:"1rem"}}>
-          <label style={{display:"block",fontSize:13,color:"#546E7A",marginBottom:6}}>{t.username}</label>
-          <input value={u} onChange={e=>setU(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()} style={{width:"100%",boxSizing:"border-box",background:"#FAFAFA",border:"1px solid rgba(26,107,138,0.25)",borderRadius:8,color:"#172F39",padding:"10px 12px",fontSize:14,outline:"none"}}/>
+
+      {/* ── Admin-editable intro / announcement block ── */}
+      {introText && introText.trim() && (
+        <div style={{maxWidth:420,width:"100%",textAlign:"center",color:"rgba(255,255,255,0.75)",fontSize:13,lineHeight:1.7,marginBottom:"1.5rem",padding:"0 1rem",whiteSpace:"pre-wrap"}}>
+          {introText}
         </div>
-        <div style={{marginBottom:"1.5rem"}}>
-          <label style={{display:"block",fontSize:13,color:"#546E7A",marginBottom:6}}>{t.password}</label>
-          <input type="password" value={p} onChange={e=>setP(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()} style={{width:"100%",boxSizing:"border-box",background:"#FAFAFA",border:"1px solid rgba(26,107,138,0.25)",borderRadius:8,color:"#172F39",padding:"10px 12px",fontSize:14,outline:"none"}}/>
+      )}
+
+      {/* ── Login card — shrunk ~20% and shifted down relative to the title/intro above ── */}
+      <div style={{background:"#FFFFFF",borderRadius:13,border:"1px solid rgba(26,107,138,0.25)",boxShadow:"0 4px 24px rgba(23,47,57,0.15)",padding:"1.6rem",width:"100%",maxWidth:288,marginTop:"0.5rem"}}>
+        <div style={{marginBottom:"0.8rem"}}>
+          <label style={{display:"block",fontSize:11,color:"#546E7A",marginBottom:5}}>{t.username}</label>
+          <input value={u} onChange={e=>setU(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()} style={{width:"100%",boxSizing:"border-box",background:"#FAFAFA",border:"1px solid rgba(26,107,138,0.25)",borderRadius:7,color:"#172F39",padding:"8px 10px",fontSize:12,outline:"none"}}/>
         </div>
-        {err&&<p style={{color:"#F0A0A0",fontSize:13,margin:"0 0 1rem",textAlign:"center"}}>{err}</p>}
-        <button onClick={go} style={{width:"100%",background:"#1A6B8A",border:"none",borderRadius:8,color:"#fff",padding:"11px",fontSize:15,fontWeight:500,cursor:"pointer"}}>{t.loginBtn}</button>
-        <p style={{color:"rgba(255,255,255,0.5)",fontSize:12,textAlign:"center",marginTop:"1rem",marginBottom:0}}>admin/admin123 · teacher1/pass123 · student1/pass123</p>
+        <div style={{marginBottom:"1.2rem"}}>
+          <label style={{display:"block",fontSize:11,color:"#546E7A",marginBottom:5}}>{t.password}</label>
+          <input type="password" value={p} onChange={e=>setP(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()} style={{width:"100%",boxSizing:"border-box",background:"#FAFAFA",border:"1px solid rgba(26,107,138,0.25)",borderRadius:7,color:"#172F39",padding:"8px 10px",fontSize:12,outline:"none"}}/>
+        </div>
+        {err&&<p style={{color:"#F0A0A0",fontSize:11,margin:"0 0 0.8rem",textAlign:"center"}}>{err}</p>}
+        <button onClick={go} style={{width:"100%",background:"#1A6B8A",border:"none",borderRadius:7,color:"#fff",padding:"9px",fontSize:13,fontWeight:500,cursor:"pointer"}}>{t.loginBtn}</button>
+        <p style={{color:"rgba(255,255,255,0.5)",fontSize:10,textAlign:"center",marginTop:"0.8rem",marginBottom:0}}>admin/admin123 · teacher1/pass123 · student1/pass123</p>
       </div>
     </div>
   );
@@ -3679,21 +3724,23 @@ function getMedalInfo(totalFloat) {
 }
 
 // ─── Student Progress Panel ───────────────────────────────────────────────────
-function StudentProgressPanel({ currentUser, enrollments, attendance, courses, lang }) {
-  const [dirEntries, setDirEntries] = useState([]);
-  useEffect(()=>{
-    (async()=>{
-      try{ const r=await window.storage.get("cp3_student_dir"); if(r?.value) setDirEntries(JSON.parse(r.value)); }catch{}
-    })();
-  },[]);
+function StudentProgressPanel({ currentUser, enrollments, attendance, courses, lang, dirLoaded, confirmedOverride }) {
+  const t = T[lang];
 
-  // Check if admin has confirmed a session count for this student
-  const dirEntry = dirEntries.find(d=>d.linkedUserId===currentUser.id);
-  const confirmedOverride = dirEntry?.confirmedSessions || null;
+  // Don't render any numbers until we know whether admin has confirmed an
+  // official session count — prevents a flash of the "unofficial" number
+  // before the correct (admin-confirmed) one is available.
+  if (!dirLoaded) {
+    return (
+      <div style={{padding:"1.25rem 1rem",textAlign:"center",color:"#9E9E9E"}}>
+        <div style={{fontSize:32,marginBottom:8}}>⏳</div>
+        <div style={{fontSize:13}}>{lang==="zh"?"載入中…":"Loading…"}</div>
+      </div>
+    );
+  }
 
   const { full, half, total } = calcStudentSessions(currentUser.id, enrollments, attendance, courses, confirmedOverride);
   const { current, next } = getMedalInfo(total);
-  const t = T[lang];
 
   // Progress toward next medal
   const prevThreshold = current ? current.sessions : 0;
@@ -3883,9 +3930,20 @@ function TeacherStudentsPanel({ currentUser, users, courses, enrollments, attend
 
 // ─── Student Class History ────────────────────────────────────────────────────
 // ─── Student Class History ────────────────────────────────────────────────────
-function StudentClassHistory({ currentUser, enrollments, attendance, courses, users, lang }) {
+function StudentClassHistory({ currentUser, enrollments, attendance, courses, users, lang, dirLoaded, confirmedOverride }) {
   const t = T[lang];
   const today = new Date().toISOString().slice(0,10);
+
+  // Don't render numbers until we know the admin-confirmed override (avoids a
+  // flash of an "unofficial" completed/remaining count before correcting).
+  if (!dirLoaded) {
+    return (
+      <div style={{padding:"1.25rem",textAlign:"center",color:"#9E9E9E"}}>
+        <div style={{fontSize:32,marginBottom:8}}>⏳</div>
+        <div style={{fontSize:13}}>{lang==="zh"?"載入中…":"Loading…"}</div>
+      </div>
+    );
+  }
 
   // Gather all past sessions for this student
   const myEnrollments = enrollments.filter(e=>e.studentId===currentUser.id);
@@ -3920,13 +3978,23 @@ function StudentClassHistory({ currentUser, enrollments, attendance, courses, us
   const past = sessions.filter(s=>s.status!=="upcoming").sort((a,b)=>b.date.localeCompare(a.date));
   const upcoming = sessions.filter(s=>s.status==="upcoming").sort((a,b)=>a.date.localeCompare(b.date));
 
-  // Stats
-  const completedCount = past.filter(s=>s.status==="completed").reduce((n,s)=>n+s.sessVal,0);
+  // ── Stats (all in the same "session-value" unit: 25min=1, 50min=2) ──
+  // completedCount uses calcStudentSessions so it respects the admin-confirmed
+  // official total (if set) — this is now the single source of truth, matching
+  // what's shown on the Progress page and in the admin's student directory.
+  const { full: completedCount } = calcStudentSessions(currentUser.id, enrollments, attendance, courses, confirmedOverride);
   const excusedCount   = past.filter(s=>s.status==="excused"||s.status==="teacher_leave").length;
   const absentCount    = past.filter(s=>s.status==="absent").length;
-  const totalPurchased = myEnrollments.reduce((n,e)=>n+(e.totalSessions||0),0);
-  // Remaining = total enrolled upcoming sessions (as sessVal counts)
-  const remainingCount = upcoming.reduce((n,s)=>n+s.sessVal,0);
+  // totalPurchased converted into the SAME session-value unit as completedCount
+  // (previously this compared raw "堂數 purchased" against weighted "堂數 completed",
+  // which mismatched whenever any course was 50-min, since 50min counts as 2).
+  const totalPurchased = myEnrollments.reduce((n,e)=>{
+    const c = courses.find(x=>x.id===e.courseId);
+    const sessVal = c?.duration===25 ? 1 : 2;
+    return n + (e.totalSessions||0) * sessVal;
+  },0);
+  // Remaining = purchased total minus the official completed count (respects admin override)
+  const remainingCount = Math.max(0, totalPurchased - completedCount);
 
   const STATUS_STYLE = {
     completed:     {bg:"#E8F5E9",color:"#2E7D32",label:lang==="zh"?"完課":"Done"},
@@ -4060,11 +4128,17 @@ function StudentTeacherLayout({ currentUser, users, courses, lang, absences, set
   const isTeacher = currentUser.role==="teacher";
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [dirEntries, setDirEntries] = useState([]);
+  const [dirLoaded, setDirLoaded] = useState(false);
   useEffect(()=>{
     (async()=>{
       try{ const r=await window.storage.get("cp3_student_dir"); if(r?.value) setDirEntries(JSON.parse(r.value)); }catch{}
+      setDirLoaded(true);
     })();
   },[]);
+  // The admin-confirmed official session count for the logged-in student (if any) —
+  // this is the single source of truth used everywhere in the student's own views.
+  const myDirEntry = dirEntries.find(d=>d.linkedUserId===currentUser.id);
+  const myConfirmedOverride = myDirEntry?.confirmedSessions || null;
   // Student: "progress" | "schedule_side" — Teacher: "students" | "schedule_side"
   const [sideTab, setSideTab] = useState("schedule_side");
 
@@ -4111,14 +4185,19 @@ function StudentTeacherLayout({ currentUser, users, courses, lang, absences, set
             </div>
 
             {/* Student: quick medal teaser when not on progress tab */}
-            {isStudent && sideTab!=="progress" && (()=>{
-              const {full,total:tot}=calcStudentSessions(currentUser.id,enrollments,attendance,courses);
+            {isStudent && sideTab!=="progress" && dirLoaded && (()=>{
+              const {total:tot}=calcStudentSessions(currentUser.id,enrollments,attendance,courses,myConfirmedOverride);
               const {current,next}=getMedalInfo(tot);
               const medal=current||{icon:"🎯",zh:"努力中",en:"In Progress",color:"#9E9E9E",bg:"#F5F5F5"};
               const toNext=next?Math.ceil(next.sessions-tot):null;
+              // "剩餘堂數" = 官方完課數（含管理員確認值）與購買總堂數（換算成同一堂數單位）之差
               const myEnr=enrollments.filter(e=>e.studentId===currentUser.id);
-              const td=new Date().toISOString().slice(0,10);
-              const remaining=myEnr.reduce((n,e)=>{const c=courses.find(x=>x.id===e.courseId);return n+(e.scheduledDates||[]).filter(s=>s.date>td).reduce((s2)=>s2+(c?.duration===25?1:2),0);},0);
+              const totalPurchasedWeighted=myEnr.reduce((n,e)=>{
+                const c=courses.find(x=>x.id===e.courseId);
+                const sessVal=c?.duration===25?1:2;
+                return n+(e.totalSessions||0)*sessVal;
+              },0);
+              const remaining=Math.max(0, totalPurchasedWeighted - tot);
               return (
                 <div style={{margin:"6px 10px",display:"flex",flexDirection:"column",gap:5}}>
                   <div onClick={()=>setSideTab("progress")} style={{background:medal.bg,borderRadius:8,padding:"9px 11px",cursor:"pointer",border:`1px solid ${medal.color}33`}}>
@@ -4157,9 +4236,9 @@ function StudentTeacherLayout({ currentUser, users, courses, lang, absences, set
       <div style={{flex:1,minWidth:0,marginLeft:sideHasSidebar?12:0}}>
         <div style={{background:"#FFFFFF",borderRadius:14,border:"0.5px solid #E0E0E0",boxShadow:"0 2px 12px rgba(23,47,57,0.06)",overflow:"hidden"}}>
           {isStudent && sideTab==="progress"
-            ? <StudentProgressPanel currentUser={currentUser} enrollments={enrollments} attendance={attendance} courses={courses} lang={lang}/>
+            ? <StudentProgressPanel currentUser={currentUser} enrollments={enrollments} attendance={attendance} courses={courses} lang={lang} dirLoaded={dirLoaded} confirmedOverride={myConfirmedOverride}/>
             : isStudent && sideTab==="history"
-              ? <StudentClassHistory currentUser={currentUser} enrollments={enrollments} attendance={attendance} courses={courses} users={users} lang={lang}/>
+              ? <StudentClassHistory currentUser={currentUser} enrollments={enrollments} attendance={attendance} courses={courses} users={users} lang={lang} dirLoaded={dirLoaded} confirmedOverride={myConfirmedOverride}/>
             : isTeacher && sideTab==="students"
               ? <TeacherStudentsPanel currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} attendance={attendance} lang={lang} dirEntries={dirEntries}/>
               : <div style={{padding:"1.5rem"}}>
@@ -4183,6 +4262,7 @@ export default function App() {
   const [materials,setMaterials,mLoaded]=useStorage("cp3_materials",[]);
   const [enrollments,setEnrollments,eLoaded]=useStorage("cp3_enrollments",DEFAULT_ENROLLMENTS);
   const [attendance,setAttendance,attLoaded]=useStorage("cp3_attendance",DEFAULT_ATTENDANCE);
+  const [introText,setIntroText,introLoaded]=useStorage("cp3_intro_text","");
   const [toast,setToastMsg]=useState("");
   const t=T[lang];
 
@@ -4201,7 +4281,7 @@ export default function App() {
     </div>
   );
 
-  if(!currentUser) return <LoginPage onLogin={setCurrentUser} lang={lang} setLang={setLang} users={users}/>;
+  if(!currentUser) return <LoginPage onLogin={setCurrentUser} lang={lang} setLang={setLang} users={users} introText={introText}/>;
 
   const initials=currentUser.name.slice(0,2).toUpperCase();
   const roleLabel=t[`role_${currentUser.role}`];
@@ -4241,7 +4321,7 @@ export default function App() {
         {isAdmin && (
           <div style={{background:"#FFFFFF",borderRadius:14,border:"0.5px solid #E0E0E0",boxShadow:"0 2px 12px rgba(23,47,57,0.06)",padding:"1.5rem"}}>
             {activeTab==="schedule"&&<ScheduleView currentUser={currentUser} users={users} courses={courses} lang={lang} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} setToast={setToast}/>}
-            {activeTab==="admin"&&<AdminPanel users={users} setUsers={setUsers} courses={courses} setCourses={setCourses} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} lang={lang} setToast={setToast}/>}
+            {activeTab==="admin"&&<AdminPanel users={users} setUsers={setUsers} courses={courses} setCourses={setCourses} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} lang={lang} setToast={setToast} introText={introText} setIntroText={setIntroText}/>}
           </div>
         )}
 
