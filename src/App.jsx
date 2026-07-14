@@ -3930,12 +3930,10 @@ function TeacherStudentsPanel({ currentUser, users, courses, enrollments, attend
 
 // ─── Student Class History ────────────────────────────────────────────────────
 // ─── Student Class History ────────────────────────────────────────────────────
-function StudentClassHistory({ currentUser, enrollments, attendance, courses, users, lang, dirLoaded, confirmedOverride }) {
+function StudentClassHistory({ currentUser, enrollments, attendance, courses, users, lang, dirLoaded }) {
   const t = T[lang];
   const today = new Date().toISOString().slice(0,10);
 
-  // Don't render numbers until we know the admin-confirmed override (avoids a
-  // flash of an "unofficial" completed/remaining count before correcting).
   if (!dirLoaded) {
     return (
       <div style={{padding:"1.25rem",textAlign:"center",color:"#9E9E9E"}}>
@@ -3978,23 +3976,20 @@ function StudentClassHistory({ currentUser, enrollments, attendance, courses, us
   const past = sessions.filter(s=>s.status!=="upcoming").sort((a,b)=>b.date.localeCompare(a.date));
   const upcoming = sessions.filter(s=>s.status==="upcoming").sort((a,b)=>a.date.localeCompare(b.date));
 
-  // ── Stats (all in the same "session-value" unit: 25min=1, 50min=2) ──
-  // completedCount uses calcStudentSessions so it respects the admin-confirmed
-  // official total (if set) — this is now the single source of truth, matching
-  // what's shown on the Progress page and in the admin's student directory.
-  const { full: completedCount } = calcStudentSessions(currentUser.id, enrollments, attendance, courses, confirmedOverride);
+  // ── Stats — anchored 1:1 to 付費與排課 (payment/enrollment) records ──
+  // These are LITERAL session counts (no medal-style weighting, no admin
+  // "confirmedSessions" override). totalPurchased = exactly what admin typed
+  // into 付費與排課's 購買堂數 field. completedCount/absentCount are counted
+  // directly from that same enrollment's scheduledDates, so the numbers are
+  // guaranteed to reconcile: purchased = completed + absent + upcoming.
+  const totalPurchased = myEnrollments.reduce((n,e)=>n+(e.totalSessions||0),0);
+  const completedCount = past.filter(s=>s.status==="completed").length;
   const excusedCount   = past.filter(s=>s.status==="excused"||s.status==="teacher_leave").length;
   const absentCount    = past.filter(s=>s.status==="absent").length;
-  // totalPurchased converted into the SAME session-value unit as completedCount
-  // (previously this compared raw "堂數 purchased" against weighted "堂數 completed",
-  // which mismatched whenever any course was 50-min, since 50min counts as 2).
-  const totalPurchased = myEnrollments.reduce((n,e)=>{
-    const c = courses.find(x=>x.id===e.courseId);
-    const sessVal = c?.duration===25 ? 1 : 2;
-    return n + (e.totalSessions||0) * sessVal;
-  },0);
-  // Remaining = purchased total minus the official completed count (respects admin override)
-  const remainingCount = Math.max(0, totalPurchased - completedCount);
+  // Remaining = purchased − everything already consumed (completed or absent).
+  // Excused/teacher-leave sessions don't consume a slot — they get automatically
+  // deferred to a later date by 付費與排課, so they're not subtracted here.
+  const remainingCount = Math.max(0, totalPurchased - completedCount - absentCount);
 
   const STATUS_STYLE = {
     completed:     {bg:"#E8F5E9",color:"#2E7D32",label:lang==="zh"?"完課":"Done"},
@@ -4186,18 +4181,28 @@ function StudentTeacherLayout({ currentUser, users, courses, lang, absences, set
 
             {/* Student: quick medal teaser when not on progress tab */}
             {isStudent && sideTab!=="progress" && dirLoaded && (()=>{
+              // Medal number (top box) — the gamified, duration-weighted metric (unrelated to payment records)
               const {total:tot}=calcStudentSessions(currentUser.id,enrollments,attendance,courses,myConfirmedOverride);
               const {current,next}=getMedalInfo(tot);
               const medal=current||{icon:"🎯",zh:"努力中",en:"In Progress",color:"#9E9E9E",bg:"#F5F5F5"};
               const toNext=next?Math.ceil(next.sessions-tot):null;
-              // "剩餘堂數" = 官方完課數（含管理員確認值）與購買總堂數（換算成同一堂數單位）之差
+
+              // "剩餘堂數" (bottom box) — literal, non-weighted count anchored 1:1 to
+              // 付費與排課 payment records: purchased − (completed + absent).
+              // Deliberately independent from the medal number above.
               const myEnr=enrollments.filter(e=>e.studentId===currentUser.id);
-              const totalPurchasedWeighted=myEnr.reduce((n,e)=>{
+              const totalPurchased=myEnr.reduce((n,e)=>n+(e.totalSessions||0),0);
+              let usedCount=0;
+              myEnr.forEach(e=>{
                 const c=courses.find(x=>x.id===e.courseId);
-                const sessVal=c?.duration===25?1:2;
-                return n+(e.totalSessions||0)*sessVal;
-              },0);
-              const remaining=Math.max(0, totalPurchasedWeighted - tot);
+                if(!c) return;
+                (e.scheduledDates||[]).forEach(s=>{
+                  const attRec=attendance.find(a=>a.enrollmentId===e.id&&a.date===s.date);
+                  if(attRec?.type==="absent"){ usedCount++; return; }
+                  if(!attRec && isSessionOver(s.date,c.start,c.duration)){ usedCount++; }
+                });
+              });
+              const remaining=Math.max(0, totalPurchased - usedCount);
               return (
                 <div style={{margin:"6px 10px",display:"flex",flexDirection:"column",gap:5}}>
                   <div onClick={()=>setSideTab("progress")} style={{background:medal.bg,borderRadius:8,padding:"9px 11px",cursor:"pointer",border:`1px solid ${medal.color}33`}}>
@@ -4238,7 +4243,7 @@ function StudentTeacherLayout({ currentUser, users, courses, lang, absences, set
           {isStudent && sideTab==="progress"
             ? <StudentProgressPanel currentUser={currentUser} enrollments={enrollments} attendance={attendance} courses={courses} lang={lang} dirLoaded={dirLoaded} confirmedOverride={myConfirmedOverride}/>
             : isStudent && sideTab==="history"
-              ? <StudentClassHistory currentUser={currentUser} enrollments={enrollments} attendance={attendance} courses={courses} users={users} lang={lang} dirLoaded={dirLoaded} confirmedOverride={myConfirmedOverride}/>
+              ? <StudentClassHistory currentUser={currentUser} enrollments={enrollments} attendance={attendance} courses={courses} users={users} lang={lang} dirLoaded={dirLoaded}/>
             : isTeacher && sideTab==="students"
               ? <TeacherStudentsPanel currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} attendance={attendance} lang={lang} dirEntries={dirEntries}/>
               : <div style={{padding:"1.5rem"}}>
