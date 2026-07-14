@@ -4008,7 +4008,7 @@ function StudentClassHistory({ currentUser, enrollments, attendance, courses, us
 }
 
 // ─── Student / Teacher Layout (sidebar + main) ────────────────────────────────
-function StudentTeacherLayout({ currentUser, users, courses, lang, absences, setAbsences, materials, setMaterials, enrollments, attendance, setToast }) {
+function StudentTeacherLayout({ currentUser, users, courses, lang, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, setToast }) {
   const t = T[lang];
   const isStudent = currentUser.role==="student";
   const isTeacher = currentUser.role==="teacher";
@@ -4205,7 +4205,8 @@ export default function App() {
             currentUser={currentUser} users={users} courses={courses} lang={lang}
             absences={absences} setAbsences={setAbsences}
             materials={materials} setMaterials={setMaterials}
-            enrollments={enrollments} attendance={attendance}
+            enrollments={enrollments} setEnrollments={setEnrollments}
+            attendance={attendance} setAttendance={setAttendance}
             setToast={setToast}
           />
         )}
