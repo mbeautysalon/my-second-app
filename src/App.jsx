@@ -127,6 +127,30 @@ const T = {
     sessionNote:"備註說明（選填）", sessionSaved:"課堂狀態已儲存",
     sessionDeleted:"已清除課堂記錄", sessionStatus:"課堂狀態",
     clearRecord:"清除記錄",
+    // Feedback (課後反饋)
+    feedback:"課後反饋", feedbackShort:"反饋",
+    feedbackLabel:"課後反饋 (Comments / Suggestions / New Vocabulary, Sentence)",
+    feedbackPlaceholder:"這堂課的表現、建議、學到的新單字或例句…",
+    feedbackWrite:"填寫反饋", feedbackEdit:"編輯反饋", feedbackView:"查看老師回饋",
+    feedbackSave:"送出審核", feedbackSaved:"反饋已送出，待管理員審核",
+    feedbackStatusPending:"審核中", feedbackStatusApproved:"已核准", feedbackStatusRejected:"已退回",
+    feedbackNone:"尚未填寫反饋", feedbackApprove:"核准", feedbackReject:"退回",
+    feedbackApproved:"已核准，學生現在看得到了", feedbackRejected:"已退回",
+    feedbackReview:"反饋審核", feedbackReviewDesc:"檢視老師填寫的課後反饋，核准後學生才會看到",
+    feedbackNoPending:"目前沒有待審核的反饋", feedbackAllReviewed:"全部反饋",
+    feedbackBy:"填寫者", feedbackFor:"學生", feedbackDate:"上課日期",
+    feedbackRejectReason:"退回原因（選填，會顯示給老師）",
+    feedbackFromTeacher:"老師的課後反饋",
+    // Batch feedback review & input
+    feedbackSelectAll:"全選待審核", feedbackSelected:"已選 {n} 筆",
+    feedbackBatchApprove:"批次核准", feedbackBatchReject:"批次退回",
+    feedbackBatchApproved:"已核准 {n} 筆反饋", feedbackBatchRejected:"已退回 {n} 筆反饋",
+    feedbackBatchInput:"批次輸入反饋", feedbackBatchInputDesc:"協助老師填寫：貼上 Excel 資料自動比對日期並建立反饋（直接核准，學生馬上看得到）",
+    feedbackPasteHint:"直接從 Excel 複製並貼上（Tab 分隔，欄位順序：日期、反饋內容）",
+    feedbackExcelCols:"日期 | Comments/Suggestions/New Vocabulary, Sentence",
+    feedbackParseRows:"解析資料", feedbackImport:"匯入並核准",
+    feedbackMatched:"已比對", feedbackNoMatch:"找不到對應課堂（略過）",
+    feedbackSelectCourse:"選擇課程", feedbackImportDone:"已匯入 {n} 筆反饋",
     // Student directory
     studentDir:"學生資料庫", pasteFromExcel:"貼上 Excel 資料",
     pasteHint:"直接從 Excel 複製並貼上（Tab 分隔，欄位順序：英文姓名、中文姓名、年齡、首次登記日、正式上課日、課程長度）",
@@ -246,6 +270,30 @@ const T = {
     sessionNote:"Notes (optional)", sessionSaved:"Session status saved",
     sessionDeleted:"Record cleared", sessionStatus:"Session Status",
     clearRecord:"Clear Record",
+    // Feedback
+    feedback:"Post-Class Feedback", feedbackShort:"Feedback",
+    feedbackLabel:"Post-Class Feedback (Comments / Suggestions / New Vocabulary, Sentence)",
+    feedbackPlaceholder:"How the student did, suggestions, new vocabulary or sentences learned…",
+    feedbackWrite:"Write Feedback", feedbackEdit:"Edit Feedback", feedbackView:"View Teacher's Feedback",
+    feedbackSave:"Submit for Review", feedbackSaved:"Feedback submitted, awaiting admin review",
+    feedbackStatusPending:"Pending Review", feedbackStatusApproved:"Approved", feedbackStatusRejected:"Rejected",
+    feedbackNone:"No feedback yet", feedbackApprove:"Approve", feedbackReject:"Reject",
+    feedbackApproved:"Approved — now visible to the student", feedbackRejected:"Rejected",
+    feedbackReview:"Feedback Review", feedbackReviewDesc:"Review feedback teachers have submitted — approved ones become visible to students",
+    feedbackNoPending:"No feedback pending review", feedbackAllReviewed:"All Feedback",
+    feedbackBy:"Submitted by", feedbackFor:"Student", feedbackDate:"Class Date",
+    feedbackRejectReason:"Reason for rejection (optional, shown to teacher)",
+    feedbackFromTeacher:"Teacher's Feedback",
+    // Batch feedback review & input
+    feedbackSelectAll:"Select all pending", feedbackSelected:"{n} selected",
+    feedbackBatchApprove:"Batch Approve", feedbackBatchReject:"Batch Reject",
+    feedbackBatchApproved:"{n} feedback approved", feedbackBatchRejected:"{n} feedback rejected",
+    feedbackBatchInput:"Batch Input Feedback", feedbackBatchInputDesc:"Help teachers fill it in: paste Excel data, dates auto-match sessions and get approved instantly (visible to students right away)",
+    feedbackPasteHint:"Paste directly from Excel (Tab-separated, columns: Date, Feedback text)",
+    feedbackExcelCols:"Date | Comments/Suggestions/New Vocabulary, Sentence",
+    feedbackParseRows:"Parse Rows", feedbackImport:"Import & Approve",
+    feedbackMatched:"Matched", feedbackNoMatch:"No matching session (skipped)",
+    feedbackSelectCourse:"Select Course", feedbackImportDone:"{n} feedback imported",
     // Student directory
     studentDir:"Student Directory", pasteFromExcel:"Paste from Excel",
     pasteHint:"Paste directly from Excel (Tab-separated, columns: English Name, Chinese Name, Age, First Registration Date, Course Start Date, Duration)",
@@ -639,8 +687,14 @@ function MaterialPanel({ course, initialDayFilter, users, lang, currentUser, mat
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const today = new Date().toISOString().slice(0, 10);
-  const blankDate = dayFilter >= 0 ? getDateForDow(dayFilter) : today;
-  const blank = { title:"", url:"", date: blankDate, desc:"", dayIndex: dayFilter >= 0 ? dayFilter : 0 };
+  // Default day must be one the course actually meets on — falling back to a
+  // hardcoded 0 (Monday) here was the bug: if the course doesn't meet on
+  // Monday, materials saved without explicitly re-picking a day silently got
+  // tagged with a dayIndex the course never has, so they never showed up
+  // on the schedule (the batch editor already guarded against this).
+  const validDefaultDay = (dayFilter >= 0 && course.days?.includes(dayFilter)) ? dayFilter : (course.days?.[0] ?? 0);
+  const blankDate = getDateForDow(validDefaultDay);
+  const blank = { title:"", url:"", date: blankDate, desc:"", dayIndex: validDefaultDay };
   const [form, setForm] = useState(blank);
   const fset = (k, v) => setForm(f => ({...f, [k]: v}));
 
@@ -658,12 +712,19 @@ function MaterialPanel({ course, initialDayFilter, users, lang, currentUser, mat
 
   const openAdd = () => {
     setEditing(null);
-    setForm({...blank, date: dayFilter >= 0 ? getDateForDow(dayFilter) : today, dayIndex: dayFilter >= 0 ? dayFilter : 0});
+    const d = (dayFilter >= 0 && course.days?.includes(dayFilter)) ? dayFilter : (course.days?.[0] ?? 0);
+    setForm({...blank, date: getDateForDow(d), dayIndex: d});
     setShowForm(true);
   };
 
   const save = () => {
     if (!form.url.trim()) return;
+    // Guard: the selected day must be one the course actually meets on,
+    // otherwise the material silently never shows up on the schedule.
+    if (course.days?.length && !course.days.includes(form.dayIndex)) {
+      setToast(lang==="zh" ? "請選擇該課程有安排的星期" : "Please select a day this course actually meets on");
+      return;
+    }
     const titleFinal = form.title.trim() || form.url.trim();
     if (editing) {
       setMaterials(ms => ms.map(m => m.id === editing.id ? {...m, ...form, title: titleFinal} : m));
@@ -808,14 +869,21 @@ function MaterialPanel({ course, initialDayFilter, users, lang, currentUser, mat
                 <span style={{fontSize:10,color:"#9E9E9E",whiteSpace:"nowrap"}}>{T[lang].days[grouped[dateKey][0]?.dayIndex]}</span>
               </div>
 
-              {grouped[dateKey].map((m, idx) => (
-                <div key={m.id} style={{background:"#F5F5F5",border:"0.5px solid #E0E0E0",borderRadius:10,padding:"12px 14px",marginBottom:6}}>
+              {grouped[dateKey].map((m, idx) => {
+                const isOrphanDay = course.days?.length && !course.days.includes(m.dayIndex);
+                return (
+                <div key={m.id} style={{background:"#F5F5F5",border:`0.5px solid ${isOrphanDay?"#FFB74D":"#E0E0E0"}`,borderRadius:10,padding:"12px 14px",marginBottom:6}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
                     <div style={{flex:1,minWidth:0}}>
                       {/* Index badge + title */}
-                      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:2}}>
+                      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:2,flexWrap:"wrap"}}>
                         <span style={{fontSize:10,background:"#FFFFFF",border:"0.5px solid #CFD8DC",borderRadius:4,padding:"1px 6px",color:"#9E9E9E",flexShrink:0}}>#{idx+1}</span>
                         <span style={{fontWeight:500,fontSize:13,color:"#172F39",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.title}</span>
+                        {isOrphanDay && (
+                          <span style={{fontSize:10,background:"#FFF3E0",color:"#E65100",borderRadius:4,padding:"1px 7px",fontWeight:600,flexShrink:0}} title={lang==="zh"?"此教材的星期跟課程實際排課不符，不會顯示在課表上，請點編輯修正":"This material's day doesn't match the course's actual schedule — it won't show up. Click Edit to fix."}>
+                            ⚠️ {lang==="zh"?"星期不符":"Day mismatch"}
+                          </span>
+                        )}
                       </div>
                       {m.desc && <div style={{fontSize:12,color:"#546E7A",marginBottom:4}}>{m.desc}</div>}
                       {/* URL preview — truncated, clickable */}
@@ -838,7 +906,7 @@ function MaterialPanel({ course, initialDayFilter, users, lang, currentUser, mat
                     )}
                   </div>
                 </div>
-              ))}
+                );})}
             </div>
           ))}
         </div>
@@ -1241,7 +1309,7 @@ function CalendarView({ filtered, users, lang, currentUser, absences, materials,
 
 // ─── Slot-based List View ─────────────────────────────────────────────────────
 // Receives `slots` from enrollment scheduledDates — enrollment is the source of truth
-function SlotListView({ slots, users, lang, currentUser, absences, materials, setMaterials, onAbsent, setToast, weekDates, weekOffset, attendance, setAttendance, enrollments, setEnrollments, courses }) {
+function SlotListView({ slots, users, lang, currentUser, absences, materials, setMaterials, onAbsent, setToast, weekDates, weekOffset, attendance, setAttendance, enrollments, setEnrollments, courses, feedback, setFeedback }) {
   const t = T[lang];
   const todayDow = (new Date().getDay()+6)%7;
   const isThisWeek = weekOffset===0;
@@ -1279,7 +1347,7 @@ function SlotListView({ slots, users, lang, currentUser, absences, materials, se
             </div>
             {daySlotsRaw.map((sl,si)=>{
               const colorIdx = (sl.course.id.charCodeAt(0)||0) % COLORS.length;
-              return <SlotCourseCard key={sl.course.id+sl.date+sl.sessionNo} slot={sl} colorIdx={colorIdx} users={users} lang={lang} currentUser={currentUser} absences={absences} materials={materials} setMaterials={setMaterials} onAbsent={onAbsent} setToast={setToast} weekDates={weekDates} weekOffset={weekOffset} attendance={attendance} setAttendance={setAttendance} enrollments={enrollments} setEnrollments={setEnrollments} courses={courses}/>;
+              return <SlotCourseCard key={sl.course.id+sl.date+sl.sessionNo} slot={sl} colorIdx={colorIdx} users={users} lang={lang} currentUser={currentUser} absences={absences} materials={materials} setMaterials={setMaterials} onAbsent={onAbsent} setToast={setToast} weekDates={weekDates} weekOffset={weekOffset} attendance={attendance} setAttendance={setAttendance} enrollments={enrollments} setEnrollments={setEnrollments} courses={courses} feedback={feedback} setFeedback={setFeedback}/>;
             })}
           </div>
         );
@@ -1289,14 +1357,17 @@ function SlotListView({ slots, users, lang, currentUser, absences, materials, se
 }
 
 // ─── Slot-based Calendar View ─────────────────────────────────────────────────
-function SlotCalendarView({ slots, users, lang, currentUser, absences, materials, setMaterials, onAbsent, setToast, weekDates, weekOffset, attendance, setAttendance, enrollments, setEnrollments, courses }) {
+function SlotCalendarView({ slots, users, lang, currentUser, absences, materials, setMaterials, onAbsent, setToast, weekDates, weekOffset, attendance, setAttendance, enrollments, setEnrollments, courses, feedback, setFeedback }) {
   const t = T[lang];
   const todayDow = (new Date().getDay()+6)%7;
   const isThisWeek = weekOffset===0;
   const [matTarget, setMatTarget] = useState(null);
   const [detTarget, setDetTarget] = useState(null);
   const [adminEditTarget, setAdminEditTarget] = useState(null); // slot being edited by admin
+  const [fbTarget, setFbTarget] = useState(null); // slot being written/viewed for feedback
   const isAdmin = currentUser.role==="admin";
+  const isTeacher = currentUser.role==="teacher";
+  const isStudent = currentUser.role==="student";
   const byDay = {};
   slots.forEach(s=>{ if(!byDay[s.dayIndex]) byDay[s.dayIndex]=[]; byDay[s.dayIndex].push(s); });
 
@@ -1305,6 +1376,7 @@ function SlotCalendarView({ slots, users, lang, currentUser, absences, materials
       {matTarget&&<MaterialPanel course={matTarget.course} initialDayFilter={matTarget.dayIndex} users={users} lang={lang} currentUser={currentUser} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setMatTarget(null)}/>}
       {detTarget&&<CourseDetailModal course={detTarget.course} dayIndex={detTarget.dayIndex} users={users} lang={lang} materials={materials} onClose={()=>setDetTarget(null)}/>}
       {adminEditTarget&&<AdminSessionModal slot={adminEditTarget} users={users} lang={lang} attendance={attendance||[]} setAttendance={setAttendance} enrollments={enrollments||[]} setEnrollments={setEnrollments} courses={courses||[]} setToast={setToast} onClose={()=>setAdminEditTarget(null)}/>}
+      {fbTarget&&<FeedbackModal slot={fbTarget} currentUser={currentUser} users={users} lang={lang} feedback={feedback||[]} setFeedback={setFeedback} setToast={setToast} onClose={()=>setFbTarget(null)} readOnly={isStudent}/>}
       <div style={{minWidth:520}}>
         {/* Day headers */}
         <div style={{display:"grid",gridTemplateColumns:"repeat(7,minmax(0,1fr))",gap:3,marginBottom:3}}>
@@ -1340,9 +1412,13 @@ function SlotCalendarView({ slots, users, lang, currentUser, absences, materials
                   const teacher=users.find(u=>u.id===sl.course.teacherId);
                   const student=users.find(u=>u.id===sl.course.studentId);
                   const attRec=attendance.find(a=>a.enrollmentId===sl.enrollment.id&&a.date===sl.date);
+                  const fbRec=(feedback||[]).find(f=>f.enrollmentId===sl.enrollment.id&&f.date===sl.date);
                   const dayMatCount=materials.filter(m=>m.courseId===sl.course.id&&m.dayIndex===sl.dayIndex).length;
                   const dimText=isAbsent||isPast?"#9E9E9E":col.text;
                   const dimBorder=isAbsent||isPast?"#CFD8DC":col.border;
+                  const showTeacherFbBtn = isTeacher && isPast;
+                  const showStudentFbBtn = isStudent && isPast && fbRec?.status==="approved";
+                  const fbColor = fbRec ? {pending:"#E65100",approved:"#2E7D32",rejected:"#D32F2F"}[fbRec.status] : "#7B1FA2";
                   return (
                     <div key={sl.course.id+sl.date+sl.sessionNo} style={{background:isAbsent?"#F9F9F9":col.bg,border:`1px solid ${dimBorder}`,borderRadius:6,padding:"5px 6px",marginBottom:3,opacity:isAbsent?0.55:isPast?0.6:1}}>
                       <div onClick={()=>setDetTarget({course:sl.course,dayIndex:sl.dayIndex})} style={{cursor:"pointer",marginBottom:2,display:"flex",justifyContent:"space-between",gap:2}}>
@@ -1360,8 +1436,12 @@ function SlotCalendarView({ slots, users, lang, currentUser, absences, materials
                         {!isAbsent&&!isPast&&sl.course.meetingUrl&&<a href={sl.course.meetingUrl} target="_blank" rel="noreferrer" style={{fontSize:9,fontWeight:500,background:col.border,color:"#fff",borderRadius:3,padding:"2px 5px",textDecoration:"none"}}>{t.join}</a>}
                         <button onClick={()=>setMatTarget({course:sl.course,dayIndex:sl.dayIndex})} style={{fontSize:9,background:"transparent",border:`1px solid ${dimBorder}`,color:dimText,borderRadius:3,padding:"2px 5px",cursor:"pointer"}}>📄{dayMatCount>0?` ${dayMatCount}`:""}</button>
                         {canAbsent&&!isAbsent&&!isPast&&!attRec&&<button onClick={()=>{if(leaveOk)onAbsent(sl.course,sl.dayIndex);else setToast(t.absentTooLate);}} style={{fontSize:8,background:"transparent",border:`1px solid ${leaveOk?"#9E9E9E":"#E0E0E0"}`,color:leaveOk?"#9E9E9E":"#CFD8DC",borderRadius:3,padding:"2px 4px",cursor:leaveOk?"pointer":"not-allowed",opacity:leaveOk?0.6:0.25,marginLeft:"auto"}} title={leaveOk?t.absent:t.absentTooLate}>{lang==="zh"?"假":"Lv"}</button>}
+                        {/* Teacher: write/edit feedback */}
+                        {showTeacherFbBtn&&<button onClick={()=>setFbTarget(sl)} title={t.feedbackShort} style={{fontSize:9,background:fbRec?`${fbColor}18`:"transparent",border:`1px solid ${fbColor}`,color:fbColor,borderRadius:3,padding:"2px 5px",cursor:"pointer",marginLeft:"auto",fontWeight:600}}>💬</button>}
+                        {/* Student: view approved feedback */}
+                        {showStudentFbBtn&&<button onClick={()=>setFbTarget(sl)} title={t.feedbackFromTeacher} style={{fontSize:9,background:"rgba(46,125,50,0.12)",border:"1px solid #2E7D32",color:"#2E7D32",borderRadius:3,padding:"2px 5px",cursor:"pointer",marginLeft:"auto",fontWeight:600}}>💬</button>}
                         {/* Admin: edit session status — works for past AND future sessions */}
-                        {isAdmin&&<button onClick={()=>setAdminEditTarget(sl)} title={t.adminSessionEdit} style={{fontSize:9,background:attRec?"rgba(26,107,138,0.12)":"transparent",border:`1px solid ${attRec?"#1A6B8A":dimBorder}`,color:attRec?"#1A6B8A":dimText,borderRadius:3,padding:"2px 5px",cursor:"pointer",marginLeft:"auto",fontWeight:attRec?700:400}}>📝</button>}
+                        {isAdmin&&<button onClick={()=>setAdminEditTarget(sl)} title={t.adminSessionEdit} style={{fontSize:9,background:attRec?"rgba(26,107,138,0.12)":"transparent",border:`1px solid ${attRec?"#1A6B8A":dimBorder}`,color:attRec?"#1A6B8A":dimText,borderRadius:3,padding:"2px 5px",cursor:"pointer",marginLeft:isAdmin&&!canAbsent?"auto":0,fontWeight:attRec?700:400}}>📝</button>}
                       </div>
                     </div>
                   );
@@ -1515,8 +1595,121 @@ function AdminSessionModal({ slot, users, lang, attendance, setAttendance, enrol
   );
 }
 
+// ─── Feedback Modal ───────────────────────────────────────────────────────────
+// Used by teachers to write/edit post-class feedback for a completed session,
+// and by students (read-only) to view feedback once admin has approved it.
+function FeedbackModal({ slot, currentUser, users, lang, feedback, setFeedback, setToast, onClose, readOnly }) {
+  const t = T[lang];
+  const {course, date, dayIndex, sessionNo, enrollment} = slot;
+  const teacher = users.find(u=>u.id===course.teacherId);
+  const student  = users.find(u=>u.id===course.studentId);
+  const endTime  = addMins(course.start, course.duration);
+
+  const existing = feedback.find(f=>f.enrollmentId===enrollment.id && f.date===date);
+  const [text, setText] = useState(existing?.text || "");
+
+  const STATUS_META = {
+    pending:  {label:t.feedbackStatusPending,  color:"#E65100", bg:"#FFF3E0"},
+    approved: {label:t.feedbackStatusApproved, color:"#2E7D32", bg:"#E8F5E9"},
+    rejected: {label:t.feedbackStatusRejected, color:"#D32F2F", bg:"#FFEBEE"},
+  };
+  const statusMeta = existing ? STATUS_META[existing.status] : null;
+
+  const save = () => {
+    if (!text.trim()) return;
+    const rec = {
+      id: existing?.id || genId(),
+      enrollmentId: enrollment.id,
+      courseId: course.id,
+      studentId: course.studentId,
+      teacherId: course.teacherId,
+      date, dayIndex, sessionNo,
+      text: text.trim(),
+      status: "pending", // (re)submitting always resets to pending for review
+      createdAt: existing?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      reviewedAt: "",
+      reviewedBy: "",
+    };
+    if (existing) {
+      setFeedback(prev => prev.map(f => f.id===existing.id ? rec : f));
+    } else {
+      setFeedback(prev => [...prev, rec]);
+    }
+    setToast(t.feedbackSaved);
+    onClose();
+  };
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9100,padding:"1rem"}}>
+      <div style={{background:"#FFFFFF",borderRadius:16,width:"100%",maxWidth:460,boxSizing:"border-box",boxShadow:"0 8px 36px rgba(23,47,57,0.2)",overflow:"hidden"}}>
+        {/* Header */}
+        <div style={{background:"#172F39",padding:"13px 18px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{fontSize:14,fontWeight:600,color:"#fff"}}>💬 {readOnly ? t.feedbackView : (existing ? t.feedbackEdit : t.feedbackWrite)}</span>
+          <button onClick={onClose} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",color:"#fff",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
+        <div style={{padding:"16px 18px"}}>
+          {/* Session info */}
+          <div style={{background:"#F5F5F5",borderRadius:8,padding:"10px 13px",marginBottom:14,fontSize:12,color:"#546E7A",lineHeight:1.7}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div>
+                <div style={{fontWeight:600,color:"#172F39",fontSize:13}}>{course.subject}</div>
+                <div>{date} ({T[lang].days[dayIndex]}) · {course.start}–{endTime}</div>
+                <div>{lang==="zh"?"學生":"Student"}: {student?.name||"—"} · {lang==="zh"?"老師":"Teacher"}: {teacher?.name||"—"}</div>
+              </div>
+              <span style={{fontSize:11,background:"rgba(26,107,138,0.1)",color:"#1A6B8A",borderRadius:4,padding:"2px 7px",fontWeight:500,flexShrink:0}}>#{sessionNo}</span>
+            </div>
+            {statusMeta && (
+              <div style={{marginTop:6}}>
+                <span style={{fontSize:11,background:statusMeta.bg,color:statusMeta.color,borderRadius:4,padding:"2px 8px",fontWeight:600}}>● {statusMeta.label}</span>
+                {existing.status==="rejected" && existing.reviewNote && (
+                  <div style={{marginTop:4,fontSize:11,color:"#D32F2F"}}>↳ {existing.reviewNote}</div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Feedback text */}
+          <label style={{fontSize:12,color:"#546E7A",display:"block",marginBottom:5,fontWeight:500}}>{t.feedbackLabel}</label>
+          {readOnly ? (
+            <div style={{background:"#F5F5F5",borderRadius:8,padding:"12px 14px",fontSize:13,color:"#172F39",lineHeight:1.7,whiteSpace:"pre-wrap",minHeight:100}}>
+              {existing?.text || t.feedbackNone}
+            </div>
+          ) : (
+            <textarea
+              value={text}
+              onChange={e=>setText(e.target.value)}
+              rows={6}
+              placeholder={t.feedbackPlaceholder}
+              style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13,lineHeight:1.6,resize:"vertical",fontFamily:"inherit"}}
+              autoFocus
+            />
+          )}
+
+          {/* Buttons */}
+          {!readOnly && (
+            <div style={{display:"flex",gap:8,marginTop:14}}>
+              <button onClick={save} disabled={!text.trim()} style={{flex:1,background:text.trim()?"#1A6B8A":"#E0E0E0",border:"none",borderRadius:7,color:text.trim()?"#fff":"#9E9E9E",padding:"10px",fontSize:13,fontWeight:600,cursor:text.trim()?"pointer":"not-allowed"}}>
+                ✓ {t.feedbackSave}
+              </button>
+              <button onClick={onClose} style={{padding:"10px 16px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>
+                {t.cancel}
+              </button>
+            </div>
+          )}
+          {readOnly && (
+            <button onClick={onClose} style={{width:"100%",marginTop:14,padding:"10px",borderRadius:7,background:"#1A6B8A",border:"none",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+              {lang==="zh"?"關閉":"Close"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Slot course card (for list view) ────────────────────────────────────────
-function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, materials, setMaterials, onAbsent, setToast, weekDates, weekOffset, attendance, setAttendance, enrollments, setEnrollments, courses }) {
+function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, materials, setMaterials, onAbsent, setToast, weekDates, weekOffset, attendance, setAttendance, enrollments, setEnrollments, courses, feedback, setFeedback }) {
   const t = T[lang];
   const {course, dayIndex, date, enrollment, sessionNo} = slot;
   const teacher = users.find(u=>u.id===course.teacherId);
@@ -1526,6 +1719,8 @@ function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, ma
   const isAbsent = absences.some(a=>a.courseId===course.id&&a.dateStr===date);
   const canAbsent = currentUser.role==="student"||currentUser.role==="teacher";
   const isAdmin = currentUser.role==="admin";
+  const isTeacher = currentUser.role==="teacher";
+  const isStudent = currentUser.role==="student";
   const leaveOk  = canRequestLeaveForWeek(weekDates, dayIndex, course.start, course.duration);
   const status   = classStatusForWeek(weekDates, dayIndex, course.start, course.duration);
   const isPast   = status==="past";
@@ -1533,10 +1728,12 @@ function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, ma
   const attRec   = (attendance||[]).find(a=>a.enrollmentId===enrollment.id&&a.date===date);
   const totalMatCount = materials.filter(m=>m.courseId===course.id).length;
   const dayMatCount   = materials.filter(m=>m.courseId===course.id&&m.dayIndex===dayIndex).length;
+  const fbRec = (feedback||[]).find(f=>f.enrollmentId===enrollment.id&&f.date===date);
   const [showMat, setShowMat] = useState(false);
   const [matInitDay, setMatInitDay] = useState(null);
   const [showDetail, setShowDetail] = useState(false);
   const [showAdminEdit, setShowAdminEdit] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
   const openMat = (d) => { setMatInitDay(d); setShowMat(true); };
 
   const cardOpacity = isAbsent?0.55:isPast?0.5:1;
@@ -1551,11 +1748,23 @@ function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, ma
     other:         {label:lang==="zh"?"備註":"Note",        color:"#9E9E9E", bg:"rgba(158,158,158,0.1)"},
   }[attRec.type] : null;
 
+  const FB_STATUS = {
+    pending:  {label:t.feedbackStatusPending,  color:"#E65100"},
+    approved: {label:t.feedbackStatusApproved, color:"#2E7D32"},
+    rejected: {label:t.feedbackStatusRejected, color:"#D32F2F"},
+  };
+
+  // Teacher: can write/edit feedback once the session is over
+  const showTeacherFbBtn = isTeacher && isPast;
+  // Student: can view feedback only once it's approved
+  const showStudentFbBtn = isStudent && isPast && fbRec?.status==="approved";
+
   return (
     <>
       {showDetail&&<CourseDetailModal course={course} dayIndex={dayIndex} users={users} lang={lang} materials={materials} onClose={()=>setShowDetail(false)}/>}
       {showMat&&<MaterialPanel course={course} initialDayFilter={matInitDay} users={users} lang={lang} currentUser={currentUser} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setShowMat(false)}/>}
       {showAdminEdit&&<AdminSessionModal slot={slot} users={users} lang={lang} attendance={attendance||[]} setAttendance={setAttendance} enrollments={enrollments||[]} setEnrollments={setEnrollments} courses={courses||[]} setToast={setToast} onClose={()=>setShowAdminEdit(false)}/>}
+      {showFeedback&&<FeedbackModal slot={slot} currentUser={currentUser} users={users} lang={lang} feedback={feedback||[]} setFeedback={setFeedback} setToast={setToast} onClose={()=>setShowFeedback(false)} readOnly={isStudent}/>}
       <div style={{background:cardBg,border:`1.5px solid ${cardBorder}`,borderRadius:10,padding:"10px 14px",marginBottom:8,opacity:cardOpacity}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:4}}>
           <div style={{display:"flex",alignItems:"center",gap:6,flex:1,minWidth:0}}>
@@ -1576,12 +1785,28 @@ function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, ma
         {isAdmin&&<div style={{fontSize:11,color:"#9E9E9E",marginTop:1}}>{lang==="zh"?"付費排課":"Enrollment"}: {enrollment.payDate} · {enrollment.totalSessions}{lang==="zh"?"堂":"sess."}</div>}
         {isAbsent&&<div style={{fontSize:11,color:"#D32F2F",marginTop:3,fontWeight:500}}>● {t.absentAlready}</div>}
         {attBadge&&<div style={{fontSize:11,color:attBadge.color,background:attBadge.bg,borderRadius:4,padding:"2px 8px",marginTop:4,display:"inline-block",fontWeight:500}}>● {attBadge.label}{attRec?.note?` — ${attRec.note}`:""}</div>}
+        {/* Feedback status badge — visible to teacher (their own submission) and admin */}
+        {fbRec && (isTeacher||isAdmin) && (
+          <div style={{fontSize:11,color:FB_STATUS[fbRec.status].color,marginTop:4,fontWeight:500}}>💬 {t.feedbackShort}: {FB_STATUS[fbRec.status].label}</div>
+        )}
         <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap",alignItems:"center"}}>
           {!isAbsent&&!isPast&&course.meetingUrl&&<a href={course.meetingUrl} target="_blank" rel="noreferrer" style={{fontSize:13,fontWeight:500,background:col.border,color:"#fff",borderRadius:6,padding:"5px 14px",textDecoration:"none"}}>{t.join}</a>}
           <button onClick={()=>openMat(dayIndex)} style={{fontSize:13,fontWeight:500,background:"transparent",border:`1.5px solid ${isAbsent||isPast?"#CFD8DC":col.border}`,color:textCol,borderRadius:6,padding:"5px 14px",cursor:"pointer"}}>
             📄 {t.matForDay}{dayMatCount>0?` (${dayMatCount})`:""}
           </button>
           {totalMatCount>dayMatCount&&<button onClick={()=>openMat(null)} style={{fontSize:13,fontWeight:500,background:"transparent",border:`1.5px solid ${isAbsent||isPast?"#CFD8DC":col.border}`,color:textCol,borderRadius:6,padding:"5px 14px",cursor:"pointer"}}>📚 {t.allMaterials} ({totalMatCount})</button>}
+          {/* Teacher: write/edit post-class feedback */}
+          {showTeacherFbBtn && (
+            <button onClick={()=>setShowFeedback(true)} style={{fontSize:13,fontWeight:500,background:fbRec?"transparent":"#7B1FA2",border:fbRec?`1.5px solid ${FB_STATUS[fbRec.status].color}`:"1.5px solid #7B1FA2",color:fbRec?FB_STATUS[fbRec.status].color:"#fff",borderRadius:6,padding:"5px 14px",cursor:"pointer"}}>
+              💬 {fbRec?t.feedbackEdit:t.feedbackWrite}
+            </button>
+          )}
+          {/* Student: view approved feedback */}
+          {showStudentFbBtn && (
+            <button onClick={()=>setShowFeedback(true)} style={{fontSize:13,fontWeight:500,background:"#E8F5E9",border:"1.5px solid #2E7D32",color:"#2E7D32",borderRadius:6,padding:"5px 14px",cursor:"pointer"}}>
+              💬 {t.feedbackFromTeacher}
+            </button>
+          )}
           {canAbsent&&!isAbsent&&!isPast&&!attRec&&(
             <button onClick={()=>{if(leaveOk)onAbsent(course,dayIndex);else setToast(t.absentTooLate);}}
               style={{marginLeft:"auto",fontSize:10,background:"transparent",border:`1px solid ${leaveOk?"#9E9E9E":"#E0E0E0"}`,color:leaveOk?"#9E9E9E":"#CFD8DC",borderRadius:5,padding:"3px 8px",cursor:leaveOk?"pointer":"not-allowed",opacity:leaveOk?0.7:0.35}}
@@ -1612,7 +1837,7 @@ function getWeekSlots(courses, enrollments, weekDates) {
   return slots;
 }
 
-function ScheduleView({ currentUser, users, courses, lang, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, setToast }) {
+function ScheduleView({ currentUser, users, courses, lang, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, setToast, feedback, setFeedback }) {
   const t = T[lang];
   const [viewMode, setViewMode] = useState("calendar");
   const [weekOffset, setWeekOffset] = useState(0);
@@ -1752,8 +1977,8 @@ function ScheduleView({ currentUser, users, courses, lang, absences, setAbsences
         </div>
       ) : (
         viewMode==="list"
-          ?<SlotListView slots={weekSlots} users={users} lang={lang} currentUser={currentUser} absences={absences} materials={materials} setMaterials={setMaterials} onAbsent={handleAbsent} setToast={setToast} weekDates={weekDates} weekOffset={weekOffset} attendance={attendance} setAttendance={setAttendance} setEnrollments={setEnrollments} enrollments={enrollments} courses={courses}/>
-          :<SlotCalendarView slots={weekSlots} users={users} lang={lang} currentUser={currentUser} absences={absences} materials={materials} setMaterials={setMaterials} onAbsent={handleAbsent} setToast={setToast} weekDates={weekDates} weekOffset={weekOffset} attendance={attendance} setAttendance={setAttendance} setEnrollments={setEnrollments} enrollments={enrollments} courses={courses}/>
+          ?<SlotListView slots={weekSlots} users={users} lang={lang} currentUser={currentUser} absences={absences} materials={materials} setMaterials={setMaterials} onAbsent={handleAbsent} setToast={setToast} weekDates={weekDates} weekOffset={weekOffset} attendance={attendance} setAttendance={setAttendance} setEnrollments={setEnrollments} enrollments={enrollments} courses={courses} feedback={feedback} setFeedback={setFeedback}/>
+          :<SlotCalendarView slots={weekSlots} users={users} lang={lang} currentUser={currentUser} absences={absences} materials={materials} setMaterials={setMaterials} onAbsent={handleAbsent} setToast={setToast} weekDates={weekDates} weekOffset={weekOffset} attendance={attendance} setAttendance={setAttendance} setEnrollments={setEnrollments} enrollments={enrollments} courses={courses} feedback={feedback} setFeedback={setFeedback}/>
       )}
     </div>
   );
@@ -3581,13 +3806,15 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
 }
 
 // ─── Admin panel ──────────────────────────────────────────────────────────────
-function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, lang, setToast, introText, setIntroText }) {
+function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, lang, setToast, introText, setIntroText, feedback, setFeedback }) {
   const t = T[lang];
   const [tab, setTab] = useState("courses");
+  const pendingFbCount = (feedback||[]).filter(f=>f.status==="pending").length;
   const tabs = [
     {key:"courses", label:t.courses},
     {key:"enroll",  label:t.enrollments},
     {key:"leave",   label:t.leaveReview},
+    {key:"feedback",label:t.feedbackReview, badge:pendingFbCount},
     {key:"studir",  label:t.studentDir},
     {key:"users",   label:t.manageUsers},
     {key:"tstats",  label:t.teacherStats},
@@ -3599,19 +3826,383 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
       <h2 style={{fontSize:18,fontWeight:500,color:"#172F39",margin:"0 0 1.25rem"}}>{t.adminPanel}</h2>
       <div style={{display:"flex",gap:2,marginBottom:"1.5rem",flexWrap:"wrap",borderBottom:"0.5px solid #E0E0E0",paddingBottom:0}}>
         {tabs.map(tb=>(
-          <button key={tb.key} onClick={()=>setTab(tb.key)} style={{padding:"7px 12px",borderRadius:"6px 6px 0 0",border:"none",borderBottom:tab===tb.key?"2px solid #1A6B8A":"2px solid transparent",background:tab===tb.key?"#EEF6FB":"transparent",color:tab===tb.key?"#1A6B8A":"#546E7A",fontSize:12,cursor:"pointer",marginBottom:-1,whiteSpace:"nowrap"}}>
+          <button key={tb.key} onClick={()=>setTab(tb.key)} style={{position:"relative",padding:"7px 12px",borderRadius:"6px 6px 0 0",border:"none",borderBottom:tab===tb.key?"2px solid #1A6B8A":"2px solid transparent",background:tab===tb.key?"#EEF6FB":"transparent",color:tab===tb.key?"#1A6B8A":"#546E7A",fontSize:12,cursor:"pointer",marginBottom:-1,whiteSpace:"nowrap"}}>
             {tb.label}
+            {!!tb.badge && <span style={{position:"absolute",top:-2,right:-2,background:"#D32F2F",color:"#fff",borderRadius:"50%",width:16,height:16,fontSize:9,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}>{tb.badge}</span>}
           </button>
         ))}
       </div>
       {tab==="courses"&&<CourseManager users={users} courses={courses} setCourses={setCourses} lang={lang} setToast={setToast} materials={materials} setMaterials={setMaterials}/>}
       {tab==="enroll" &&<EnrollmentManager users={users} courses={courses} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} lang={lang} setToast={setToast}/>}
       {tab==="leave"  &&<LeaveReview users={users} courses={courses} absences={absences} setAbsences={setAbsences} attendance={attendance} setAttendance={setAttendance} enrollments={enrollments} lang={lang}/>}
+      {tab==="feedback"&&<FeedbackReview users={users} courses={courses} enrollments={enrollments} feedback={feedback||[]} setFeedback={setFeedback} lang={lang} setToast={setToast}/>}
       {tab==="studir" &&<StudentDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses}/>}
       {tab==="users"  &&<UserManager users={users} setUsers={setUsers} lang={lang} setToast={setToast}/>}
       {tab==="tstats" &&<TeacherStats users={users} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang}/>}
       {tab==="sstats" &&<StudentStats users={users} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang}/>}
       {tab==="settings"&&<SiteSettings introText={introText} setIntroText={setIntroText} lang={lang} setToast={setToast}/>}
+    </div>
+  );
+}
+
+// ─── Feedback Review (admin) ──────────────────────────────────────────────────
+// Simple check-and-approve flow: view the teacher's written feedback, then
+// one click to Approve (becomes visible to the student) or Reject.
+function FeedbackReview({ users, courses, enrollments, feedback, setFeedback, lang, setToast }) {
+  const t = T[lang];
+  const [filter, setFilter] = useState("pending"); // pending | all
+  const [rejectTarget, setRejectTarget] = useState(null); // feedback id (or "_batch") pending a reject-reason prompt
+  const [rejectNote, setRejectNote] = useState("");
+  const [selected, setSelected] = useState(new Set()); // selected feedback ids (pending only)
+  const [showBatchInput, setShowBatchInput] = useState(false);
+
+  const getCourse = id => courses.find(c=>c.id===id);
+  const getUser = id => users.find(u=>u.id===id);
+
+  const list = (feedback||[])
+    .filter(f => filter==="all" || f.status==="pending")
+    .sort((a,b) => (b.updatedAt||"").localeCompare(a.updatedAt||""));
+
+  const pendingIds = list.filter(f=>f.status==="pending").map(f=>f.id);
+  const allPendingSelected = pendingIds.length>0 && pendingIds.every(id=>selected.has(id));
+
+  const toggleSel = (id) => setSelected(s=>{const n=new Set(s); n.has(id)?n.delete(id):n.add(id); return n;});
+  const toggleSelAll = () => setSelected(allPendingSelected ? new Set() : new Set(pendingIds));
+
+  const approve = (f) => {
+    setFeedback(prev => prev.map(x => x.id===f.id ? {...x, status:"approved", reviewedAt:new Date().toISOString(), reviewedBy:"admin", reviewNote:""} : x));
+    setToast(t.feedbackApproved);
+  };
+  const openReject = (f) => { setRejectTarget(f); setRejectNote(""); };
+  const confirmReject = () => {
+    if (rejectTarget === "_batch") {
+      setFeedback(prev => prev.map(x => selected.has(x.id) ? {...x, status:"rejected", reviewedAt:new Date().toISOString(), reviewedBy:"admin", reviewNote:rejectNote.trim()} : x));
+      setToast(t.feedbackBatchRejected.replace("{n}", selected.size));
+      setSelected(new Set());
+    } else {
+      setFeedback(prev => prev.map(x => x.id===rejectTarget.id ? {...x, status:"rejected", reviewedAt:new Date().toISOString(), reviewedBy:"admin", reviewNote:rejectNote.trim()} : x));
+      setToast(t.feedbackRejected);
+    }
+    setRejectTarget(null); setRejectNote("");
+  };
+
+  const batchApprove = () => {
+    if (selected.size===0) return;
+    setFeedback(prev => prev.map(x => selected.has(x.id) ? {...x, status:"approved", reviewedAt:new Date().toISOString(), reviewedBy:"admin", reviewNote:""} : x));
+    setToast(t.feedbackBatchApproved.replace("{n}", selected.size));
+    setSelected(new Set());
+  };
+  const batchReject = () => {
+    if (selected.size===0) return;
+    setRejectTarget("_batch"); setRejectNote("");
+  };
+
+  const STATUS_META = {
+    pending:  {label:t.feedbackStatusPending,  color:"#E65100", bg:"#FFF3E0"},
+    approved: {label:t.feedbackStatusApproved, color:"#2E7D32", bg:"#E8F5E9"},
+    rejected: {label:t.feedbackStatusRejected, color:"#D32F2F", bg:"#FFEBEE"},
+  };
+
+  return (
+    <div>
+      {showBatchInput && <BatchFeedbackModal users={users} courses={courses} enrollments={enrollments} setFeedback={setFeedback} lang={lang} setToast={setToast} onClose={()=>setShowBatchInput(false)}/>}
+
+      {/* Reject reason modal (single or batch) */}
+      {rejectTarget && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9200,padding:"1rem"}}>
+          <div style={{background:"#FFFFFF",borderRadius:14,width:"100%",maxWidth:380,boxSizing:"border-box",boxShadow:"0 8px 32px rgba(23,47,57,0.18)",overflow:"hidden"}}>
+            <div style={{background:"#172F39",padding:"12px 16px"}}>
+              <span style={{fontSize:14,fontWeight:600,color:"#fff"}}>{t.feedbackReject}{rejectTarget==="_batch"?` (${selected.size})`:""}</span>
+            </div>
+            <div style={{padding:"16px"}}>
+              <label style={{fontSize:12,color:"#546E7A",display:"block",marginBottom:6}}>{t.feedbackRejectReason}</label>
+              <input
+                value={rejectNote}
+                onChange={e=>setRejectNote(e.target.value)}
+                placeholder={lang==="zh"?"例：內容需要更具體…":"e.g. Needs more specific detail…"}
+                style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13,marginBottom:14}}
+                autoFocus
+              />
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={confirmReject} style={{flex:1,background:"#D32F2F",border:"none",borderRadius:7,color:"#fff",padding:"9px",fontSize:13,fontWeight:600,cursor:"pointer"}}>✓ {t.feedbackReject}</button>
+                <button onClick={()=>setRejectTarget(null)} style={{padding:"9px 16px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>{t.cancel}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10,marginBottom:4}}>
+        <div>
+          <h3 style={{fontSize:16,fontWeight:600,color:"#172F39",margin:"0 0 4px"}}>{t.feedbackReview}</h3>
+          <p style={{fontSize:12,color:"#9E9E9E",margin:0}}>{t.feedbackReviewDesc}</p>
+        </div>
+        <button onClick={()=>setShowBatchInput(true)} style={{background:"#7B1FA2",border:"none",borderRadius:7,color:"#fff",padding:"8px 16px",fontSize:12,fontWeight:500,cursor:"pointer",whiteSpace:"nowrap"}}>
+          📋 {t.feedbackBatchInput}
+        </button>
+      </div>
+
+      {/* Filter */}
+      <div style={{display:"flex",gap:5,marginTop:14,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
+        {[["pending",t.feedbackReview],["all",t.feedbackAllReviewed]].map(([k,l])=>(
+          <button key={k} onClick={()=>{setFilter(k);setSelected(new Set());}} style={{padding:"5px 14px",borderRadius:6,fontSize:12,cursor:"pointer",border:filter===k?"none":"0.5px solid #CFD8DC",background:filter===k?"#1A6B8A":"transparent",color:filter===k?"#fff":"#546E7A"}}>
+            {k==="pending"?(lang==="zh"?"待審核":"Pending"):(lang==="zh"?"全部":"All")}
+          </button>
+        ))}
+      </div>
+
+      {/* Batch selection toolbar — only relevant when there's pending items in view */}
+      {pendingIds.length>0 && (
+        <div style={{display:"flex",alignItems:"center",gap:10,background:"#F5F5F5",border:"0.5px solid #E0E0E0",borderRadius:8,padding:"8px 12px",marginBottom:14,flexWrap:"wrap"}}>
+          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"#546E7A",cursor:"pointer"}}>
+            <input type="checkbox" checked={allPendingSelected} onChange={toggleSelAll} style={{cursor:"pointer"}}/>
+            {t.feedbackSelectAll}
+          </label>
+          {selected.size>0 && (
+            <>
+              <span style={{fontSize:12,color:"#1A6B8A",fontWeight:500}}>{t.feedbackSelected.replace("{n}", selected.size)}</span>
+              <button onClick={batchApprove} style={{marginLeft:"auto",background:"#2E7D32",border:"none",borderRadius:6,color:"#fff",padding:"6px 14px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                ✓ {t.feedbackBatchApprove}
+              </button>
+              <button onClick={batchReject} style={{background:"transparent",border:"1px solid #D32F2F",borderRadius:6,color:"#D32F2F",padding:"6px 14px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                ✕ {t.feedbackBatchReject}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {list.length===0 && (
+        <div style={{textAlign:"center",padding:"2.5rem 0",color:"#9E9E9E"}}>
+          <div style={{fontSize:28,marginBottom:8}}>✅</div>
+          <div style={{fontSize:13}}>{t.feedbackNoPending}</div>
+        </div>
+      )}
+
+      {list.map(f => {
+        const course = getCourse(f.courseId);
+        const teacher = getUser(f.teacherId);
+        const student = getUser(f.studentId);
+        const meta = STATUS_META[f.status];
+        return (
+          <div key={f.id} style={{background:selected.has(f.id)?"#EEF6FB":"#FFFFFF",border:`1px solid ${selected.has(f.id)?"#1A6B8A":meta.color+"33"}`,borderRadius:10,padding:"14px 16px",marginBottom:10,display:"flex",gap:10}}>
+            {f.status==="pending" && (
+              <input type="checkbox" checked={selected.has(f.id)} onChange={()=>toggleSel(f.id)} style={{marginTop:2,cursor:"pointer",flexShrink:0}}/>
+            )}
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,marginBottom:8,flexWrap:"wrap"}}>
+                <div>
+                  <div style={{fontWeight:600,fontSize:13,color:"#172F39"}}>{course?.subject||"—"}</div>
+                  <div style={{fontSize:11,color:"#9E9E9E",marginTop:2}}>
+                    {t.feedbackDate}: {f.date} ({T[lang].days[f.dayIndex]}) · #{f.sessionNo}
+                  </div>
+                  <div style={{fontSize:11,color:"#546E7A",marginTop:2}}>
+                    {t.feedbackBy}: <strong>{teacher?.name||"—"}</strong> → {t.feedbackFor}: <strong>{student?.name||"—"}</strong>
+                  </div>
+                </div>
+                <span style={{fontSize:11,background:meta.bg,color:meta.color,borderRadius:5,padding:"3px 10px",fontWeight:600,flexShrink:0}}>● {meta.label}</span>
+              </div>
+              <div style={{background:"#F5F5F5",borderRadius:8,padding:"10px 13px",fontSize:13,color:"#172F39",lineHeight:1.7,whiteSpace:"pre-wrap",marginBottom:10}}>
+                {f.text}
+              </div>
+              {f.status==="rejected" && f.reviewNote && (
+                <div style={{fontSize:11,color:"#D32F2F",marginBottom:10}}>↳ {t.feedbackRejectReason.split("（")[0].split("(")[0]}: {f.reviewNote}</div>
+              )}
+              {f.status==="pending" && (
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>approve(f)} style={{flex:1,background:"#2E7D32",border:"none",borderRadius:7,color:"#fff",padding:"8px",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                    ✓ {t.feedbackApprove}
+                  </button>
+                  <button onClick={()=>openReject(f)} style={{flex:1,background:"transparent",border:"1px solid #D32F2F",borderRadius:7,color:"#D32F2F",padding:"8px",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                    ✕ {t.feedbackReject}
+                  </button>
+                </div>
+              )}
+              {f.status!=="pending" && (
+                <button onClick={()=>setFeedback(prev=>prev.map(x=>x.id===f.id?{...x,status:"pending",reviewedAt:"",reviewedBy:"",reviewNote:""}:x))} style={{fontSize:11,padding:"5px 12px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>
+                  {lang==="zh"?"重新送審":"Re-open for review"}
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Batch Feedback Input (admin fills in on behalf of teacher) ──────────────
+// Paste Excel data (Date, Comments/Suggestions/New Vocabulary Sentence) for a
+// chosen course. Each row's date is matched against that course's scheduled
+// sessions (across all its enrollments); matched rows are imported and
+// approved immediately since the admin is entering/reviewing them directly.
+function normalizeFeedbackDate(str) {
+  const s = (str||"").trim().replace(/\//g, "-");
+  const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!m) return null;
+  const [, y, mo, d] = m;
+  return `${y}-${mo.padStart(2,"0")}-${d.padStart(2,"0")}`;
+}
+
+function BatchFeedbackModal({ users, courses, enrollments, setFeedback, lang, setToast, onClose }) {
+  const t = T[lang];
+  const [courseId, setCourseId] = useState(courses[0]?.id || "");
+  const [pasteText, setPasteText] = useState("");
+  const [parsed, setParsed] = useState([]); // [{date, text, match: {enrollment,session} | null}]
+  const [selected, setSelected] = useState(new Set());
+
+  const course = courses.find(c=>c.id===courseId);
+  const teacher = course ? users.find(u=>u.id===course.teacherId) : null;
+  const student = course ? users.find(u=>u.id===course.studentId) : null;
+  const courseEnrollments = course ? enrollments.filter(e=>e.courseId===course.id) : [];
+
+  const findMatch = (dateStr) => {
+    for (const enr of courseEnrollments) {
+      const s = (enr.scheduledDates||[]).find(sd=>sd.date===dateStr);
+      if (s) return {enrollment: enr, session: s};
+    }
+    return null;
+  };
+
+  const parseExcel = () => {
+    const rows = pasteText.trim().split(/\r?\n/).map(row=>row.split(/\t/).map(c=>c.trim()));
+    const result = rows
+      .filter(r => r.length>=2 && r[0] && r[1])
+      .map(r => {
+        const date = normalizeFeedbackDate(r[0]);
+        return { rawDate:r[0], date, text:r.slice(1).join(" ").trim(), match: date ? findMatch(date) : null };
+      })
+      // Drop the header row if present (e.g. "Date" doesn't normalize to a real date)
+      .filter(r => r.date !== null || r.rawDate.toLowerCase() !== "date");
+    setParsed(result);
+    setSelected(new Set(result.map((_,i)=>i).filter(i=>result[i].match)));
+  };
+
+  const toggleSel = (i) => setSelected(s=>{const n=new Set(s); n.has(i)?n.delete(i):n.add(i); return n;});
+
+  const doImport = () => {
+    const now = new Date().toISOString();
+    const newRecs = [];
+    parsed.forEach((row, i) => {
+      if (!selected.has(i) || !row.match) return;
+      const {enrollment, session} = row.match;
+      newRecs.push({
+        id: genId(),
+        enrollmentId: enrollment.id,
+        courseId: course.id,
+        studentId: course.studentId,
+        teacherId: course.teacherId,
+        date: row.date,
+        dayIndex: session.dayIndex,
+        sessionNo: session.sessionNo,
+        text: row.text,
+        status: "approved", // admin is entering + implicitly reviewing on the teacher's behalf
+        createdAt: now, updatedAt: now,
+        reviewedAt: now, reviewedBy: "admin",
+      });
+    });
+    if (!newRecs.length) return;
+    setFeedback(prev => {
+      // Replace any existing feedback for the same enrollment+date, otherwise append
+      const keys = new Set(newRecs.map(r=>r.enrollmentId+"|"+r.date));
+      const kept = prev.filter(f => !keys.has(f.enrollmentId+"|"+f.date));
+      return [...kept, ...newRecs];
+    });
+    setToast(t.feedbackImportDone.replace("{n}", newRecs.length));
+    setParsed([]); setPasteText(""); onClose();
+  };
+
+  const iStyle = {width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13};
+  const matchedCount = parsed.filter(r=>r.match).length;
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"flex-start",justifyContent:"center",zIndex:9300,padding:"1rem",overflowY:"auto"}}>
+      <div style={{background:"#FFFFFF",borderRadius:16,width:"100%",maxWidth:640,boxSizing:"border-box",boxShadow:"0 8px 40px rgba(23,47,57,0.2)",marginTop:"2rem",marginBottom:"2rem"}}>
+        <div style={{background:"#172F39",padding:"14px 20px",borderRadius:"16px 16px 0 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{fontSize:15,fontWeight:600,color:"#fff"}}>📋 {t.feedbackBatchInput}</span>
+          <button onClick={onClose} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",color:"#fff",fontSize:16}}>×</button>
+        </div>
+        <div style={{padding:"18px 20px"}}>
+          <p style={{fontSize:12,color:"#9E9E9E",margin:"0 0 14px",lineHeight:1.6}}>{t.feedbackBatchInputDesc}</p>
+
+          {/* Course selector */}
+          <label style={{fontSize:12,color:"#546E7A",display:"block",marginBottom:5}}>{t.feedbackSelectCourse}</label>
+          <select style={{...iStyle,marginBottom:8}} value={courseId} onChange={e=>{setCourseId(e.target.value);setParsed([]);setPasteText("");}}>
+            {courses.map(c=>{
+              const s = users.find(u=>u.id===c.studentId);
+              const te = users.find(u=>u.id===c.teacherId);
+              return <option key={c.id} value={c.id}>{c.subject} ({te?.name} → {s?.name})</option>;
+            })}
+          </select>
+          {course && (
+            <div style={{fontSize:11,color:"#9E9E9E",marginBottom:14}}>
+              {lang==="zh"?"老師":"Teacher"}: {teacher?.name||"—"} · {lang==="zh"?"學生":"Student"}: {student?.name||"—"} · {lang==="zh"?"排課紀錄":"Enrollments"}: {courseEnrollments.length}
+            </div>
+          )}
+
+          {/* Paste area */}
+          <p style={{fontSize:12,color:"#546E7A",margin:"0 0 8px",lineHeight:1.6}}>{t.feedbackPasteHint}</p>
+          <div style={{fontSize:11,background:"#E3F2FD",color:"#1565C0",borderRadius:5,padding:"5px 10px",marginBottom:10,fontFamily:"monospace"}}>{t.feedbackExcelCols}</div>
+          <textarea
+            value={pasteText}
+            onChange={e=>setPasteText(e.target.value)}
+            placeholder={lang==="zh"?"在此貼上從 Excel 複製的內容…":"Paste Excel content here…"}
+            style={{...iStyle,height:130,resize:"vertical",fontFamily:"monospace",lineHeight:1.5}}
+          />
+          <div style={{display:"flex",gap:8,marginTop:10}}>
+            <button onClick={parseExcel} disabled={!pasteText.trim()||!course} style={{padding:"8px 18px",borderRadius:7,background:(pasteText.trim()&&course)?"#1A6B8A":"#E0E0E0",border:"none",color:(pasteText.trim()&&course)?"#fff":"#9E9E9E",fontSize:13,cursor:(pasteText.trim()&&course)?"pointer":"not-allowed"}}>
+              🔍 {t.feedbackParseRows}
+            </button>
+            <button onClick={()=>{setPasteText("");setParsed([]);}} style={{padding:"8px 14px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>{t.cancel}</button>
+          </div>
+
+          {/* Preview */}
+          {parsed.length>0 && (
+            <div style={{marginTop:"1.25rem"}}>
+              <div style={{fontSize:13,fontWeight:500,color:"#172F39",marginBottom:8}}>
+                {t.parsedPreview} — {parsed.length} {lang==="zh"?"筆":"rows"} ({matchedCount} {t.feedbackMatched})
+              </div>
+              <div style={{maxHeight:320,overflowY:"auto",borderRadius:8,border:"0.5px solid #E0E0E0"}}>
+                <table style={{width:"100%",borderCollapse:"collapse"}}>
+                  <thead style={{background:"#F5F5F5",position:"sticky",top:0}}>
+                    <tr>
+                      <th style={{width:36,padding:"7px 8px"}}>
+                        <input type="checkbox" checked={selected.size===matchedCount&&matchedCount>0} onChange={()=>{
+                          if (selected.size===matchedCount) setSelected(new Set());
+                          else setSelected(new Set(parsed.map((_,i)=>i).filter(i=>parsed[i].match)));
+                        }} style={{cursor:"pointer"}}/>
+                      </th>
+                      <th style={{fontSize:11,fontWeight:600,color:"#546E7A",padding:"7px 8px",textAlign:"left"}}>{lang==="zh"?"日期":"Date"}</th>
+                      <th style={{fontSize:11,fontWeight:600,color:"#546E7A",padding:"7px 8px",textAlign:"left"}}>{lang==="zh"?"內容":"Text"}</th>
+                      <th style={{fontSize:11,fontWeight:600,color:"#546E7A",padding:"7px 8px",textAlign:"left"}}>{lang==="zh"?"狀態":"Status"}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {parsed.map((row,i)=>(
+                      <tr key={i} style={{background:selected.has(i)?"rgba(26,107,138,0.05)":"transparent",borderTop:"0.5px solid #F0F0F0"}}>
+                        <td style={{padding:"7px 8px"}}>
+                          <input type="checkbox" checked={selected.has(i)} onChange={()=>toggleSel(i)} disabled={!row.match} style={{cursor:row.match?"pointer":"not-allowed"}}/>
+                        </td>
+                        <td style={{fontSize:12,color:"#172F39",padding:"7px 8px",whiteSpace:"nowrap"}}>{row.date||row.rawDate}{row.match?` (#${row.match.session.sessionNo})`:""}</td>
+                        <td style={{fontSize:12,color:"#546E7A",padding:"7px 8px",maxWidth:260,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={row.text}>{row.text}</td>
+                        <td style={{padding:"7px 8px"}}>
+                          {row.match
+                            ? <span style={{fontSize:10,background:"#E8F5E9",color:"#2E7D32",borderRadius:4,padding:"2px 7px"}}>✓ {t.feedbackMatched}</span>
+                            : <span style={{fontSize:10,background:"#FFEBEE",color:"#D32F2F",borderRadius:4,padding:"2px 7px"}}>{t.feedbackNoMatch}</span>
+                          }
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <button onClick={doImport} disabled={selected.size===0} style={{marginTop:12,padding:"9px 20px",borderRadius:7,background:selected.size>0?"#2E7D32":"#E0E0E0",border:"none",color:selected.size>0?"#fff":"#9E9E9E",fontSize:13,fontWeight:600,cursor:selected.size>0?"pointer":"not-allowed"}}>
+                ✓ {t.feedbackImport} ({selected.size})
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -3953,7 +4544,7 @@ function TeacherStudentsPanel({ currentUser, users, courses, enrollments, attend
 
 // ─── Student Class History ────────────────────────────────────────────────────
 // ─── Student Class History ────────────────────────────────────────────────────
-function StudentClassHistory({ currentUser, enrollments, attendance, courses, users, lang, dirLoaded }) {
+function StudentClassHistory({ currentUser, enrollments, attendance, courses, users, lang, dirLoaded, feedback }) {
   const t = T[lang];
   const today = new Date().toISOString().slice(0,10);
 
@@ -4106,28 +4697,38 @@ function StudentClassHistory({ currentUser, enrollments, attendance, courses, us
             <div style={{display:"flex",flexDirection:"column",gap:5}}>
               {monthSessions.map((s,i)=>{
                 const st = STATUS_STYLE[s.status]||STATUS_STYLE.completed;
+                const fbRec = (feedback||[]).find(f=>f.enrollmentId===s.enrollment.id && f.date===s.date && f.status==="approved");
                 return (
-                  <div key={i} style={{display:"flex",alignItems:"center",gap:8,background:"#FAFAFA",borderRadius:8,padding:"9px 12px",border:`0.5px solid ${s.status==="completed"?"#E8F5E9":"#F0F0F0"}`}}>
-                    {/* Session no */}
-                    <span style={{fontSize:10,color:"#9E9E9E",minWidth:22,textAlign:"right"}}>#{s.sessionNo}</span>
-                    {/* Date */}
-                    <div style={{minWidth:80}}>
-                      <div style={{fontSize:12,fontWeight:600,color:"#172F39"}}>{s.date}</div>
-                      <div style={{fontSize:10,color:"#9E9E9E"}}>{dayLabel(s.dayIndex)} {s.course.start}–{s.course.start?(()=>{const [h,m]=s.course.start.split(":").map(Number);const end=h*60+m+s.course.duration;return `${String(Math.floor(end/60)).padStart(2,"0")}:${String(end%60).padStart(2,"0")}`;})():""}</div>
+                  <div key={i}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,background:"#FAFAFA",borderRadius:fbRec?"8px 8px 0 0":8,padding:"9px 12px",border:`0.5px solid ${s.status==="completed"?"#E8F5E9":"#F0F0F0"}`,borderBottom:fbRec?"none":undefined}}>
+                      {/* Session no */}
+                      <span style={{fontSize:10,color:"#9E9E9E",minWidth:22,textAlign:"right"}}>#{s.sessionNo}</span>
+                      {/* Date */}
+                      <div style={{minWidth:80}}>
+                        <div style={{fontSize:12,fontWeight:600,color:"#172F39"}}>{s.date}</div>
+                        <div style={{fontSize:10,color:"#9E9E9E"}}>{dayLabel(s.dayIndex)} {s.course.start}–{s.course.start?(()=>{const [h,m]=s.course.start.split(":").map(Number);const end=h*60+m+s.course.duration;return `${String(Math.floor(end/60)).padStart(2,"0")}:${String(end%60).padStart(2,"0")}`;})():""}</div>
+                      </div>
+                      {/* Course */}
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:12,color:"#172F39",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.course.subject}</div>
+                        {s.teacher&&<div style={{fontSize:10,color:"#9E9E9E"}}>{s.teacher.name}</div>}
+                      </div>
+                      {/* Duration */}
+                      <span style={{fontSize:10,color:"#9E9E9E",flexShrink:0}}>{s.course.duration}min</span>
+                      {/* Sesion value */}
+                      <span style={{fontSize:10,background:"rgba(26,107,138,0.08)",color:"#1A6B8A",borderRadius:4,padding:"1px 6px",flexShrink:0,fontWeight:500}}>+{s.sessVal}</span>
+                      {/* Status */}
+                      <span style={{fontSize:10,background:st.bg,color:st.color,borderRadius:4,padding:"2px 8px",fontWeight:500,flexShrink:0}}>{st.label}</span>
+                      {/* Admin note */}
+                      {s.attRec?.note&&<span style={{fontSize:10,color:"#9E9E9E",flexShrink:0}} title={s.attRec.note}>📝</span>}
                     </div>
-                    {/* Course */}
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:12,color:"#172F39",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.course.subject}</div>
-                      {s.teacher&&<div style={{fontSize:10,color:"#9E9E9E"}}>{s.teacher.name}</div>}
-                    </div>
-                    {/* Duration */}
-                    <span style={{fontSize:10,color:"#9E9E9E",flexShrink:0}}>{s.course.duration}min</span>
-                    {/* Sesion value */}
-                    <span style={{fontSize:10,background:"rgba(26,107,138,0.08)",color:"#1A6B8A",borderRadius:4,padding:"1px 6px",flexShrink:0,fontWeight:500}}>+{s.sessVal}</span>
-                    {/* Status */}
-                    <span style={{fontSize:10,background:st.bg,color:st.color,borderRadius:4,padding:"2px 8px",fontWeight:500,flexShrink:0}}>{st.label}</span>
-                    {/* Admin note */}
-                    {s.attRec?.note&&<span style={{fontSize:10,color:"#9E9E9E",flexShrink:0}} title={s.attRec.note}>📝</span>}
+                    {/* Approved teacher feedback — shown inline right under the session */}
+                    {fbRec && (
+                      <div style={{background:"#E8F5E9",border:"0.5px solid #C8E6C9",borderTop:"none",borderRadius:"0 0 8px 8px",padding:"9px 12px",fontSize:12,color:"#2E7D32",lineHeight:1.6,whiteSpace:"pre-wrap"}}>
+                        <div style={{fontSize:10,fontWeight:700,color:"#2E7D32",marginBottom:3,letterSpacing:"0.03em"}}>💬 {t.feedbackFromTeacher}</div>
+                        {fbRec.text}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -4140,7 +4741,7 @@ function StudentClassHistory({ currentUser, enrollments, attendance, courses, us
 }
 
 // ─── Student / Teacher Layout (sidebar + main) ────────────────────────────────
-function StudentTeacherLayout({ currentUser, users, courses, lang, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, setToast }) {
+function StudentTeacherLayout({ currentUser, users, courses, lang, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, setToast, feedback, setFeedback }) {
   const t = T[lang];
   const isStudent = currentUser.role==="student";
   const isTeacher = currentUser.role==="teacher";
@@ -4266,11 +4867,11 @@ function StudentTeacherLayout({ currentUser, users, courses, lang, absences, set
           {isStudent && sideTab==="progress"
             ? <StudentProgressPanel currentUser={currentUser} enrollments={enrollments} attendance={attendance} courses={courses} lang={lang} dirLoaded={dirLoaded} confirmedOverride={myConfirmedOverride}/>
             : isStudent && sideTab==="history"
-              ? <StudentClassHistory currentUser={currentUser} enrollments={enrollments} attendance={attendance} courses={courses} users={users} lang={lang} dirLoaded={dirLoaded}/>
+              ? <StudentClassHistory currentUser={currentUser} enrollments={enrollments} attendance={attendance} courses={courses} users={users} lang={lang} dirLoaded={dirLoaded} feedback={feedback}/>
             : isTeacher && sideTab==="students"
               ? <TeacherStudentsPanel currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} attendance={attendance} lang={lang} dirEntries={dirEntries}/>
               : <div style={{padding:"1.5rem"}}>
-                  <ScheduleView currentUser={currentUser} users={users} courses={courses} lang={lang} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} setToast={setToast}/>
+                  <ScheduleView currentUser={currentUser} users={users} courses={courses} lang={lang} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} setToast={setToast} feedback={feedback} setFeedback={setFeedback}/>
                 </div>
           }
         </div>
@@ -4290,6 +4891,7 @@ export default function App() {
   const [materials,setMaterials,mLoaded]=useStorage("cp3_materials",[]);
   const [enrollments,setEnrollments,eLoaded]=useStorage("cp3_enrollments",DEFAULT_ENROLLMENTS);
   const [attendance,setAttendance,attLoaded]=useStorage("cp3_attendance",DEFAULT_ATTENDANCE);
+  const [feedback,setFeedback,fbLoaded]=useStorage("cp3_feedback",[]);
   const [introText,setIntroText,introLoaded]=useStorage("cp3_intro_text","");
   const [toast,setToastMsg]=useState("");
   const t=T[lang];
@@ -4303,7 +4905,7 @@ export default function App() {
     }
   },[users]);
 
-  if(!uLoaded||!cLoaded||!aLoaded||!mLoaded||!eLoaded||!attLoaded) return (
+  if(!uLoaded||!cLoaded||!aLoaded||!mLoaded||!eLoaded||!attLoaded||!fbLoaded) return (
     <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#FAFAFA"}}>
       <span style={{color:"#1A6B8A",fontSize:16}}>Loading…</span>
     </div>
@@ -4348,8 +4950,8 @@ export default function App() {
         {/* ── Admin view ── */}
         {isAdmin && (
           <div style={{background:"#FFFFFF",borderRadius:14,border:"0.5px solid #E0E0E0",boxShadow:"0 2px 12px rgba(23,47,57,0.06)",padding:"1.5rem"}}>
-            {activeTab==="schedule"&&<ScheduleView currentUser={currentUser} users={users} courses={courses} lang={lang} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} setToast={setToast}/>}
-            {activeTab==="admin"&&<AdminPanel users={users} setUsers={setUsers} courses={courses} setCourses={setCourses} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} lang={lang} setToast={setToast} introText={introText} setIntroText={setIntroText}/>}
+            {activeTab==="schedule"&&<ScheduleView currentUser={currentUser} users={users} courses={courses} lang={lang} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} setToast={setToast} feedback={feedback} setFeedback={setFeedback}/>}
+            {activeTab==="admin"&&<AdminPanel users={users} setUsers={setUsers} courses={courses} setCourses={setCourses} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} lang={lang} setToast={setToast} introText={introText} setIntroText={setIntroText} feedback={feedback} setFeedback={setFeedback}/>}
           </div>
         )}
 
@@ -4361,6 +4963,7 @@ export default function App() {
             materials={materials} setMaterials={setMaterials}
             enrollments={enrollments} setEnrollments={setEnrollments}
             attendance={attendance} setAttendance={setAttendance}
+            feedback={feedback} setFeedback={setFeedback}
             setToast={setToast}
           />
         )}
