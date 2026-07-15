@@ -432,27 +432,6 @@ function addMins(timeStr, mins) {
   return `${String(Math.floor(t/60)).padStart(2,"0")}:${String(t%60).padStart(2,"0")}`;
 }
 
-// Returns minutes until class starts. Negative = already started/passed this week.
-// Only looks at THIS week's occurrence (Mon-based). Past days this week → negative.
-function minsUntilClass(dayOfWeek, startTime, durationMins) {
-  const now = new Date();
-  const todayDow = (now.getDay()+6)%7; // 0=Mon
-  const diffDays = dayOfWeek - todayDow; // negative = earlier this week
-  const classStart = new Date(now);
-  classStart.setDate(now.getDate() + diffDays);
-  const [h,m] = startTime.split(":").map(Number);
-  classStart.setHours(h, m, 0, 0);
-  const classEnd = new Date(classStart.getTime() + (durationMins||50)*60000);
-  // If class has already ended this week → deeply negative
-  if (now >= classEnd) return -9999;
-  return (classStart - now) / 60000; // positive = future, 0..60 = too late, <0 but classEnd>now = in progress
-}
-
-// canRequestLeave: true only if class is >60 min in the future (this week)
-function canRequestLeave(dayOfWeek, startTime, durationMins) {
-  return minsUntilClass(dayOfWeek, startTime, durationMins) > 60;
-}
-
 // Returns array of 7 Date objects for Mon-Sun of the week at weekOffset (0=this week, -1=last, +1=next)
 function getWeekDates(weekOffset=0) {
   const now = new Date();
@@ -513,12 +492,6 @@ function isSessionOver(dateStr, startTime, durationMins) {
   start.setHours(h||0, m||0, 0, 0);
   const end = new Date(start.getTime() + (durationMins||50)*60000);
   return new Date() >= end;
-}
-
-function fmt(dateStr) {
-  if (!dateStr) return "";
-  const d = new Date(dateStr);
-  return d.toLocaleDateString("zh-TW",{month:"2-digit",day:"2-digit"});
 }
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
@@ -1033,274 +1006,6 @@ function CourseDetailModal({ course, dayIndex, users, lang, materials, onClose }
           <button onClick={handleCopy} style={{width:"100%",background:copied?"#4CAF50":"#1A6B8A",border:"none",borderRadius:8,color:"#fff",padding:"11px",fontSize:14,fontWeight:600,cursor:"pointer",transition:"background 0.2s",letterSpacing:"0.02em"}}>
             {copied ? (lang==="zh"?"✓ 已複製！":"✓ Copied!") : (lang==="zh"?"📋 複製課程資訊":"📋 Copy Class Info")}
           </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Course card ──────────────────────────────────────────────────────────────
-function CourseCard({ course, users, lang, colorIdx, currentUser, absences, materials, setMaterials, onAbsent, dayIndex, setToast, weekDates, weekOffset, enrollments, attendance }) {
-  const t = T[lang];
-  const teacher = users.find(u=>u.id===course.teacherId);
-  const student  = users.find(u=>u.id===course.studentId);
-  const col = COLORS[colorIdx%COLORS.length];
-  const endTime = addMins(course.start, course.duration);
-  const canAbsent = currentUser.role==="student"||currentUser.role==="teacher";
-  const wkDates = weekDates || getWeekDates(weekOffset||0);
-  const thisDateStr = fmtYMD(wkDates[dayIndex]);
-  const isAbsent = absences.some(a=>a.courseId===course.id && a.day===dayIndex && (
-    a.dateStr===thisDateStr ||
-    (a.weekOffset!==undefined ? fmtYMD(getWeekDates(a.weekOffset)[a.day])===thisDateStr : (a.weekOffset??0)===(weekOffset??0))
-  ));
-  const leaveOk  = canRequestLeaveForWeek(wkDates, dayIndex, course.start, course.duration);
-  const status   = classStatusForWeek(wkDates, dayIndex, course.start, course.duration);
-  const isPast   = status === "past";
-  const isOngoing= status === "ongoing";
-
-  // Enrollment linkage — check if this specific date has a scheduled session
-  const dateStr = fmtYMD(wkDates[dayIndex]);
-  const enrStatus = getEnrollmentSessionStatus(course.id, dateStr, dayIndex, enrollments||[], attendance||[], course);
-  // enrStatus: null=no enrollment | "active"|"completed"|"absent"|"excused"|"teacher_leave"
-  const hasEnrollment = enrStatus !== null;
-  const enrBadge = hasEnrollment ? {
-    active:        {label: lang==="zh"?"已排課":"Scheduled",  color:"#1A6B8A", bg:"rgba(26,107,138,0.1)"},
-    completed:     {label: lang==="zh"?"已完課":"Completed",  color:"#2E7D32", bg:"rgba(76,175,80,0.12)"},
-    absent:        {label: lang==="zh"?"缺勤":"Absent",       color:"#D32F2F", bg:"rgba(211,47,47,0.1)"},
-    excused:       {label: lang==="zh"?"請假順延":"Excused",   color:"#1A6B8A", bg:"rgba(26,107,138,0.1)"},
-    teacher_leave: {label: lang==="zh"?"老師假":"Tchr Lv",    color:"#E65100", bg:"rgba(255,152,0,0.1)"},
-  }[enrStatus] : null;
-
-  const totalMatCount = materials.filter(m=>m.courseId===course.id).length;
-  const dayMatCount   = materials.filter(m=>m.courseId===course.id&&m.dayIndex===dayIndex).length;
-  const [showMat, setShowMat] = useState(false);
-  const [matInitDay, setMatInitDay] = useState(null);
-  const openMat = (initDay) => { setMatInitDay(initDay); setShowMat(true); };
-
-  // Past classes get dimmed
-  const cardOpacity = isAbsent ? 0.55 : isPast ? 0.45 : 1;
-  const cardBg = isAbsent ? "#F5F5F5" : col.bg;
-  const cardBorder = isAbsent ? "#CFD8DC" : isPast ? col.border+"88" : col.border;
-  const textCol = (isAbsent||isPast) ? "#9E9E9E" : col.text;
-
-  const [showDetail, setShowDetail] = useState(false);
-
-  return (
-    <>
-      {showDetail && <CourseDetailModal course={course} dayIndex={dayIndex} users={users} lang={lang} materials={materials} onClose={()=>setShowDetail(false)}/>}
-      {showMat && <MaterialPanel course={course} initialDayFilter={matInitDay} users={users} lang={lang} currentUser={currentUser} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setShowMat(false)}/>}
-      <div style={{background:cardBg,border:`1.5px solid ${cardBorder}`,borderRadius:10,padding:"10px 14px",marginBottom:8,opacity:cardOpacity,transition:"opacity 0.2s"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:4}}>
-          <span onClick={()=>setShowDetail(true)} style={{fontWeight:500,fontSize:14,color:textCol,cursor:"pointer",textDecoration:"underline dotted",textDecorationColor:textCol+"66"}}>{course.subject}</span>
-          <div style={{display:"flex",alignItems:"center",gap:6}}>
-            {isPast && <span style={{fontSize:10,background:"#E0E0E0",color:"#9E9E9E",borderRadius:4,padding:"1px 6px"}}>{lang==="zh"?"已結束":"Ended"}</span>}
-            {isOngoing && <span style={{fontSize:10,background:"rgba(76,175,80,0.15)",color:"#4CAF50",borderRadius:4,padding:"1px 6px"}}>{lang==="zh"?"進行中":"In progress"}</span>}
-            <span style={{fontSize:12,color:textCol,opacity:0.9,whiteSpace:"nowrap"}}>{course.start}–{endTime} · {course.duration}min</span>
-            <button onClick={()=>setShowDetail(true)} title={lang==="zh"?"課程詳情":"Course details"} style={{background:"transparent",border:`1px solid ${textCol}44`,borderRadius:4,color:textCol,fontSize:11,padding:"1px 6px",cursor:"pointer",opacity:0.7}}>ℹ</button>
-          </div>
-        </div>
-        {currentUser.role!=="teacher"&&teacher&&<div style={{fontSize:12,color:textCol,opacity:0.85,marginTop:3}}>{t.teacher}: {teacher.name}</div>}
-        {currentUser.role!=="student"&&student&&<div style={{fontSize:12,color:textCol,opacity:0.85}}>{t.student}: {student.name}</div>}
-        {currentUser.role==="admin"&&teacher&&student&&<div style={{fontSize:12,color:textCol,opacity:0.85}}>{teacher.name} → {student.name}</div>}
-        {/* Enrollment linkage badge */}
-        {enrBadge && <span style={{display:"inline-block",fontSize:10,background:enrBadge.bg,color:enrBadge.color,borderRadius:4,padding:"1px 7px",marginTop:4,fontWeight:500}}>● {enrBadge.label}</span>}
-        {!hasEnrollment && currentUser.role==="admin" && <span style={{display:"inline-block",fontSize:10,background:"rgba(158,158,158,0.1)",color:"#9E9E9E",borderRadius:4,padding:"1px 7px",marginTop:4}}>{lang==="zh"?"未排課":"Not scheduled"}</span>}
-        {isAbsent&&<div style={{fontSize:11,color:"#D32F2F",marginTop:4,fontWeight:500}}>● {t.absentAlready}</div>}
-
-        <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap",alignItems:"center"}}>
-          {/* Meeting button */}
-          {!isAbsent&&!isPast&&course.meetingUrl&&(
-            <a href={course.meetingUrl} target="_blank" rel="noreferrer"
-              style={{fontSize:13,fontWeight:500,background:col.border,color:"#fff",borderRadius:6,padding:"5px 14px",textDecoration:"none"}}>
-              {t.join}
-            </a>
-          )}
-
-          {/* Material buttons — same size as meeting */}
-          <button onClick={()=>openMat(dayIndex)}
-            style={{fontSize:13,fontWeight:500,background:"transparent",border:`1.5px solid ${isAbsent||isPast?"#CFD8DC":col.border}`,color:textCol,borderRadius:6,padding:"5px 14px",cursor:"pointer"}}>
-            📄 {t.matForDay}{dayMatCount>0?` (${dayMatCount})`:""}
-          </button>
-          {totalMatCount > dayMatCount && (
-            <button onClick={()=>openMat(null)}
-              style={{fontSize:13,fontWeight:500,background:"transparent",border:`1.5px solid ${isAbsent||isPast?"#CFD8DC":col.border}`,color:textCol,borderRadius:6,padding:"5px 14px",cursor:"pointer"}}>
-              📚 {t.allMaterials} ({totalMatCount})
-            </button>
-          )}
-
-          {/* Leave button — small, muted, pushed to far right */}
-          {canAbsent&&!isAbsent&&!isPast&&(
-            <button
-              onClick={()=>{ if(leaveOk) onAbsent(course,dayIndex); else setToast(t.absentTooLate); }}
-              style={{
-                marginLeft:"auto",
-                fontSize:10,
-                background:"transparent",
-                border:`1px solid ${leaveOk?"#9E9E9E":"#E0E0E0"}`,
-                color: leaveOk?"#9E9E9E":"#CFD8DC",
-                borderRadius:5,
-                padding:"3px 8px",
-                cursor: leaveOk?"pointer":"not-allowed",
-                opacity: leaveOk ? 0.7 : 0.35,
-                letterSpacing:"0.01em",
-              }}
-              title={leaveOk ? t.absent : t.absentTooLate}
-            >
-              {t.absent}
-            </button>
-          )}
-        </div>
-      </div>
-    </>
-  );
-}
-
-// ─── List view ────────────────────────────────────────────────────────────────
-// Given a courseId and date (YYYY-MM-DD), check if any enrollment covers this session
-// Returns: null (no enrollment) | "active" | "completed" | "absent" | "excused" | "teacher_leave"
-function getEnrollmentSessionStatus(courseId, date, dayIndex, enrollments, attendance, course) {
-  // Find enrollments for this course that include this date
-  const enr = enrollments.find(e=>e.courseId===courseId && e.scheduledDates?.some(s=>s.date===date&&s.dayIndex===dayIndex));
-  if (!enr) return null; // no enrollment covers this date
-  // Check attendance record
-  const att = attendance.find(a=>a.enrollmentId===enr.id&&a.date===date&&a.dayIndex===dayIndex);
-  if (att) return att.type; // "absent" | "excused" | "teacher_leave"
-  if (isSessionOver(date, course?.start, course?.duration)) return "completed";
-  return "active"; // upcoming scheduled session
-}
-
-function ListView({ filtered, users, lang, currentUser, absences, materials, setMaterials, onAbsent, setToast, weekOffset, weekDates, enrollments, attendance }) {
-  const t = T[lang];
-  const colorMap={}; let cc=0;
-  filtered.forEach(c=>{if(!colorMap[c.subject])colorMap[c.subject]=cc++;});
-  const todayDow = (new Date().getDay() + 6) % 7;
-  const isThisWeek = weekOffset === 0;
-  return (
-    <div>
-      {t.days.map((day,i)=>{
-        const dc=filtered.filter(c=>c.days.includes(i)).sort((a,b)=>a.start.localeCompare(b.start));
-        const isToday = isThisWeek && i === todayDow;
-        return (
-          <div key={i} style={{marginBottom:"1.25rem"}}>
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-              <div style={{display:"flex",alignItems:"baseline",gap:5,minWidth:80}}>
-                <span style={{fontSize:13,fontWeight:600,color:isToday?"#1A6B8A":"#546E7A"}}>{day}</span>
-                <span style={{fontSize:11,color:isToday?"#1A6B8A":"#9E9E9E"}}>{fmtMD(weekDates[i])}</span>
-                {isToday && <span style={{fontSize:9,background:"#1A6B8A",color:"#fff",borderRadius:3,padding:"1px 5px",fontWeight:600}}>{t.today}</span>}
-              </div>
-              <div style={{flex:1,height:"0.5px",background:isToday?"rgba(26,107,138,0.4)":"#E0E0E0"}}/>
-              {dc.length>0&&<span style={{fontSize:11,color:"#9E9E9E"}}>{dc.length} {lang==="zh"?"堂":"class"}</span>}
-            </div>
-            {dc.length===0?<p style={{fontSize:13,color:"#9E9E9E",margin:"0 0 0 88px"}}>—</p>
-              :dc.map(c=><CourseCard key={c.id} course={c} users={users} lang={lang} colorIdx={colorMap[c.subject]} currentUser={currentUser} absences={absences} materials={materials} setMaterials={setMaterials} onAbsent={onAbsent} dayIndex={i} setToast={setToast} weekDates={weekDates} weekOffset={weekOffset} enrollments={enrollments||[]} attendance={attendance||[]}/>)}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ─── Calendar view ────────────────────────────────────────────────────────────
-function CalendarView({ filtered, users, lang, currentUser, absences, materials, setMaterials, onAbsent, setToast, weekOffset, weekDates: propWeekDates, enrollments, attendance }) {
-  const t = T[lang];
-  const colorMap={}; let cc=0;
-  filtered.forEach(c=>{if(!colorMap[c.subject])colorMap[c.subject]=cc++;});
-  const [matTarget, setMatTarget] = useState(null);
-  const [detTarget, setDetTarget] = useState(null);
-
-  const weekDates = propWeekDates || getWeekDates(weekOffset||0);
-  const todayDow = (new Date().getDay() + 6) % 7;
-
-  return (
-    <div style={{overflowX:"auto"}}>
-      {matTarget && <MaterialPanel course={matTarget.course} initialDayFilter={matTarget.initDay} users={users} lang={lang} currentUser={currentUser} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setMatTarget(null)}/>}
-      {detTarget && <CourseDetailModal course={detTarget.course} dayIndex={detTarget.dayIndex} users={users} lang={lang} materials={materials} onClose={()=>setDetTarget(null)}/>}
-      <div style={{minWidth:520}}>
-        {/* Day header row with dates */}
-        <div style={{display:"grid",gridTemplateColumns:"repeat(7,minmax(0,1fr))",gap:3,marginBottom:3}}>
-          {t.days.map((d,i)=>{
-            const isToday = i === todayDow;
-            return (
-              <div key={i} style={{textAlign:"center",padding:"5px 2px",background:isToday?"#1A6B8A":"#F5F5F5",borderRadius:5}}>
-                <div style={{fontSize:11,fontWeight:600,color:isToday?"#fff":"#546E7A"}}>{t.daysShort[i]}</div>
-                <div style={{fontSize:10,color:isToday?"rgba(255,255,255,0.85)":"#9E9E9E",marginTop:1}}>{fmtMD(weekDates[i])}</div>
-                {isToday && <div style={{fontSize:8,color:"rgba(255,255,255,0.75)",letterSpacing:"0.05em"}}>{t.today}</div>}
-              </div>
-            );
-          })}
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(7,minmax(0,1fr))",gap:3,minHeight:180}}>
-          {t.days.map((_,i)=>{
-            const dc=filtered.filter(c=>c.days.includes(i)).sort((a,b)=>a.start.localeCompare(b.start));
-            return (
-              <div key={i} style={{background:i===todayDow?"rgba(26,107,138,0.08)":"#F5F5F5",border:i===todayDow?"1px solid rgba(26,107,138,0.3)":"1px solid transparent",borderRadius:7,padding:"5px 4px",minHeight:100}}>
-                <div style={{fontSize:10,fontWeight:600,color:i===todayDow?"#1A6B8A":"#9E9E9E",textAlign:"center",marginBottom:1}}>{t.days[i]}</div>
-                <div style={{fontSize:9,color:i===todayDow?"#1A6B8A":"#9E9E9E",textAlign:"center",marginBottom:4,opacity:0.85}}>{fmtMD(weekDates[i])}</div>
-                {dc.map(c=>{
-                  const col=COLORS[colorMap[c.subject]%COLORS.length];
-                  const isAbsent=absences.some(a=>a.courseId===c.id&&a.day===i&&(a.dateStr===cellDate||(a.weekOffset!==undefined?fmtYMD(getWeekDates(a.weekOffset)[a.day])===cellDate:(a.weekOffset??0)===(weekOffset??0))));
-                  const canAbsent=currentUser.role==="student"||currentUser.role==="teacher";
-                  const leaveOk=canRequestLeaveForWeek(weekDates,i,c.start,c.duration);
-                  const status=classStatusForWeek(weekDates,i,c.start,c.duration);
-                  const isPast=status==="past";
-                  const endTime=addMins(c.start,c.duration);
-                  const teacher=users.find(u=>u.id===c.teacherId);
-                  const student=users.find(u=>u.id===c.studentId);
-                  const dayMatCount=materials.filter(m=>m.courseId===c.id&&m.dayIndex===i).length;
-                  const totalMatCount=materials.filter(m=>m.courseId===c.id).length;
-                  const cellDate = fmtYMD(weekDates[i]);
-                  const enrStatus = getEnrollmentSessionStatus(c.id, cellDate, i, enrollments||[], attendance||[], c);
-                  const ENR_STYLE = {
-                    active:        {color:"#1A6B8A", label: lang==="zh"?"排":"Sch"},
-                    completed:     {color:"#2E7D32", label:"✓"},
-                    absent:        {color:"#D32F2F", label:"✗"},
-                    excused:       {color:"#1A6B8A", label:"假"},
-                    teacher_leave: {color:"#E65100", label:"師"},
-                  };
-                  const enrBadge = enrStatus ? ENR_STYLE[enrStatus] : null;
-                  const dimText=isAbsent||isPast?"#9E9E9E":col.text;
-                  const dimBorder=isAbsent||isPast?"#CFD8DC":col.border;
-                  return (
-                    <div key={c.id} style={{background:isAbsent?"#FFFFFF":col.bg,border:`1px solid ${dimBorder}`,borderRadius:6,padding:"6px 7px",marginBottom:4,opacity:isAbsent?0.55:isPast?0.5:1}}>
-                      {/* Clickable title */}
-                      <div onClick={()=>setDetTarget({course:c,dayIndex:i})} style={{cursor:"pointer",marginBottom:2,display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:2}}>
-                        <div style={{fontSize:10,fontWeight:600,color:dimText,lineHeight:1.3,wordBreak:"break-word",flex:1}}>{c.subject.length>18?c.subject.slice(0,16)+"…":c.subject}</div>
-                        <span style={{fontSize:10,color:dimText,opacity:0.5,flexShrink:0}}>ℹ</span>
-                      </div>
-                      <div style={{fontSize:9,color:dimText,opacity:0.8,marginBottom:3}}>{c.start}–{endTime}</div>
-                      {currentUser.role==="admin"&&teacher&&<div style={{fontSize:9,color:dimText,opacity:0.7}}>{teacher.name}</div>}
-                      {currentUser.role!=="student"&&student&&<div style={{fontSize:9,color:dimText,opacity:0.7}}>{student.name}</div>}
-                      {isAbsent&&<div style={{fontSize:9,color:"#D32F2F",fontWeight:600,marginBottom:2}}>{lang==="zh"?"已請假":"Absent"}</div>}
-                      {enrBadge && <span style={{fontSize:8,color:enrBadge.color,fontWeight:700,marginBottom:2,display:"block"}}>{enrBadge.label}</span>}
-                      <div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:4}}>
-                        {/* Meeting */}
-                        {!isAbsent&&!isPast&&c.meetingUrl&&(
-                          <a href={c.meetingUrl} target="_blank" rel="noreferrer" style={{fontSize:10,fontWeight:500,background:col.border,color:"#fff",borderRadius:4,padding:"3px 7px",textDecoration:"none"}}>{t.join}</a>
-                        )}
-                        {/* Today materials — same weight as join */}
-                        <button onClick={()=>setMatTarget({course:c,initDay:i})} style={{fontSize:10,fontWeight:500,background:"transparent",border:`1px solid ${dimBorder}`,color:dimText,borderRadius:4,padding:"3px 7px",cursor:"pointer"}}>
-                          📄{dayMatCount>0?` ${dayMatCount}`:""}
-                        </button>
-                        {/* All materials */}
-                        {totalMatCount>dayMatCount&&(
-                          <button onClick={()=>setMatTarget({course:c,initDay:null})} style={{fontSize:10,background:"transparent",border:`1px solid ${dimBorder}`,color:dimText,borderRadius:4,padding:"3px 5px",cursor:"pointer",opacity:0.65}}>
-                            ∑{totalMatCount}
-                          </button>
-                        )}
-                        {/* Leave — tiny, muted, far right */}
-                        {canAbsent&&!isAbsent&&!isPast&&!attRec&&(
-                          <button onClick={()=>{if(leaveOk)onAbsent(c,i);else setToast(t.absentTooLate);}} style={{fontSize:8,background:"transparent",border:`1px solid ${leaveOk?"#9E9E9E":"#E0E0E0"}`,color:leaveOk?"#9E9E9E":"#CFD8DC",borderRadius:3,padding:"2px 4px",cursor:leaveOk?"pointer":"not-allowed",opacity:leaveOk?0.55:0.2,marginLeft:"auto"}} title={leaveOk?t.absent:t.absentTooLate}>
-                            {lang==="zh"?"假":"Lv"}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-                {dc.length===0&&<div style={{fontSize:10,color:"#9E9E9E",textAlign:"center",marginTop:12}}>—</div>}
-              </div>
-            );
-          })}
         </div>
       </div>
     </div>
@@ -4895,6 +4600,7 @@ export default function App() {
   const [introText,setIntroText,introLoaded]=useStorage("cp3_intro_text","");
   const [toast,setToastMsg]=useState("");
   const t=T[lang];
+  const syncFailures = useSyncStatus(); // surfaces any storage keys that failed to save after retry
 
   const setToast=msg=>{setToastMsg(msg);setTimeout(()=>setToastMsg(""),3500);};
 
@@ -4920,6 +4626,13 @@ export default function App() {
   return (
     <div style={{minHeight:"100vh",background:"#FAFAFA",fontFamily:"system-ui, -apple-system, sans-serif"}}>
       <Toast msg={toast}/>
+      {syncFailures.size>0 && (
+        <div style={{position:"fixed",top:0,left:0,right:0,zIndex:9999,background:"#D32F2F",color:"#fff",fontSize:12,padding:"6px 14px",textAlign:"center",fontWeight:500}}>
+          ⚠️ {lang==="zh"
+            ? `部分資料儲存失敗（${syncFailures.size} 項），請檢查網路連線並重試，否則變更可能遺失`
+            : `Some data failed to save (${syncFailures.size}) — check your connection and retry, or changes may be lost`}
+        </div>
+      )}
       <header style={{background:"#172F39",borderBottom:"1px solid rgba(26,107,138,0.15)",padding:"0 1.25rem",display:"flex",alignItems:"center",justifyContent:"space-between",height:58,position:"sticky",top:0,zIndex:100}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <span style={{fontSize:20}}>📚</span>
