@@ -153,6 +153,10 @@ const T = {
     feedbackSelectAll:"全選待審核", feedbackSelected:"已選 {n} 筆",
     feedbackBatchApprove:"批次核准", feedbackBatchReject:"批次退回",
     feedbackBatchApproved:"已核准 {n} 筆反饋", feedbackBatchRejected:"已退回 {n} 筆反饋",
+    feedbackDelete:"刪除", feedbackDeleteConfirm:"確認刪除此筆反饋？此操作無法復原。",
+    feedbackDeleted:"反饋已刪除", feedbackBatchDelete:"批次刪除",
+    feedbackBatchDeleted:"已刪除 {n} 筆反饋", feedbackAdminReturned:"已直接刪除（管理員代填，無需退回老師）",
+    feedbackSourceAdmin:"管理員代填", feedbackSourceTeacher:"老師填寫",
     feedbackBatchInput:"批次輸入反饋", feedbackBatchInputDesc:"協助老師填寫：貼上 Excel 資料自動比對日期並建立反饋（直接核准，學生馬上看得到）",
     feedbackPasteHint:"直接從 Excel 複製並貼上（Tab 分隔，欄位順序：日期、反饋內容）",
     feedbackExcelCols:"日期 | Comments/Suggestions/New Vocabulary, Sentence",
@@ -323,6 +327,10 @@ const T = {
     feedbackSelectAll:"Select all pending", feedbackSelected:"{n} selected",
     feedbackBatchApprove:"Batch Approve", feedbackBatchReject:"Batch Reject",
     feedbackBatchApproved:"{n} feedback approved", feedbackBatchRejected:"{n} feedback rejected",
+    feedbackDelete:"Delete", feedbackDeleteConfirm:"Delete this feedback? This cannot be undone.",
+    feedbackDeleted:"Feedback deleted", feedbackBatchDelete:"Batch Delete",
+    feedbackBatchDeleted:"{n} feedback deleted", feedbackAdminReturned:"Deleted directly (admin-authored, no teacher hand-off needed)",
+    feedbackSourceAdmin:"Admin-entered", feedbackSourceTeacher:"Teacher-written",
     feedbackBatchInput:"Batch Input Feedback", feedbackBatchInputDesc:"Help teachers fill it in: paste Excel data, dates auto-match sessions and get approved instantly (visible to students right away)",
     feedbackPasteHint:"Paste directly from Excel (Tab-separated, columns: Date, Feedback text)",
     feedbackExcelCols:"Date | Comments/Suggestions/New Vocabulary, Sentence",
@@ -1385,6 +1393,7 @@ function FeedbackModal({ slot, currentUser, users, lang, feedback, setFeedback, 
       date, dayIndex, sessionNo,
       text: text.trim(),
       status: "pending", // (re)submitting always resets to pending for review
+      source: "teacher", // written by the teacher — rejections need to go back to them
       createdAt: existing?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       reviewedAt: "",
@@ -4143,6 +4152,7 @@ function FeedbackCenter({ users, courses, enrollments, attendance, feedback, set
   const [filter, setFilter] = useState("pending"); // pending | all
   const [rejectTarget, setRejectTarget] = useState(null); // feedback id (or "_batch") pending a reject-reason prompt
   const [rejectNote, setRejectNote] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState(null); // feedback id (or "_batch") pending a delete confirmation
   const [selected, setSelected] = useState(new Set()); // selected feedback ids (pending only)
   const [showBatchInput, setShowBatchInput] = useState(false);
   const [batchInputCourseId, setBatchInputCourseId] = useState(null);
@@ -4153,6 +4163,7 @@ function FeedbackCenter({ users, courses, enrollments, attendance, feedback, set
 
   const getCourse = id => courses.find(c=>c.id===id);
   const getUser = id => users.find(u=>u.id===id);
+  const isAdminSourced = f => f.source === "admin"; // legacy records without `source` default to teacher-authored
 
   const list = (feedback||[])
     .filter(f => filter==="all" || f.status==="pending")
@@ -4168,7 +4179,18 @@ function FeedbackCenter({ users, courses, enrollments, attendance, feedback, set
     setFeedback(prev => prev.map(x => x.id===f.id ? {...x, status:"approved", reviewedAt:new Date().toISOString(), reviewedBy:"admin", reviewNote:""} : x));
     setToast(t.feedbackApproved);
   };
-  const openReject = (f) => { setRejectTarget(f); setRejectNote(""); };
+
+  // Reject: admin-authored feedback has no teacher to hand back to, so it's
+  // simply removed on the spot. Teacher-written feedback keeps the reason-prompt
+  // flow so the teacher can see why and revise it.
+  const openReject = (f) => {
+    if (isAdminSourced(f)) {
+      setFeedback(prev => prev.filter(x => x.id !== f.id));
+      setToast(t.feedbackAdminReturned);
+      return;
+    }
+    setRejectTarget(f); setRejectNote("");
+  };
   const confirmReject = () => {
     if (rejectTarget === "_batch") {
       setFeedback(prev => prev.map(x => selected.has(x.id) ? {...x, status:"rejected", reviewedAt:new Date().toISOString(), reviewedBy:"admin", reviewNote:rejectNote.trim()} : x));
@@ -4187,10 +4209,40 @@ function FeedbackCenter({ users, courses, enrollments, attendance, feedback, set
     setToast(t.feedbackBatchApproved.replace("{n}", selected.size));
     setSelected(new Set());
   };
+
+  // Batch reject: split by source — admin-authored ones are removed immediately
+  // (no teacher to notify), teacher-authored ones go through the shared reason prompt.
   const batchReject = () => {
     if (selected.size===0) return;
-    setRejectTarget("_batch"); setRejectNote("");
+    const selectedItems = list.filter(f=>selected.has(f.id));
+    const adminIds = selectedItems.filter(isAdminSourced).map(f=>f.id);
+    const teacherIds = selectedItems.filter(f=>!isAdminSourced(f)).map(f=>f.id);
+    if (adminIds.length>0) {
+      setFeedback(prev => prev.filter(x => !adminIds.includes(x.id)));
+    }
+    if (teacherIds.length>0) {
+      setSelected(new Set(teacherIds)); // narrow the pending batch action to just the teacher-authored ones
+      setRejectTarget("_batch"); setRejectNote("");
+    } else {
+      setToast(t.feedbackBatchRejected.replace("{n}", adminIds.length));
+      setSelected(new Set());
+    }
   };
+
+  // Delete — available for any feedback regardless of status/source, straightforward removal.
+  const openDelete = (f) => setDeleteTarget(f.id);
+  const confirmDelete = () => {
+    if (deleteTarget === "_batch") {
+      setFeedback(prev => prev.filter(x => !selected.has(x.id)));
+      setToast(t.feedbackBatchDeleted.replace("{n}", selected.size));
+      setSelected(new Set());
+    } else {
+      setFeedback(prev => prev.filter(x => x.id !== deleteTarget));
+      setToast(t.feedbackDeleted);
+    }
+    setDeleteTarget(null);
+  };
+  const batchDelete = () => { if (selected.size>0) setDeleteTarget("_batch"); };
 
   const STATUS_META = {
     pending:  {label:t.feedbackStatusPending,  color:"#E65100", bg:"#FFF3E0"},
@@ -4235,6 +4287,18 @@ function FeedbackCenter({ users, courses, enrollments, attendance, feedback, set
   return (
     <div>
       {showBatchInput && <BatchFeedbackModal users={users} courses={courses} enrollments={enrollments} setFeedback={setFeedback} lang={lang} setToast={setToast} initialCourseId={batchInputCourseId} onClose={()=>{setShowBatchInput(false);setBatchInputCourseId(null);}}/>}
+
+      {/* Delete confirmation (single or batch) */}
+      {deleteTarget && (
+        <ConfirmModal
+          title={t.feedbackDelete}
+          message={deleteTarget==="_batch" ? `${t.feedbackDeleteConfirm} (${selected.size})` : t.feedbackDeleteConfirm}
+          confirmLabel={t.feedbackDelete}
+          onConfirm={confirmDelete}
+          onCancel={()=>setDeleteTarget(null)}
+          danger
+        />
+      )}
 
       {/* Reject reason modal (single or batch) */}
       {rejectTarget && (
@@ -4309,6 +4373,9 @@ function FeedbackCenter({ users, courses, enrollments, attendance, feedback, set
                   <button onClick={batchReject} style={{background:"transparent",border:"1px solid #D32F2F",borderRadius:6,color:"#D32F2F",padding:"6px 14px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
                     ✕ {t.feedbackBatchReject}
                   </button>
+                  <button onClick={batchDelete} style={{background:"transparent",border:"1px solid #9E9E9E",borderRadius:6,color:"#546E7A",padding:"6px 14px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                    🗑 {t.feedbackBatchDelete}
+                  </button>
                 </>
               )}
             </div>
@@ -4326,6 +4393,7 @@ function FeedbackCenter({ users, courses, enrollments, attendance, feedback, set
             const teacher = getUser(f.teacherId);
             const student = getUser(f.studentId);
             const meta = STATUS_META[f.status];
+            const fromAdmin = isAdminSourced(f);
             return (
               <div key={f.id} style={{background:selected.has(f.id)?"#EEF6FB":"#FFFFFF",border:`1px solid ${selected.has(f.id)?"#1A6B8A":meta.color+"33"}`,borderRadius:10,padding:"14px 16px",marginBottom:10,display:"flex",gap:10}}>
                 {f.status==="pending" && (
@@ -4342,7 +4410,10 @@ function FeedbackCenter({ users, courses, enrollments, attendance, feedback, set
                         {t.feedbackBy}: <strong>{teacher?.name||"—"}</strong> → {t.feedbackFor}: <strong>{student?.name||"—"}</strong>
                       </div>
                     </div>
-                    <span style={{fontSize:11,background:meta.bg,color:meta.color,borderRadius:5,padding:"3px 10px",fontWeight:600,flexShrink:0}}>● {meta.label}</span>
+                    <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flexShrink:0}}>
+                      <span style={{fontSize:11,background:meta.bg,color:meta.color,borderRadius:5,padding:"3px 10px",fontWeight:600}}>● {meta.label}</span>
+                      <span style={{fontSize:10,background:fromAdmin?"#EDE7F6":"#F5F5F5",color:fromAdmin?"#7B1FA2":"#9E9E9E",borderRadius:4,padding:"1px 7px"}}>{fromAdmin?t.feedbackSourceAdmin:t.feedbackSourceTeacher}</span>
+                    </div>
                   </div>
                   <div style={{background:"#F5F5F5",borderRadius:8,padding:"10px 13px",fontSize:13,color:"#172F39",lineHeight:1.7,whiteSpace:"pre-wrap",marginBottom:10}}>
                     {f.text}
@@ -4350,21 +4421,26 @@ function FeedbackCenter({ users, courses, enrollments, attendance, feedback, set
                   {f.status==="rejected" && f.reviewNote && (
                     <div style={{fontSize:11,color:"#D32F2F",marginBottom:10}}>↳ {t.feedbackRejectReason.split("（")[0].split("(")[0]}: {f.reviewNote}</div>
                   )}
-                  {f.status==="pending" && (
-                    <div style={{display:"flex",gap:8}}>
-                      <button onClick={()=>approve(f)} style={{flex:1,background:"#2E7D32",border:"none",borderRadius:7,color:"#fff",padding:"8px",fontSize:13,fontWeight:600,cursor:"pointer"}}>
-                        ✓ {t.feedbackApprove}
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                    {f.status==="pending" && (
+                      <>
+                        <button onClick={()=>approve(f)} style={{flex:1,minWidth:100,background:"#2E7D32",border:"none",borderRadius:7,color:"#fff",padding:"8px",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                          ✓ {t.feedbackApprove}
+                        </button>
+                        <button onClick={()=>openReject(f)} style={{flex:1,minWidth:100,background:"transparent",border:"1px solid #D32F2F",borderRadius:7,color:"#D32F2F",padding:"8px",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                          ✕ {t.feedbackReject}
+                        </button>
+                      </>
+                    )}
+                    {f.status!=="pending" && (
+                      <button onClick={()=>setFeedback(prev=>prev.map(x=>x.id===f.id?{...x,status:"pending",reviewedAt:"",reviewedBy:"",reviewNote:""}:x))} style={{fontSize:11,padding:"5px 12px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>
+                        {lang==="zh"?"重新送審":"Re-open for review"}
                       </button>
-                      <button onClick={()=>openReject(f)} style={{flex:1,background:"transparent",border:"1px solid #D32F2F",borderRadius:7,color:"#D32F2F",padding:"8px",fontSize:13,fontWeight:600,cursor:"pointer"}}>
-                        ✕ {t.feedbackReject}
-                      </button>
-                    </div>
-                  )}
-                  {f.status!=="pending" && (
-                    <button onClick={()=>setFeedback(prev=>prev.map(x=>x.id===f.id?{...x,status:"pending",reviewedAt:"",reviewedBy:"",reviewNote:""}:x))} style={{fontSize:11,padding:"5px 12px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>
-                      {lang==="zh"?"重新送審":"Re-open for review"}
+                    )}
+                    <button onClick={()=>openDelete(f)} style={{padding:"8px 12px",borderRadius:7,border:"0.5px solid #FFCDD2",background:"transparent",color:"#D32F2F",fontSize:12,cursor:"pointer"}}>
+                      🗑 {t.feedbackDelete}
                     </button>
-                  )}
+                  </div>
                 </div>
               </div>
             );
@@ -4582,6 +4658,7 @@ function BatchFeedbackModal({ users, courses, enrollments, setFeedback, lang, se
         sessionNo: session.sessionNo,
         text: row.text,
         status: "approved", // admin is entering + implicitly reviewing on the teacher's behalf
+        source: "admin", // written by admin on the teacher's behalf — no teacher hand-off needed if rejected/deleted
         createdAt: now, updatedAt: now,
         reviewedAt: now, reviewedBy: "admin",
       });
