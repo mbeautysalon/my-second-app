@@ -157,6 +157,25 @@ const T = {
     feedbackDeleted:"反饋已刪除", feedbackBatchDelete:"批次刪除",
     feedbackBatchDeleted:"已刪除 {n} 筆反饋", feedbackAdminReturned:"已直接刪除（管理員代填，無需退回老師）",
     feedbackSourceAdmin:"管理員代填", feedbackSourceTeacher:"老師填寫",
+    // Teacher availability
+    availability:"可安排時段", availabilityDesc:"點擊時段方格切換可安排（綠色）／不可安排（白色）",
+    availabilityNextWeek:"次週", availabilityThisWeek:"本週",
+    availabilityLegendOpen:"可安排", availabilityLegendClosed:"未開放", availabilityLegendLocked:"已鎖定",
+    availabilityLockNote:"距上課不足 12 小時，無法取消已開放時段",
+    availabilityLockToast:"距離此時段開始不足 12 小時，無法取消（如需異動請聯絡管理員）",
+    availabilitySelectAllDay:"全選", availabilityClearDay:"清除",
+    availabilityAdminOverride:"管理員可覆蓋鎖定時段",
+    availabilitySelectTeacher:"選擇老師", availabilityNoTeachers:"尚無老師資料",
+    availabilityRange:"開放時段：上午 9:00 – 晚上 11:00",
+    availabilitySaved:"已更新可安排時段",
+    availabilityLegendFixed:"已排課（固定，不可選）",
+    availabilityFixedNote:"藍色 📌 為既有固定課程時段，僅顯示不可選取",
+    forceOpenTitle:"強制開放固定時段", forceOpenDesc:"此時段原本為固定課程，僅在學生/老師請假等特殊情況下才應開放",
+    forceOpenScanFound:"✅ 掃描到請假／缺勤紀錄", forceOpenScanNone:"⚠️ 未掃描到請假或缺勤紀錄，請確認情況屬實再開放",
+    forceOpenReason:"開放原因（選填）", forceOpenConfirm:"確認開放此時段",
+    forceOpenSuccess:"已強制開放此時段", forceOpenBadge:"強制開放中",
+    forceOpenActiveList:"本週強制開放時段", forceOpenRevoke:"還原鎖定",
+    forceOpenRevoked:"已還原為固定課程鎖定",
     feedbackBatchInput:"批次輸入反饋", feedbackBatchInputDesc:"協助老師填寫：貼上 Excel 資料自動比對日期並建立反饋（直接核准，學生馬上看得到）",
     feedbackPasteHint:"直接從 Excel 複製並貼上（Tab 分隔，欄位順序：日期、反饋內容）",
     feedbackExcelCols:"日期 | Comments/Suggestions/New Vocabulary, Sentence",
@@ -331,6 +350,25 @@ const T = {
     feedbackDeleted:"Feedback deleted", feedbackBatchDelete:"Batch Delete",
     feedbackBatchDeleted:"{n} feedback deleted", feedbackAdminReturned:"Deleted directly (admin-authored, no teacher hand-off needed)",
     feedbackSourceAdmin:"Admin-entered", feedbackSourceTeacher:"Teacher-written",
+    // Teacher availability
+    availability:"Availability", availabilityDesc:"Click a time slot to toggle open (green) / closed (white)",
+    availabilityNextWeek:"Next Week", availabilityThisWeek:"This Week",
+    availabilityLegendOpen:"Open", availabilityLegendClosed:"Closed", availabilityLegendLocked:"Locked",
+    availabilityLockNote:"Less than 12 hours before class — can't cancel an open slot",
+    availabilityLockToast:"Less than 12 hours until this slot — can't cancel (contact admin if needed)",
+    availabilitySelectAllDay:"Select All", availabilityClearDay:"Clear",
+    availabilityAdminOverride:"Admin can override locked slots",
+    availabilitySelectTeacher:"Select Teacher", availabilityNoTeachers:"No teacher data yet",
+    availabilityRange:"Open hours: 9:00 AM – 11:00 PM",
+    availabilitySaved:"Availability updated",
+    availabilityLegendFixed:"Booked (fixed, not selectable)",
+    availabilityFixedNote:"Blue 📌 marks existing fixed course slots — shown but not selectable",
+    forceOpenTitle:"Force-Open Fixed Slot", forceOpenDesc:"This slot belongs to a fixed course — only open it for special cases like a student/teacher leave",
+    forceOpenScanFound:"✅ Leave/absence record found", forceOpenScanNone:"⚠️ No leave or absence record found — please confirm before opening",
+    forceOpenReason:"Reason (optional)", forceOpenConfirm:"Confirm & Open This Slot",
+    forceOpenSuccess:"Slot force-opened", forceOpenBadge:"Force-opened",
+    forceOpenActiveList:"Force-opened slots this week", forceOpenRevoke:"Revert Lock",
+    forceOpenRevoked:"Reverted to fixed course lock",
     feedbackBatchInput:"Batch Input Feedback", feedbackBatchInputDesc:"Help teachers fill it in: paste Excel data, dates auto-match sessions and get approved instantly (visible to students right away)",
     feedbackPasteHint:"Paste directly from Excel (Tab-separated, columns: Date, Feedback text)",
     feedbackExcelCols:"Date | Comments/Suggestions/New Vocabulary, Sentence",
@@ -4078,7 +4116,7 @@ function PeopleDirectory({ users, setUsers, lang, setToast, enrollments, attenda
 }
 
 // ─── Admin panel ──────────────────────────────────────────────────────────────
-function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, lang, setToast, introText, setIntroText, feedback, setFeedback }) {
+function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, lang, setToast, introText, setIntroText, feedback, setFeedback, teacherAvailability, setTeacherAvailability, availabilityOverrides, setAvailabilityOverrides }) {
   const t = T[lang];
   const [tab, setTab] = useState("courses");
   const pendingFbCount = (feedback||[]).filter(f=>f.status==="pending").length;
@@ -4087,6 +4125,7 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
     {key:"enroll",  label:t.enrollments},
     {key:"leave",   label:t.leaveReview},
     {key:"feedback",label:t.feedbackCenterTitle, badge:pendingFbCount},
+    {key:"availability", label:t.availability},
     {key:"peopledir", label:t.peopleDir},
     {key:"users",   label:t.manageUsers},
     {key:"tstats",  label:t.teacherStats},
@@ -4108,6 +4147,7 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
       {tab==="enroll" &&<EnrollmentManager users={users} courses={courses} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} lang={lang} setToast={setToast}/>}
       {tab==="leave"  &&<LeaveReview users={users} courses={courses} absences={absences} setAbsences={setAbsences} attendance={attendance} setAttendance={setAttendance} enrollments={enrollments} lang={lang}/>}
       {tab==="feedback"&&<FeedbackCenter users={users} courses={courses} enrollments={enrollments} attendance={attendance} feedback={feedback||[]} setFeedback={setFeedback} lang={lang} setToast={setToast}/>}
+      {tab==="availability"&&<AdminTeacherAvailability users={users} courses={courses} availability={teacherAvailability||[]} setAvailability={setTeacherAvailability} overrides={availabilityOverrides||[]} setOverrides={setAvailabilityOverrides} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang} setToast={setToast}/>}
       {tab==="peopledir" &&<PeopleDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses}/>}
       {tab==="users"  &&<UserManager users={users} setUsers={setUsers} lang={lang} setToast={setToast}/>}
       {tab==="tstats" &&<TeacherStats users={users} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang}/>}
@@ -5303,6 +5343,523 @@ function StudentClassHistory({ currentUser, enrollments, attendance, courses, us
 }
 
 // ─── Student / Teacher Layout (sidebar + main) ────────────────────────────────
+// ─── Teacher Availability ──────────────────────────────────────────────────────
+// Teachers declare which half-hour slots (9:00–23:00) they can be scheduled for,
+// limited to THIS WEEK and NEXT WEEK only. Changes are staged locally and must be
+// explicitly confirmed (with a plain-language summary) before they're saved. Once
+// a slot is opened, cancelling it within 12 hours of its start time is locked
+// (admin can override).
+const AVAILABILITY_SLOTS = Array.from({length:28}, (_,i)=>{
+  const totalMin = 9*60 + i*30; // 9:00 .. 22:30, 30-min steps, last slot ends 23:00
+  const h = Math.floor(totalMin/60), m = totalMin%60;
+  return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;
+});
+
+// Hours between now and a given day/time slot's start (can be negative if past)
+function hoursUntilSlotTime(weekDates, dayIndex, timeStr) {
+  const [h,m] = timeStr.split(":").map(Number);
+  const start = new Date(weekDates[dayIndex]);
+  start.setHours(h, m, 0, 0);
+  return (start - new Date()) / 3600000;
+}
+
+// Merge a sorted list of contiguous 30-min slot start-times ("HH:MM") into
+// human-readable ranges, e.g. ["20:00","20:30"] → [["20:00","21:00"]]
+function mergeSlotsToRanges(times) {
+  const sorted = [...times].sort();
+  const ranges = [];
+  let rangeStart = null, rangeEnd = null;
+  sorted.forEach(t => {
+    const endT = addMins(t, 30);
+    if (rangeStart === null) { rangeStart = t; rangeEnd = endT; }
+    else if (t === rangeEnd) { rangeEnd = endT; }
+    else { ranges.push([rangeStart, rangeEnd]); rangeStart = t; rangeEnd = endT; }
+  });
+  if (rangeStart !== null) ranges.push([rangeStart, rangeEnd]);
+  return ranges;
+}
+
+// Reusable click grid — used by both the teacher's own page and the admin's viewer/editor.
+// weekOffset is restricted to 0 (this week) or 1 (next week) by the caller.
+function timeToMinutes(t) { const [h,m] = t.split(":").map(Number); return h*60+m; }
+
+// True if a given half-hour grid slot overlaps one of this teacher's existing
+// fixed weekly courses (course.days/start/duration) — these are locked/unselectable
+// on the availability grid since the teacher is already committed to them.
+function findFixedCourseForSlot(teacherId, courses, dayIndex, time) {
+  const slotStart = timeToMinutes(time);
+  const slotEnd = slotStart + 30;
+  return courses.find(c => {
+    if (c.teacherId !== teacherId) return false;
+    if (!c.days?.includes(dayIndex)) return false;
+    const cStart = timeToMinutes(c.start);
+    const cEnd = cStart + (c.duration||50);
+    return slotStart < cEnd && cStart < slotEnd; // overlap
+  }) || null;
+}
+
+// Scan for any leave/absence evidence covering a fixed course on a specific date —
+// checks both self-reported absences and admin-recorded attendance entries.
+function scanLeaveForCourseDate(course, date, absences, attendance, enrollments) {
+  const results = [];
+  (absences||[]).forEach(a => {
+    if (a.courseId===course.id && a.dateStr===date) {
+      results.push({ type: a.requesterRole==="teacher"?"teacher_leave":"student_leave", note: a.note||a.reason||"", source:"self" });
+    }
+  });
+  const courseEnrollments = (enrollments||[]).filter(e=>e.courseId===course.id);
+  (attendance||[]).forEach(a => {
+    if (a.date===date && courseEnrollments.some(e=>e.id===a.enrollmentId)) {
+      results.push({ type:a.type, note:a.note||"", source:"admin" });
+    }
+  });
+  return results;
+}
+
+// ─── Force-Open confirmation modal (admin only) ───────────────────────────────
+function ForceOpenModal({ course, date, dayIndex, users, lang, absences, attendance, enrollments, onConfirm, onClose }) {
+  const t = T[lang];
+  const teacher = users.find(u=>u.id===course.teacherId);
+  const student = users.find(u=>u.id===course.studentId);
+  const endTime = addMins(course.start, course.duration);
+  const [reason, setReason] = useState("");
+
+  const scanResults = scanLeaveForCourseDate(course, date, absences, attendance, enrollments);
+  const TYPE_LABEL = {
+    student_leave: lang==="zh"?"學生請假":"Student Leave",
+    teacher_leave: lang==="zh"?"老師請假":"Teacher Leave",
+    excused:       lang==="zh"?"正規請假":"Excused Leave",
+    absent:        lang==="zh"?"缺勤":"Absent",
+    other:         lang==="zh"?"備註":"Note",
+  };
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9400,padding:"1rem"}}>
+      <div style={{background:"#FFFFFF",borderRadius:16,width:"100%",maxWidth:420,boxSizing:"border-box",boxShadow:"0 8px 36px rgba(23,47,57,0.2)",overflow:"hidden"}}>
+        <div style={{background:"#172F39",padding:"13px 18px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{fontSize:14,fontWeight:600,color:"#fff"}}>🔓 {t.forceOpenTitle}</span>
+          <button onClick={onClose} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",color:"#fff",fontSize:16}}>×</button>
+        </div>
+        <div style={{padding:"16px 18px"}}>
+          <p style={{fontSize:12,color:"#9E9E9E",margin:"0 0 12px",lineHeight:1.6}}>{t.forceOpenDesc}</p>
+
+          {/* Course info */}
+          <div style={{background:"#F5F5F5",borderRadius:8,padding:"10px 13px",marginBottom:12,fontSize:12,color:"#546E7A",lineHeight:1.7}}>
+            <div style={{fontWeight:600,color:"#172F39",fontSize:13}}>{course.subject}</div>
+            <div>{date} ({T[lang].days[dayIndex]}) · {course.start}–{endTime}</div>
+            <div>{lang==="zh"?"老師":"Teacher"}: {teacher?.name||"—"} · {lang==="zh"?"學生":"Student"}: {student?.name||"—"}</div>
+          </div>
+
+          {/* Leave scan result */}
+          {scanResults.length>0 ? (
+            <div style={{background:"#E8F5E9",border:"0.5px solid #C8E6C9",borderRadius:8,padding:"10px 13px",marginBottom:14}}>
+              <div style={{fontSize:12,fontWeight:600,color:"#2E7D32",marginBottom:6}}>{t.forceOpenScanFound}</div>
+              {scanResults.map((r,i)=>(
+                <div key={i} style={{fontSize:11,color:"#2E7D32",marginBottom:2}}>
+                  • {TYPE_LABEL[r.type]||r.type}{r.note?`：${r.note}`:""}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{background:"#FFF3E0",border:"0.5px solid #FFE0B2",borderRadius:8,padding:"10px 13px",marginBottom:14}}>
+              <div style={{fontSize:12,color:"#E65100"}}>{t.forceOpenScanNone}</div>
+            </div>
+          )}
+
+          <label style={{fontSize:12,color:"#546E7A",display:"block",marginBottom:5}}>{t.forceOpenReason}</label>
+          <input
+            value={reason}
+            onChange={e=>setReason(e.target.value)}
+            placeholder={lang==="zh"?"例：學生臨時請假，開放老師空堂":"e.g. Student took sudden leave, opening this slot"}
+            style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13,marginBottom:16}}
+          />
+
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>onConfirm(reason.trim())} style={{flex:1,padding:"10px",borderRadius:7,background:"#1A6B8A",border:"none",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+              ✓ {t.forceOpenConfirm}
+            </button>
+            <button onClick={onClose} style={{padding:"10px 16px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>
+              {t.cancel}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TeacherAvailabilityGrid({ teacherId, availability, setAvailability, courses, lang, isAdmin, setToast, weekOffset, setWeekOffset, overrides, setOverrides, users, absences, attendance, enrollments }) {
+  const t = T[lang];
+  const weekDates = getWeekDates(weekOffset);
+  const [pending, setPending] = useState({}); // key `${date}_${time}` -> "open" | "close"
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [forceOpenTarget, setForceOpenTarget] = useState(null); // {course, date, dayIndex} pending force-open confirmation
+
+  const mySlots = availability.filter(a=>a.teacherId===teacherId);
+  const keyOf = (date, time) => `${date}_${time}`;
+  const isCommittedOpen = (dayIndex, time) => mySlots.some(a=>a.dayIndex===dayIndex && a.time===time && a.date===fmtYMD(weekDates[dayIndex]));
+  const hasOverride = (courseId, date) => (overrides||[]).some(o=>o.courseId===courseId && o.date===date);
+  const weekOverrides = (overrides||[]).filter(o=>o.teacherId===teacherId && weekDates.some(d=>fmtYMD(d)===o.date));
+
+  const confirmForceOpen = (reason) => {
+    const {course, date, dayIndex} = forceOpenTarget;
+    setOverrides(prev => [...prev, {id:genId(), teacherId, courseId:course.id, date, dayIndex, reason, openedBy:"admin", openedAt:new Date().toISOString()}]);
+    setForceOpenTarget(null);
+    setToast(t.forceOpenSuccess);
+  };
+  const revokeOverride = (overrideId) => {
+    setOverrides(prev => prev.filter(o=>o.id!==overrideId));
+    setToast(t.forceOpenRevoked);
+  };
+
+  // A slot is truly locked-as-fixed only if it belongs to a course AND no
+  // admin override has freed that specific course+date combination.
+  const isEffectivelyFixed = (dayIndex, time) => {
+    const course = findFixedCourseForSlot(teacherId, courses, dayIndex, time);
+    if (!course) return null;
+    const date = fmtYMD(weekDates[dayIndex]);
+    return hasOverride(course.id, date) ? null : course;
+  };
+
+  // Clear any staged-but-unsaved changes whenever the visible week changes,
+  // so pending edits never silently carry over to a different week.
+  useEffect(()=>{ setPending({}); setShowConfirm(false); }, [weekOffset]);
+
+  const toggleCell = (dayIndex, time) => {
+    if (isEffectivelyFixed(dayIndex, time)) return; // fixed course (no override) — not selectable
+    const hrs = hoursUntilSlotTime(weekDates, dayIndex, time);
+    if (hrs <= 0) return; // slot already passed — no-op
+    const date = fmtYMD(weekDates[dayIndex]);
+    const key = keyOf(date, time);
+    const committedOpen = isCommittedOpen(dayIndex, time);
+    const existingPending = pending[key];
+
+    if (existingPending) {
+      // Clicking again on a staged cell reverts it back to its committed state
+      setPending(p => { const n = {...p}; delete n[key]; return n; });
+      return;
+    }
+    if (committedOpen) {
+      // Staging a cancellation — locked within 12h unless admin
+      if (!isAdmin && hrs < 12) { setToast(t.availabilityLockToast); return; }
+      setPending(p => ({...p, [key]: "close"}));
+    } else {
+      setPending(p => ({...p, [key]: "open"}));
+    }
+  };
+
+  const setWholeDay = (dayIndex, open) => {
+    const date = fmtYMD(weekDates[dayIndex]);
+    const updates = {};
+    AVAILABILITY_SLOTS.forEach(time => {
+      if (isEffectivelyFixed(dayIndex, time)) return; // skip fixed course slots (unless overridden)
+      const hrs = hoursUntilSlotTime(weekDates, dayIndex, time);
+      if (hrs <= 0) return;
+      const committedOpen = isCommittedOpen(dayIndex, time);
+      const key = keyOf(date, time);
+      if (open && !committedOpen) updates[key] = "open";
+      if (!open && committedOpen && (isAdmin || hrs >= 12)) updates[key] = "close";
+    });
+    setPending(p => ({...p, ...updates}));
+  };
+
+  const pendingCount = Object.keys(pending).length;
+
+  // Group staged changes into a readable preview: per date+action, merged into ranges
+  const buildPreview = () => {
+    const byDateAction = {}; // `${date}|${action}` -> [times]
+    Object.entries(pending).forEach(([key, action]) => {
+      const [date, time] = key.split("_");
+      const k = `${date}|${action}`;
+      if (!byDateAction[k]) byDateAction[k] = [];
+      byDateAction[k].push(time);
+    });
+    const rows = [];
+    Object.entries(byDateAction).forEach(([k, times]) => {
+      const [date, action] = k.split("|");
+      mergeSlotsToRanges(times).forEach(([s,e]) => rows.push({date, action, start:s, end:e}));
+    });
+    rows.sort((a,b)=> a.date===b.date ? a.start.localeCompare(b.start) : a.date.localeCompare(b.date));
+    return rows;
+  };
+
+  const confirmSave = () => {
+    let next = [...availability];
+    Object.entries(pending).forEach(([key, action]) => {
+      const [date, time] = key.split("_");
+      const dayIndex = weekDates.findIndex(d=>fmtYMD(d)===date);
+      if (action === "open") {
+        if (!next.some(a=>a.teacherId===teacherId && a.date===date && a.time===time)) {
+          next.push({id:genId(), teacherId, date, dayIndex, time, createdAt:new Date().toISOString()});
+        }
+      } else {
+        next = next.filter(a=>!(a.teacherId===teacherId && a.date===date && a.time===time));
+      }
+    });
+    setAvailability(next);
+    setPending({});
+    setShowConfirm(false);
+    setToast(t.availabilitySaved);
+  };
+
+  const preview = showConfirm ? buildPreview() : [];
+
+  return (
+    <div>
+      {/* Week selector — restricted to this week / next week only */}
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+        {[0,1].map(wo=>(
+          <button key={wo} onClick={()=>setWeekOffset(wo)} style={{padding:"6px 16px",borderRadius:7,border:weekOffset===wo?"none":"0.5px solid #CFD8DC",background:weekOffset===wo?"#1A6B8A":"transparent",color:weekOffset===wo?"#fff":"#546E7A",fontSize:13,fontWeight:weekOffset===wo?600:400,cursor:"pointer"}}>
+            {wo===0?t.availabilityThisWeek:t.availabilityNextWeek}
+          </button>
+        ))}
+        <span style={{fontSize:11,color:"#9E9E9E"}}>({fmtMD(weekDates[0])} – {fmtMD(weekDates[6])})</span>
+      </div>
+
+      {/* Legend */}
+      <div style={{display:"flex",gap:14,alignItems:"center",marginBottom:12,flexWrap:"wrap",fontSize:11,color:"#546E7A"}}>
+        <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:12,height:12,borderRadius:3,background:"#4CAF50",display:"inline-block"}}/>{t.availabilityLegendOpen}</span>
+        <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:12,height:12,borderRadius:3,background:"#FFFFFF",border:"1px solid #E0E0E0",display:"inline-block"}}/>{t.availabilityLegendClosed}</span>
+        <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:12,height:12,borderRadius:3,background:"#C8E6C9",border:"1px dashed #4CAF50",display:"inline-block"}}/>{lang==="zh"?"待儲存（開）":"Pending (open)"}</span>
+        <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:12,height:12,borderRadius:3,background:"#FFCDD2",border:"1px dashed #D32F2F",display:"inline-block"}}/>{lang==="zh"?"待儲存（關）":"Pending (close)"}</span>
+        <span style={{display:"flex",alignItems:"center",gap:5}}>🔒 {t.availabilityLegendLocked}</span>
+        <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:12,height:12,borderRadius:3,background:"#1A6B8A",display:"inline-block"}}/>{t.availabilityLegendFixed}</span>
+        {isAdmin && <span style={{color:"#7B1FA2"}}>⚡ {t.availabilityAdminOverride}</span>}
+      </div>
+
+      {/* Grid */}
+      <div style={{overflowX:"auto"}}>
+        <div style={{minWidth:560}}>
+          {/* Day headers */}
+          <div style={{display:"grid",gridTemplateColumns:"48px repeat(7,1fr)",gap:2,marginBottom:2,position:"sticky",top:0,zIndex:1,background:"#FFFFFF"}}>
+            <div/>
+            {T[lang].days.map((d,i)=>(
+              <div key={i} style={{textAlign:"center",padding:"4px 2px"}}>
+                <div style={{fontSize:11,fontWeight:600,color:"#172F39"}}>{T[lang].daysShort[i]}</div>
+                <div style={{fontSize:9,color:"#9E9E9E"}}>{fmtMD(weekDates[i])}</div>
+              </div>
+            ))}
+          </div>
+          {/* Half-hour rows */}
+          <div style={{maxHeight:480,overflowY:"auto"}}>
+            {AVAILABILITY_SLOTS.map(time=>(
+              <div key={time} style={{display:"grid",gridTemplateColumns:"48px repeat(7,1fr)",gap:2,marginBottom:2}}>
+                <div style={{fontSize:9,color:"#9E9E9E",textAlign:"right",paddingRight:6,paddingTop:5}}>{time.endsWith(":00")?time:""}</div>
+                {T[lang].days.map((_,dayIndex)=>{
+                  const date = fmtYMD(weekDates[dayIndex]);
+                  const rawFixedCourse = findFixedCourseForSlot(teacherId, courses, dayIndex, time);
+                  const overridden = rawFixedCourse && hasOverride(rawFixedCourse.id, date);
+                  const fixedCourse = overridden ? null : rawFixedCourse; // overridden slots fall through to normal rendering
+                  const hrs = hoursUntilSlotTime(weekDates, dayIndex, time);
+                  const past = hrs<=0;
+                  const committedOpen = isCommittedOpen(dayIndex, time);
+                  const pendingAction = pending[keyOf(date, time)];
+                  const displayOpen = pendingAction ? pendingAction==="open" : committedOpen;
+                  const locked = committedOpen && !pendingAction && !isAdmin && hrs<12;
+
+                  // Fixed courses take absolute visual + interaction priority — not
+                  // selectable regardless of past/lock/pending state, EXCEPT admin
+                  // can click to open the force-open flow (e.g. student took leave).
+                  if (fixedCourse) {
+                    return (
+                      <button
+                        key={dayIndex}
+                        disabled={!isAdmin}
+                        onClick={isAdmin ? ()=>setForceOpenTarget({course:fixedCourse, date, dayIndex}) : undefined}
+                        title={isAdmin
+                          ? `${fixedCourse.subject} (${fixedCourse.start}–${addMins(fixedCourse.start,fixedCourse.duration)}) — ${lang==="zh"?"點擊強制開放":"click to force-open"}`
+                          : `${fixedCourse.subject} (${fixedCourse.start}–${addMins(fixedCourse.start,fixedCourse.duration)})`}
+                        style={{
+                          height:20, borderRadius:3, border:"1px solid #1A6B8A",
+                          background:"#1A6B8A", cursor:isAdmin?"pointer":"not-allowed",
+                          display:"flex",alignItems:"center",justifyContent:"center",
+                          fontSize:7, color:"#fff", opacity:0.9,
+                        }}
+                      >
+                        📌
+                      </button>
+                    );
+                  }
+
+                  let bg = "#FFFFFF", border = "#E0E0E0";
+                  if (past) { bg = "#FAFAFA"; border = "#F0F0F0"; }
+                  else if (pendingAction==="open") { bg = "#C8E6C9"; border = "#4CAF50"; }
+                  else if (pendingAction==="close") { bg = "#FFCDD2"; border = "#D32F2F"; }
+                  else if (committedOpen) { bg = locked ? "#A5D6A7" : "#4CAF50"; border = "#4CAF50"; }
+                  else if (overridden) { border = "#7B1FA2"; } // subtle hint this was force-opened from a fixed course
+
+                  return (
+                    <button
+                      key={dayIndex}
+                      onClick={()=>toggleCell(dayIndex, time)}
+                      disabled={past || locked}
+                      title={past?"":locked?t.availabilityLockNote:overridden?t.forceOpenBadge:""}
+                      style={{
+                        height:20,
+                        borderRadius:3,
+                        border:`1px ${pendingAction?"dashed":overridden&&!committedOpen?"dashed":"solid"} ${border}`,
+                        background:bg,
+                        cursor:(past||locked)?"not-allowed":"pointer",
+                        display:"flex",alignItems:"center",justifyContent:"center",
+                        fontSize:8,
+                        color:"#fff",
+                        opacity:past?0.4:1,
+                      }}
+                    >
+                      {locked?"🔒":(overridden&&!committedOpen&&!pendingAction)?"🔓":""}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+          {/* Per-day quick actions */}
+          <div style={{display:"grid",gridTemplateColumns:"48px repeat(7,1fr)",gap:2,marginTop:6}}>
+            <div/>
+            {T[lang].days.map((_,dayIndex)=>(
+              <div key={dayIndex} style={{display:"flex",flexDirection:"column",gap:2}}>
+                <button onClick={()=>setWholeDay(dayIndex,true)} style={{fontSize:9,padding:"2px",borderRadius:3,border:"0.5px solid #4CAF50",background:"transparent",color:"#2E7D32",cursor:"pointer"}}>{t.availabilitySelectAllDay}</button>
+                <button onClick={()=>setWholeDay(dayIndex,false)} style={{fontSize:9,padding:"2px",borderRadius:3,border:"0.5px solid #CFD8DC",background:"transparent",color:"#9E9E9E",cursor:"pointer"}}>{t.availabilityClearDay}</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Force-opened slots list (admin only) — lets admin revert a force-open back to locked */}
+      {isAdmin && weekOverrides.length>0 && (
+        <div style={{marginTop:14,background:"#F3E5F5",border:"0.5px solid #E1BEE7",borderRadius:10,padding:"10px 14px"}}>
+          <div style={{fontSize:12,fontWeight:600,color:"#7B1FA2",marginBottom:8}}>🔓 {t.forceOpenActiveList}</div>
+          {weekOverrides.map(o=>{
+            const course = courses.find(c=>c.id===o.courseId);
+            return (
+              <div key={o.id} style={{display:"flex",alignItems:"center",gap:8,background:"#FFFFFF",borderRadius:7,padding:"7px 10px",marginBottom:6,flexWrap:"wrap"}}>
+                <span style={{fontSize:11,color:"#172F39",flex:1,minWidth:120}}>
+                  {course?.subject||"—"} · {o.date}
+                  {o.reason && <span style={{color:"#9E9E9E"}}> — {o.reason}</span>}
+                </span>
+                <button onClick={()=>revokeOverride(o.id)} style={{fontSize:10,padding:"3px 10px",borderRadius:5,border:"0.5px solid #7B1FA2",background:"transparent",color:"#7B1FA2",cursor:"pointer",flexShrink:0}}>
+                  🔒 {t.forceOpenRevoke}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Force-open confirmation (admin clicking a fixed course slot) */}
+      {forceOpenTarget && (
+        <ForceOpenModal
+          course={forceOpenTarget.course}
+          date={forceOpenTarget.date}
+          dayIndex={forceOpenTarget.dayIndex}
+          users={users||[]}
+          lang={lang}
+          absences={absences||[]}
+          attendance={attendance||[]}
+          enrollments={enrollments||[]}
+          onConfirm={confirmForceOpen}
+          onClose={()=>setForceOpenTarget(null)}
+        />
+      )}
+
+      {/* Save bar — appears once there are staged changes */}
+      {pendingCount>0 && !showConfirm && (
+        <div style={{position:"sticky",bottom:0,marginTop:14,background:"#EEF6FB",border:"1px solid #1A6B8A",borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+          <span style={{fontSize:12,color:"#1A6B8A",fontWeight:600}}>
+            {lang==="zh"?`${pendingCount} 項變更尚未儲存`:`${pendingCount} unsaved change(s)`}
+          </span>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>setPending({})} style={{padding:"6px 14px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",fontSize:12,cursor:"pointer"}}>
+              {lang==="zh"?"捨棄":"Discard"}
+            </button>
+            <button onClick={()=>setShowConfirm(true)} style={{padding:"6px 16px",borderRadius:6,border:"none",background:"#1A6B8A",color:"#fff",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+              {lang==="zh"?"預覽並儲存":"Review & Save"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation summary — lists every staged change in plain language before committing */}
+      {showConfirm && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9300,padding:"1rem"}}>
+          <div style={{background:"#FFFFFF",borderRadius:16,width:"100%",maxWidth:420,boxSizing:"border-box",boxShadow:"0 8px 36px rgba(23,47,57,0.2)",overflow:"hidden",maxHeight:"80vh",display:"flex",flexDirection:"column"}}>
+            <div style={{background:"#172F39",padding:"13px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+              <span style={{fontSize:14,fontWeight:600,color:"#fff"}}>{lang==="zh"?"確認本次操作":"Confirm Changes"}</span>
+              <button onClick={()=>setShowConfirm(false)} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",color:"#fff",fontSize:16}}>×</button>
+            </div>
+            <div style={{padding:"16px 18px",overflowY:"auto"}}>
+              {preview.length===0 && <p style={{fontSize:12,color:"#9E9E9E",textAlign:"center"}}>—</p>}
+              {preview.map((r,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:7,background:r.action==="open"?"#E8F5E9":"#FFEBEE",marginBottom:6}}>
+                  <span style={{fontSize:14}}>{r.action==="open"?"🟢":"🔴"}</span>
+                  <span style={{fontSize:12,color:"#172F39"}}>
+                    {r.action==="open" ? (lang==="zh"?"開啟時段":"Open slot") : (lang==="zh"?"關閉時段":"Close slot")}:
+                    {" "}<strong>{fmtMD(new Date(r.date+"T00:00:00"))} {r.start}–{r.end}</strong>
+                  </span>
+                </div>
+              ))}
+              <div style={{display:"flex",gap:8,marginTop:14}}>
+                <button onClick={confirmSave} style={{flex:1,padding:"10px",borderRadius:7,background:"#1A6B8A",border:"none",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                  ✓ {lang==="zh"?"確認送出":"Confirm & Save"}
+                </button>
+                <button onClick={()=>setShowConfirm(false)} style={{padding:"10px 16px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>
+                  {lang==="zh"?"返回修改":"Back"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Teacher's own sidebar page — restricted to this week / next week
+function TeacherAvailabilityPanel({ currentUser, users, availability, setAvailability, overrides, setOverrides, courses, absences, attendance, enrollments, lang, setToast }) {
+  const t = T[lang];
+  const [weekOffset, setWeekOffset] = useState(1); // next week by default
+  return (
+    <div style={{padding:"1.25rem"}}>
+      <div style={{marginBottom:14}}>
+        <h3 style={{fontSize:15,fontWeight:600,color:"#172F39",margin:"0 0 3px"}}>{t.availability}</h3>
+        <p style={{fontSize:12,color:"#9E9E9E",margin:0}}>{t.availabilityDesc}</p>
+        <p style={{fontSize:11,color:"#9E9E9E",margin:"3px 0 0"}}>{t.availabilityRange}</p>
+        <p style={{fontSize:11,color:"#1A6B8A",margin:"3px 0 0"}}>{t.availabilityFixedNote}</p>
+      </div>
+      <TeacherAvailabilityGrid teacherId={currentUser.id} availability={availability||[]} setAvailability={setAvailability} courses={courses||[]} lang={lang} isAdmin={false} setToast={setToast} weekOffset={weekOffset} setWeekOffset={setWeekOffset} overrides={overrides||[]} setOverrides={setOverrides} users={users||[]} absences={absences||[]} attendance={attendance||[]} enrollments={enrollments||[]}/>
+    </div>
+  );
+}
+
+// Admin's viewer/editor — pick any teacher, this week / next week only, bypasses the 12h lock
+function AdminTeacherAvailability({ users, courses, availability, setAvailability, overrides, setOverrides, absences, attendance, enrollments, lang, setToast }) {
+  const t = T[lang];
+  const teachers = users.filter(u=>u.role==="teacher");
+  const [teacherId, setTeacherId] = useState(teachers[0]?.id||"");
+  const [weekOffset, setWeekOffset] = useState(1);
+
+  return (
+    <div>
+      <h3 style={{fontSize:16,fontWeight:600,color:"#172F39",margin:"0 0 4px"}}>{t.availability}</h3>
+      <p style={{fontSize:12,color:"#9E9E9E",margin:"0 0 4px"}}>{t.availabilityDesc}</p>
+      <p style={{fontSize:11,color:"#1A6B8A",margin:"0 0 14px"}}>{t.availabilityFixedNote}</p>
+
+      {teachers.length===0 ? (
+        <p style={{color:"#9E9E9E",fontSize:13,textAlign:"center",padding:"2rem 0"}}>{t.availabilityNoTeachers}</p>
+      ) : (
+        <>
+          <label style={{fontSize:12,color:"#546E7A",display:"block",marginBottom:5}}>{t.availabilitySelectTeacher}</label>
+          <select value={teacherId} onChange={e=>setTeacherId(e.target.value)} style={{padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13,marginBottom:16,minWidth:200}}>
+            {teachers.map(te=><option key={te.id} value={te.id}>{te.name}</option>)}
+          </select>
+          <TeacherAvailabilityGrid teacherId={teacherId} availability={availability||[]} setAvailability={setAvailability} courses={courses||[]} lang={lang} isAdmin={true} setToast={setToast} weekOffset={weekOffset} setWeekOffset={setWeekOffset} overrides={overrides||[]} setOverrides={setOverrides} users={users||[]} absences={absences||[]} attendance={attendance||[]} enrollments={enrollments||[]}/>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── Student Teacher Introduction Panel ───────────────────────────────────────
 // Shows the student's own teacher(s) — basic profile with years of experience
 // and teaching philosophy/strengths, filled in (and editable) by admin.
@@ -5346,7 +5903,7 @@ function StudentTeacherIntroPanel({ currentUser, users, courses, teacherDirEntri
   );
 }
 
-function StudentTeacherLayout({ currentUser, users, courses, lang, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, setToast, feedback, setFeedback }) {
+function StudentTeacherLayout({ currentUser, users, courses, lang, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, setToast, feedback, setFeedback, teacherAvailability, setTeacherAvailability, availabilityOverrides, setAvailabilityOverrides }) {
   const t = T[lang];
   const isStudent = currentUser.role==="student";
   const isTeacher = currentUser.role==="teacher";
@@ -5377,6 +5934,7 @@ function StudentTeacherLayout({ currentUser, users, courses, lang, absences, set
       ]
     : [
         { key:"students",      icon:"👥", zh:"任教學生", en:"My Students" },
+        { key:"availability",  icon:"🗓", zh:"可安排時段", en:"Availability" },
         { key:"schedule_side", icon:"📅", zh:"課表",     en:"Schedule"   },
       ];
 
@@ -5480,6 +6038,8 @@ function StudentTeacherLayout({ currentUser, users, courses, lang, absences, set
               ? <StudentTeacherIntroPanel currentUser={currentUser} users={users} courses={courses} teacherDirEntries={teacherDirEntries} dirLoaded={dirLoaded} lang={lang}/>
             : isTeacher && sideTab==="students"
               ? <TeacherStudentsPanel currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} attendance={attendance} lang={lang} dirEntries={dirEntries}/>
+            : isTeacher && sideTab==="availability"
+              ? <TeacherAvailabilityPanel currentUser={currentUser} users={users} availability={teacherAvailability} setAvailability={setTeacherAvailability} overrides={availabilityOverrides} setOverrides={setAvailabilityOverrides} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang} setToast={setToast}/>
               : <div style={{padding:"1.5rem"}}>
                   <ScheduleView currentUser={currentUser} users={users} courses={courses} lang={lang} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} setToast={setToast} feedback={feedback} setFeedback={setFeedback}/>
                 </div>
@@ -5502,6 +6062,8 @@ export default function App() {
   const [enrollments,setEnrollments,eLoaded]=useStorage("cp3_enrollments",DEFAULT_ENROLLMENTS);
   const [attendance,setAttendance,attLoaded]=useStorage("cp3_attendance",DEFAULT_ATTENDANCE);
   const [feedback,setFeedback,fbLoaded]=useStorage("cp3_feedback",[]);
+  const [teacherAvailability,setTeacherAvailability,taLoaded]=useStorage("cp3_teacher_availability",[]);
+  const [availabilityOverrides,setAvailabilityOverrides,aoLoaded]=useStorage("cp3_availability_overrides",[]);
   const [introText,setIntroText,introLoaded]=useStorage("cp3_intro_text","");
   const [toast,setToastMsg]=useState("");
   const t=T[lang];
@@ -5516,7 +6078,7 @@ export default function App() {
     }
   },[users]);
 
-  if(!uLoaded||!cLoaded||!aLoaded||!mLoaded||!eLoaded||!attLoaded||!fbLoaded) return (
+  if(!uLoaded||!cLoaded||!aLoaded||!mLoaded||!eLoaded||!attLoaded||!fbLoaded||!taLoaded||!aoLoaded) return (
     <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#FAFAFA"}}>
       <span style={{color:"#1A6B8A",fontSize:16}}>Loading…</span>
     </div>
@@ -5569,7 +6131,7 @@ export default function App() {
         {isAdmin && (
           <div style={{background:"#FFFFFF",borderRadius:14,border:"0.5px solid #E0E0E0",boxShadow:"0 2px 12px rgba(23,47,57,0.06)",padding:"1.5rem"}}>
             {activeTab==="schedule"&&<ScheduleView currentUser={currentUser} users={users} courses={courses} lang={lang} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} setToast={setToast} feedback={feedback} setFeedback={setFeedback}/>}
-            {activeTab==="admin"&&<AdminPanel users={users} setUsers={setUsers} courses={courses} setCourses={setCourses} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} lang={lang} setToast={setToast} introText={introText} setIntroText={setIntroText} feedback={feedback} setFeedback={setFeedback}/>}
+            {activeTab==="admin"&&<AdminPanel users={users} setUsers={setUsers} courses={courses} setCourses={setCourses} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} lang={lang} setToast={setToast} introText={introText} setIntroText={setIntroText} feedback={feedback} setFeedback={setFeedback} teacherAvailability={teacherAvailability} setTeacherAvailability={setTeacherAvailability} availabilityOverrides={availabilityOverrides} setAvailabilityOverrides={setAvailabilityOverrides}/>}
           </div>
         )}
 
@@ -5582,6 +6144,8 @@ export default function App() {
             enrollments={enrollments} setEnrollments={setEnrollments}
             attendance={attendance} setAttendance={setAttendance}
             feedback={feedback} setFeedback={setFeedback}
+            teacherAvailability={teacherAvailability} setTeacherAvailability={setTeacherAvailability}
+            availabilityOverrides={availabilityOverrides} setAvailabilityOverrides={setAvailabilityOverrides}
             setToast={setToast}
           />
         )}
