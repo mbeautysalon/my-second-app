@@ -137,6 +137,14 @@ const T = {
     feedbackNone:"尚未填寫反饋", feedbackApprove:"核准", feedbackReject:"退回",
     feedbackApproved:"已核准，學生現在看得到了", feedbackRejected:"已退回",
     feedbackReview:"反饋審核", feedbackReviewDesc:"檢視老師填寫的課後反饋，核准後學生才會看到",
+    feedbackCenterTitle:"課後追蹤中心", feedbackCenterDesc:"追蹤已完課但尚未填寫反饋的課堂，並審核老師送出的反饋",
+    fbTabReview:"反饋審核", fbTabTracking:"未填寫追蹤",
+    fbTrackingDesc:"以下是已經上完課、但老師還沒有填寫課後反饋的堂次，依週分類",
+    fbTrackingEmpty:"目前沒有未填寫反饋的課堂 🎉", fbTrackingCount:"{n} 堂未填寫",
+    fbWeekOf:"週次",
+    fbTabOverview:"反饋總覽", fbOverviewDesc:"勾選學生，依週檢視該生課表與已填寫的課後心得",
+    fbOverviewSelectPrompt:"請先勾選至少一位學生", fbOverviewNoSessions:"該生尚無排課紀錄",
+    fbNotWritten:"尚未填寫課後心得", fbSelectStudents:"選擇學生",
     feedbackNoPending:"目前沒有待審核的反饋", feedbackAllReviewed:"全部反饋",
     feedbackBy:"填寫者", feedbackFor:"學生", feedbackDate:"上課日期",
     feedbackRejectReason:"退回原因（選填，會顯示給老師）",
@@ -167,6 +175,25 @@ const T = {
     dirManualSessions:"手動積分", dirRegYear:"加入年份",
     dirAddManual:"手動新增學生", dirEdit:"編輯", dirSave:"儲存",
     dirAgeDisplay:"歲", dirAgeFormat:"{current}（{year}：{join}加入）",
+    // People directory (student + teacher)
+    peopleDir:"師生資料庫", peopleDirStudents:"學生資料庫", peopleDirTeachers:"老師資料庫",
+    teacherDir:"老師資料庫", dirTeacherName:"老師姓名", dirYearsExp:"教學年資",
+    teacherExcelCols:"老師姓名 | 教學年資 | 加入年份",
+    teacherPasteHint:"直接從 Excel 複製並貼上（Tab 分隔，欄位順序：老師姓名、教學年資、加入年份）",
+    dirAddManualTeacher:"手動新增老師", yearsUnit:"年",
+    // Salary
+    salary:"薪資", salaryTotal:"已發放總薪資", salaryRecords:"發放紀錄",
+    salaryAdd:"新增薪資紀錄", salaryAmount:"金額", salaryDate:"發放日期",
+    salaryNote:"備註（選填）", salarySave:"儲存紀錄", salaryNone:"尚無發放紀錄",
+    salaryManage:"管理薪資", salaryDeleteConfirm:"確認刪除此筆薪資紀錄？",
+    salaryAdded:"薪資紀錄已新增", salaryDeleted:"薪資紀錄已刪除",
+    // Teacher profile / bio
+    teacherBio:"教學理念與優勢", teacherBioPlaceholder:"教學風格、擅長領域、教學方針…",
+    useTemplate:"套用預設範本", teacherIntro:"老師介紹",
+    teacherIntroDesc:"認識你的授課老師", myTeachers:"我的授課老師",
+    teacherYears:"教學年資", teacherYearsUnit:"年教學經驗",
+    previewStudentView:"預覽學生檢視畫面", noBioYet:"尚未填寫教學理念",
+    teacherPreviewTitle:"學生檢視預覽",
     // Student progress
     myProgress:"我的學習進度",
     mySchedule:"本週課表",
@@ -280,6 +307,14 @@ const T = {
     feedbackNone:"No feedback yet", feedbackApprove:"Approve", feedbackReject:"Reject",
     feedbackApproved:"Approved — now visible to the student", feedbackRejected:"Rejected",
     feedbackReview:"Feedback Review", feedbackReviewDesc:"Review feedback teachers have submitted — approved ones become visible to students",
+    feedbackCenterTitle:"Post-Class Tracking Center", feedbackCenterDesc:"Track completed classes missing feedback, and review feedback teachers have submitted",
+    fbTabReview:"Feedback Review", fbTabTracking:"Missing Feedback",
+    fbTrackingDesc:"Classes that have already ended but the teacher hasn't written feedback for yet, grouped by week",
+    fbTrackingEmpty:"No missing feedback right now 🎉", fbTrackingCount:"{n} missing",
+    fbWeekOf:"Week of",
+    fbTabOverview:"Feedback Overview", fbOverviewDesc:"Check students to view their weekly schedule with any feedback already written",
+    fbOverviewSelectPrompt:"Select at least one student", fbOverviewNoSessions:"No scheduled sessions for this student",
+    fbNotWritten:"No feedback written yet", fbSelectStudents:"Select Students",
     feedbackNoPending:"No feedback pending review", feedbackAllReviewed:"All Feedback",
     feedbackBy:"Submitted by", feedbackFor:"Student", feedbackDate:"Class Date",
     feedbackRejectReason:"Reason for rejection (optional, shown to teacher)",
@@ -310,6 +345,25 @@ const T = {
     dirManualSessions:"Manual Points", dirRegYear:"Join Year",
     dirAddManual:"Add Student", dirEdit:"Edit", dirSave:"Save",
     dirAgeDisplay:"yrs", dirAgeFormat:"{current}（{year}: joined at {join}）",
+    // People directory (student + teacher)
+    peopleDir:"Teacher & Student Directory", peopleDirStudents:"Student Directory", peopleDirTeachers:"Teacher Directory",
+    teacherDir:"Teacher Directory", dirTeacherName:"Teacher Name", dirYearsExp:"Years of Teaching",
+    teacherExcelCols:"Teacher Name | Years of Teaching | Join Year",
+    teacherPasteHint:"Paste directly from Excel (Tab-separated, columns: Teacher Name, Years of Teaching, Join Year)",
+    dirAddManualTeacher:"Add Teacher", yearsUnit:"yrs",
+    // Salary
+    salary:"Salary", salaryTotal:"Total Paid", salaryRecords:"Payment History",
+    salaryAdd:"Add Payment Record", salaryAmount:"Amount", salaryDate:"Payment Date",
+    salaryNote:"Notes (optional)", salarySave:"Save Record", salaryNone:"No payment records yet",
+    salaryManage:"Manage Salary", salaryDeleteConfirm:"Delete this payment record?",
+    salaryAdded:"Payment record added", salaryDeleted:"Payment record deleted",
+    // Teacher profile / bio
+    teacherBio:"Teaching Philosophy & Strengths", teacherBioPlaceholder:"Teaching style, areas of expertise, approach…",
+    useTemplate:"Use Default Template", teacherIntro:"Teacher Introduction",
+    teacherIntroDesc:"Get to know your teachers", myTeachers:"My Teachers",
+    teacherYears:"Years of Teaching", teacherYearsUnit:"years of experience",
+    previewStudentView:"Preview Student View", noBioYet:"No teaching philosophy written yet",
+    teacherPreviewTitle:"Student View Preview",
     // Student progress
     myProgress:"My Progress",
     mySchedule:"This Week",
@@ -1551,7 +1605,9 @@ function ScheduleView({ currentUser, users, courses, lang, absences, setAbsences
 
   // Admin filter state
   const [adminFilterType, setAdminFilterType] = useState("all"); // "all" | "teacher" | "student"
-  const [adminFilterId, setAdminFilterId] = useState("all");
+  const [adminFilterId, setAdminFilterId] = useState("all"); // used for teacher (single-select)
+  const [adminSelectedStudents, setAdminSelectedStudents] = useState(new Set()); // used for student (multi-select) — empty = all
+  const [showStudentPicker, setShowStudentPicker] = useState(false);
 
   const weekDates = getWeekDates(weekOffset);
   const weekStart = weekDates[0];
@@ -1568,7 +1624,7 @@ function ScheduleView({ currentUser, users, courses, lang, absences, setAbsences
     if (!isAdmin) return currentUser.role==="teacher" ? course.teacherId===currentUser.id : enr.studentId===currentUser.id;
     // Admin filters
     if (adminFilterType==="teacher" && adminFilterId!=="all") return course.teacherId===adminFilterId;
-    if (adminFilterType==="student" && adminFilterId!=="all") return enr.studentId===adminFilterId || course.studentId===adminFilterId;
+    if (adminFilterType==="student" && adminSelectedStudents.size>0) return adminSelectedStudents.has(enr.studentId) || adminSelectedStudents.has(course.studentId);
     return true;
   });
   const weekSlots = getWeekSlots(courses, myEnrollments, weekDates);
@@ -1577,8 +1633,14 @@ function ScheduleView({ currentUser, users, courses, lang, absences, setAbsences
   const unenrolledCount = isAdmin ? courses.filter(c=>!enrolledCourseIds.has(c.id)).length : 0;
 
   // Label for current filter
-  const filterLabel = isAdmin && adminFilterType!=="all" && adminFilterId!=="all"
-    ? users.find(u=>u.id===adminFilterId)?.name
+  const filterLabel = isAdmin
+    ? (adminFilterType==="teacher" && adminFilterId!=="all")
+      ? users.find(u=>u.id===adminFilterId)?.name
+      : (adminFilterType==="student" && adminSelectedStudents.size>0)
+        ? (adminSelectedStudents.size===1
+            ? users.find(u=>u.id===[...adminSelectedStudents][0])?.name
+            : (lang==="zh"?`${adminSelectedStudents.size} 位學生`:`${adminSelectedStudents.size} students`))
+        : null
     : null;
 
   const rangeLabel = `${fmtMD(weekStart)} – ${fmtMD(weekEnd)}`;
@@ -1631,32 +1693,57 @@ function ScheduleView({ currentUser, users, courses, lang, absences, setAbsences
 
       {/* ── Admin filter bar ── */}
       {isAdmin && (
-        <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",background:"#F5F5F5",borderRadius:8,padding:"8px 10px",marginBottom:"0.75rem"}}>
-          <span style={{fontSize:11,color:"#9E9E9E",fontWeight:500,whiteSpace:"nowrap"}}>{lang==="zh"?"篩選：":"Filter:"}</span>
+        <div style={{display:"flex",gap:6,alignItems:"flex-start",flexWrap:"wrap",background:"#F5F5F5",borderRadius:8,padding:"8px 10px",marginBottom:"0.75rem",position:"relative"}}>
+          <span style={{fontSize:11,color:"#9E9E9E",fontWeight:500,whiteSpace:"nowrap",paddingTop:5}}>{lang==="zh"?"篩選：":"Filter:"}</span>
           {/* Type selector */}
           <div style={{display:"flex",gap:3}}>
             {[["all",lang==="zh"?"全部":"All"],["teacher",lang==="zh"?"老師":"Teacher"],["student",lang==="zh"?"學生":"Student"]].map(([k,l])=>(
-              <button key={k} onClick={()=>{setAdminFilterType(k);setAdminFilterId("all");}} style={{padding:"4px 10px",borderRadius:5,fontSize:11,cursor:"pointer",border:adminFilterType===k?"none":"0.5px solid #CFD8DC",background:adminFilterType===k?"#1A6B8A":"transparent",color:adminFilterType===k?"#fff":"#546E7A"}}>
+              <button key={k} onClick={()=>{setAdminFilterType(k);setAdminFilterId("all");setAdminSelectedStudents(new Set());setShowStudentPicker(false);}} style={{padding:"4px 10px",borderRadius:5,fontSize:11,cursor:"pointer",border:adminFilterType===k?"none":"0.5px solid #CFD8DC",background:adminFilterType===k?"#1A6B8A":"transparent",color:adminFilterType===k?"#fff":"#546E7A"}}>
                 {l}
               </button>
             ))}
           </div>
-          {/* Person selector — only show when type is selected */}
+          {/* Teacher: single-select dropdown */}
           {adminFilterType==="teacher" && (
             <select style={iStyle} value={adminFilterId} onChange={e=>setAdminFilterId(e.target.value)}>
               <option value="all">{lang==="zh"?"所有老師":"All Teachers"}</option>
               {teachers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
             </select>
           )}
+          {/* Student: multi-select checkbox picker */}
           {adminFilterType==="student" && (
-            <select style={iStyle} value={adminFilterId} onChange={e=>setAdminFilterId(e.target.value)}>
-              <option value="all">{lang==="zh"?"所有學生":"All Students"}</option>
-              {students.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
-            </select>
+            <div style={{position:"relative"}}>
+              <button onClick={()=>setShowStudentPicker(p=>!p)} style={{...iStyle,display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+                {adminSelectedStudents.size===0
+                  ? (lang==="zh"?"所有學生":"All Students")
+                  : (lang==="zh"?`已選 ${adminSelectedStudents.size} 位`:`${adminSelectedStudents.size} selected`)}
+                <span style={{fontSize:9,color:"#9E9E9E"}}>{showStudentPicker?"▲":"▼"}</span>
+              </button>
+              {showStudentPicker && (
+                <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,zIndex:50,background:"#FFFFFF",border:"0.5px solid #CFD8DC",borderRadius:8,boxShadow:"0 4px 16px rgba(23,47,57,0.15)",minWidth:200,maxHeight:280,overflowY:"auto",padding:"6px 0"}}>
+                  {/* "All Students" option — checking it clears individual selections */}
+                  <label style={{display:"flex",alignItems:"center",gap:8,padding:"6px 12px",fontSize:12,color:"#172F39",cursor:"pointer",borderBottom:"0.5px solid #F0F0F0",fontWeight:500}}>
+                    <input type="checkbox" checked={adminSelectedStudents.size===0} onChange={()=>setAdminSelectedStudents(new Set())} style={{cursor:"pointer"}}/>
+                    {lang==="zh"?"所有學生":"All Students"}
+                  </label>
+                  {students.map(s=>(
+                    <label key={s.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 12px",fontSize:12,color:"#546E7A",cursor:"pointer"}}>
+                      <input type="checkbox" checked={adminSelectedStudents.has(s.id)} onChange={()=>setAdminSelectedStudents(prev=>{const n=new Set(prev); n.has(s.id)?n.delete(s.id):n.add(s.id); return n;})} style={{cursor:"pointer"}}/>
+                      {s.name}
+                    </label>
+                  ))}
+                  <div style={{padding:"6px 12px",borderTop:"0.5px solid #F0F0F0",marginTop:4}}>
+                    <button onClick={()=>setShowStudentPicker(false)} style={{width:"100%",padding:"6px",borderRadius:5,background:"#1A6B8A",border:"none",color:"#fff",fontSize:12,cursor:"pointer"}}>
+                      {lang==="zh"?"完成":"Done"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
           {/* Clear filter */}
-          {(adminFilterType!=="all"||adminFilterId!=="all") && (
-            <button onClick={()=>{setAdminFilterType("all");setAdminFilterId("all");}} style={{fontSize:11,padding:"3px 8px",borderRadius:4,border:"0.5px solid #CFD8DC",background:"transparent",color:"#9E9E9E",cursor:"pointer"}}>✕ {lang==="zh"?"清除":"Clear"}</button>
+          {(adminFilterType!=="all"||adminFilterId!=="all"||adminSelectedStudents.size>0) && (
+            <button onClick={()=>{setAdminFilterType("all");setAdminFilterId("all");setAdminSelectedStudents(new Set());setShowStudentPicker(false);}} style={{fontSize:11,padding:"3px 8px",borderRadius:4,border:"0.5px solid #CFD8DC",background:"transparent",color:"#9E9E9E",cursor:"pointer"}}>✕ {lang==="zh"?"清除":"Clear"}</button>
           )}
         </div>
       )}
@@ -3510,6 +3597,477 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
   );
 }
 
+// ─── Salary Modal ─────────────────────────────────────────────────────────────
+// Per-teacher salary management: total paid so far + individual dated payment records.
+function SalaryModal({ teacherEntry, users, lang, setToast, onClose }) {
+  const t = T[lang];
+  const teacherName = teacherEntry.nameEn || users.find(u=>u.id===teacherEntry.linkedUserId)?.name || "—";
+
+  const [records, setRecords] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [showAdd, setShowAdd] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [date, setDate] = useState(new Date().toISOString().slice(0,10));
+  const [note, setNote] = useState("");
+  const [confirmDelId, setConfirmDelId] = useState(null);
+
+  useEffect(()=>{
+    (async()=>{
+      try{ const r=await window.storage.get("cp3_salary"); if(r?.value) setRecords(JSON.parse(r.value)); }catch{}
+      setLoaded(true);
+    })();
+  },[]);
+
+  const saveAll = async (next) => {
+    setRecords(next);
+    try{ await window.storage.set("cp3_salary",JSON.stringify(next)); }catch{}
+  };
+
+  const myRecords = records.filter(r=>r.teacherEntryId===teacherEntry.id).sort((a,b)=>b.date.localeCompare(a.date));
+  const total = myRecords.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
+
+  const addRecord = () => {
+    const amt = parseFloat(amount);
+    if (!amt || amt<=0 || !date) return;
+    const rec = { id:genId(), teacherEntryId:teacherEntry.id, amount:amt, date, note:note.trim(), recordedAt:new Date().toISOString() };
+    saveAll([...records, rec]);
+    setAmount(""); setNote(""); setShowAdd(false);
+    setToast(t.salaryAdded);
+  };
+
+  const doDelete = () => {
+    saveAll(records.filter(r=>r.id!==confirmDelId));
+    setConfirmDelId(null);
+    setToast(t.salaryDeleted);
+  };
+
+  const iStyle = {width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13};
+  const lStyle = {fontSize:12,color:"#546E7A",display:"block",marginBottom:4,marginTop:10};
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9300,padding:"1rem"}}>
+      {confirmDelId && <ConfirmModal title={lang==="zh"?"刪除薪資紀錄":"Delete Payment Record"} message={t.salaryDeleteConfirm} confirmLabel={lang==="zh"?"確認刪除":"Delete"} onConfirm={doDelete} onCancel={()=>setConfirmDelId(null)} danger/>}
+      <div style={{background:"#FFFFFF",borderRadius:16,width:"100%",maxWidth:420,boxSizing:"border-box",boxShadow:"0 8px 36px rgba(23,47,57,0.2)",overflow:"hidden",maxHeight:"85vh",display:"flex",flexDirection:"column"}}>
+        {/* Header */}
+        <div style={{background:"#172F39",padding:"13px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+          <span style={{fontSize:14,fontWeight:600,color:"#fff"}}>💰 {t.salaryManage} — {teacherName}</span>
+          <button onClick={onClose} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",color:"#fff",fontSize:16}}>×</button>
+        </div>
+        <div style={{padding:"16px 18px",overflowY:"auto"}}>
+          {/* Total */}
+          <div style={{background:"#E8F5E9",borderRadius:10,padding:"14px 16px",textAlign:"center",marginBottom:14,border:"1px solid #C8E6C9"}}>
+            <div style={{fontSize:11,color:"#2E7D32",fontWeight:500,letterSpacing:"0.04em",marginBottom:4}}>{t.salaryTotal.toUpperCase()}</div>
+            <div style={{fontSize:30,fontWeight:800,color:"#2E7D32"}}>{total.toLocaleString()}</div>
+          </div>
+
+          {/* Add form */}
+          {!showAdd ? (
+            <button onClick={()=>setShowAdd(true)} style={{width:"100%",padding:"9px",borderRadius:7,background:"#1A6B8A",border:"none",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer",marginBottom:14}}>
+              ＋ {t.salaryAdd}
+            </button>
+          ) : (
+            <div style={{background:"#F5F5F5",borderRadius:10,padding:"12px 14px",marginBottom:14,border:"0.5px solid #E0E0E0"}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <div>
+                  <label style={lStyle}>{t.salaryAmount}</label>
+                  <input type="number" style={iStyle} value={amount} onChange={e=>setAmount(e.target.value)} placeholder="0"/>
+                </div>
+                <div>
+                  <label style={lStyle}>{t.salaryDate}</label>
+                  <input type="date" style={iStyle} value={date} onChange={e=>setDate(e.target.value)}/>
+                </div>
+              </div>
+              <label style={lStyle}>{t.salaryNote}</label>
+              <input style={iStyle} value={note} onChange={e=>setNote(e.target.value)} placeholder={lang==="zh"?"例：6月份薪資":"e.g. June salary"}/>
+              <div style={{display:"flex",gap:8,marginTop:12}}>
+                <button onClick={addRecord} disabled={!amount||parseFloat(amount)<=0} style={{flex:1,padding:"8px",borderRadius:6,background:(amount&&parseFloat(amount)>0)?"#2E7D32":"#E0E0E0",border:"none",color:(amount&&parseFloat(amount)>0)?"#fff":"#9E9E9E",fontSize:13,fontWeight:600,cursor:(amount&&parseFloat(amount)>0)?"pointer":"not-allowed"}}>
+                  ✓ {t.salarySave}
+                </button>
+                <button onClick={()=>{setShowAdd(false);setAmount("");setNote("");}} style={{padding:"8px 14px",borderRadius:6,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>
+                  {t.cancel}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* History */}
+          <div style={{fontSize:12,fontWeight:600,color:"#172F39",marginBottom:8}}>{t.salaryRecords}</div>
+          {!loaded && <div style={{fontSize:12,color:"#9E9E9E",textAlign:"center",padding:"1rem 0"}}>{lang==="zh"?"載入中…":"Loading…"}</div>}
+          {loaded && myRecords.length===0 && <div style={{fontSize:12,color:"#9E9E9E",textAlign:"center",padding:"1rem 0"}}>{t.salaryNone}</div>}
+          {myRecords.map(r=>(
+            <div key={r.id} style={{display:"flex",alignItems:"center",gap:10,background:"#FAFAFA",border:"0.5px solid #E0E0E0",borderRadius:8,padding:"9px 12px",marginBottom:6}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:600,color:"#172F39"}}>{parseFloat(r.amount).toLocaleString()}</div>
+                <div style={{fontSize:11,color:"#9E9E9E"}}>{r.date}{r.note?` · ${r.note}`:""}</div>
+              </div>
+              <button onClick={()=>setConfirmDelId(r.id)} style={{fontSize:11,padding:"4px 9px",borderRadius:5,border:"0.5px solid #FFCDD2",background:"transparent",color:"#D32F2F",cursor:"pointer",flexShrink:0}}>✕</button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Teacher Directory ────────────────────────────────────────────────────────
+// Rough default template for a senior language-school teacher's bio — admin
+// can use this as a starting point and edit freely per teacher.
+const DEFAULT_TEACHER_BIO = {
+  zh: "資深語言教學老師，擁有多年一對一及小班教學經驗。教學風格活潑生動，注重口語表達與實際應用，善於根據學生的程度與學習目標調整課程節奏。課堂上重視互動與鼓勵，致力於幫助學生建立學習自信心，並培養長期、穩定的學習動力與習慣。",
+  en: "A senior language teacher with years of one-on-one and small-group teaching experience. Teaching style is engaging and practical, focused on spoken fluency and real-world application, with lessons paced to each student's level and goals. Classes emphasize interaction and encouragement, helping students build confidence and develop steady, lasting learning habits.",
+};
+
+// ─── Teacher Profile Card (reusable — shown to students AND admin preview) ───
+function TeacherProfileCard({ entry, lang }) {
+  const t = T[lang];
+  const name = entry?.nameEn || "—";
+  const years = entry?.yearsExp;
+  const bio = entry?.bio && entry.bio.trim() ? entry.bio.trim() : "";
+
+  return (
+    <div style={{background:"#FFFFFF",border:"0.5px solid #E0E0E0",borderRadius:14,padding:"1.25rem",boxShadow:"0 2px 10px rgba(23,47,57,0.05)"}}>
+      <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:14}}>
+        <div style={{width:52,height:52,borderRadius:"50%",background:"linear-gradient(135deg,#1A6B8A,#7B1FA2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,fontWeight:700,color:"#fff",flexShrink:0}}>
+          {name.slice(0,2).toUpperCase()}
+        </div>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:16,fontWeight:700,color:"#172F39"}}>{name}</div>
+          {years && (
+            <div style={{fontSize:12,color:"#1A6B8A",marginTop:2,fontWeight:500}}>
+              🎓 {years} {t.teacherYearsUnit}
+            </div>
+          )}
+        </div>
+      </div>
+      <div style={{fontSize:11,fontWeight:600,color:"#9E9E9E",letterSpacing:"0.04em",marginBottom:6,textTransform:"uppercase"}}>{t.teacherBio}</div>
+      <div style={{fontSize:13,color:"#172F39",lineHeight:1.8,whiteSpace:"pre-wrap"}}>
+        {bio || <span style={{color:"#CFD8DC",fontStyle:"italic"}}>{t.noBioYet}</span>}
+      </div>
+    </div>
+  );
+}
+
+function TeacherDirectory({ users, setUsers, lang, setToast }) {
+  const t = T[lang];
+  const teachers = users.filter(u=>u.role==="teacher");
+
+  const [dirEntries, setDirEntries] = useState([]);
+  const [pasteText, setPasteText] = useState("");
+  const [parsed, setParsed] = useState([]);
+  const [selected, setSelected] = useState(new Set());
+  const [showPaste, setShowPaste] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({});
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [addForm, setAddForm] = useState({nameEn:"",yearsExp:"",joinYear:String(new Date().getFullYear()),bio:"",linkedUserId:""});
+  const [previewTarget, setPreviewTarget] = useState(null);
+  const [confirmDelDirId, setConfirmDelDirId] = useState(null);
+  const [salaryTarget, setSalaryTarget] = useState(null); // teacher entry being managed for salary
+
+  useEffect(()=>{
+    (async()=>{
+      try{ const r=await window.storage.get("cp3_teacher_dir"); if(r?.value) setDirEntries(JSON.parse(r.value)); }catch{}
+    })();
+  },[]);
+  const saveDirEntries = async (next) => {
+    setDirEntries(next);
+    try{ await window.storage.set("cp3_teacher_dir",JSON.stringify(next)); }catch{}
+  };
+
+  const parseExcel = () => {
+    const rows = pasteText.trim().split(/\r?\n/).map(row=>row.split(/\t/).map(c=>c.trim()));
+    const result = rows
+      .filter(r=>r.length>=1&&r[0])
+      .map(r=>({ nameEn:r[0]||"", yearsExp:r[1]||"", joinYear:r[2]||String(new Date().getFullYear()) }))
+      .filter(r=>r.nameEn.toLowerCase()!=="teacher name"); // drop header row if pasted
+    setParsed(result);
+    setSelected(new Set(result.map((_,i)=>i)));
+  };
+
+  const genPassword = () => Math.random().toString(36).slice(2,8).toUpperCase();
+  const isLinked = (nameEn) => {
+    const lower = nameEn.toLowerCase().replace(/\s/g,"");
+    return users.find(u=>u.role==="teacher"&&(u.name.toLowerCase().replace(/\s/g,"")===lower||u.username.toLowerCase()===lower));
+  };
+
+  const createAccounts = () => {
+    let created = 0;
+    const newUsers = [...users];
+    const newDir = [...dirEntries];
+    parsed.forEach((row,i) => {
+      if (!selected.has(i)) return;
+      if (isLinked(row.nameEn)) return;
+      const pwd = genPassword();
+      const username = row.nameEn.toLowerCase().replace(/\s+/g,".");
+      const newUser = { id:genId(), username, password:pwd, name:row.nameEn, role:"teacher", _defaultPwd:pwd };
+      newUsers.push(newUser);
+      const existingDirIdx = newDir.findIndex(d=>d.nameEn===row.nameEn);
+      const entry = { id:genId(), ...row, linkedUserId:newUser.id };
+      if (existingDirIdx>=0) newDir[existingDirIdx]=entry; else newDir.push(entry);
+      created++;
+    });
+    setUsers(newUsers);
+    saveDirEntries(newDir);
+    setParsed([]); setPasteText(""); setShowPaste(false);
+    setToast(t.importDone.replace("{n}",created));
+  };
+
+  const toggleSel = (i) => setSelected(s=>{const n=new Set(s);n.has(i)?n.delete(i):n.add(i);return n;});
+
+  const startEdit = (d) => { setEditingId(d.id||d.linkedUserId); setEditForm({...d}); setShowAddForm(false); };
+  const saveEdit = () => {
+    const next = dirEntries.map(d => (d.id===editingId||d.linkedUserId===editingId) ? {...d,...editForm} : d);
+    if (!next.some(d=>d.id===editingId||d.linkedUserId===editingId)) next.push({id:genId(),...editForm});
+    saveDirEntries(next);
+    setEditingId(null); setEditForm({});
+    setToast(lang==="zh"?"已儲存":"Saved");
+  };
+  const cancelEdit = () => { setEditingId(null); setEditForm({}); };
+
+  const saveAdd = () => {
+    if (!addForm.nameEn.trim()) return;
+    saveDirEntries([...dirEntries, {id:genId(), ...addForm}]);
+    setAddForm({nameEn:"",yearsExp:"",joinYear:String(new Date().getFullYear()),bio:"",linkedUserId:""});
+    setShowAddForm(false);
+    setToast(lang==="zh"?"老師資料已新增":"Teacher added");
+  };
+
+  const doDelDir = () => {
+    saveDirEntries(dirEntries.filter(d=>d.id!==confirmDelDirId&&d.linkedUserId!==confirmDelDirId));
+    setConfirmDelDirId(null);
+    setToast(lang==="zh"?"已刪除":"Deleted");
+  };
+
+  const allTeachers = [
+    ...dirEntries.map(d=>({...d,_fromDir:true})),
+    ...teachers.filter(u=>!dirEntries.some(d=>d.linkedUserId===u.id)).map(u=>({
+      id:u.id, nameEn:u.name, yearsExp:"", joinYear:"", linkedUserId:u.id, _fromDir:false,
+    })),
+  ];
+
+  const iStyle={width:"100%",boxSizing:"border-box",padding:"7px 9px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:12};
+  const thStyle={fontSize:11,fontWeight:600,color:"#546E7A",padding:"8px 10px",textAlign:"left",borderBottom:"1px solid #E0E0E0",whiteSpace:"nowrap",background:"#F5F5F5"};
+  const tdStyle={fontSize:12,color:"#172F39",padding:"8px 10px",borderBottom:"0.5px solid #F0F0F0",verticalAlign:"middle"};
+  const lStyle={fontSize:11,color:"#546E7A",display:"block",marginBottom:3,marginTop:8};
+
+  const cols = [t.dirTeacherName, t.dirYearsExp, t.dirRegYear, t.salary, t.dirStatus, ""];
+
+  return (
+    <div>
+      {confirmDelDirId && <ConfirmModal title={lang==="zh"?"刪除老師資料":"Delete Teacher"} message={lang==="zh"?"確認刪除此老師的資料？":"Delete this teacher record?"} confirmLabel={lang==="zh"?"確認刪除":"Delete"} onConfirm={doDelDir} onCancel={()=>setConfirmDelDirId(null)} danger/>}
+      {salaryTarget && <SalaryModal teacherEntry={salaryTarget} users={users} lang={lang} setToast={setToast} onClose={()=>setSalaryTarget(null)}/>}
+
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"1rem",flexWrap:"wrap",gap:8}}>
+        <h3 style={{fontSize:16,fontWeight:500,color:"#172F39",margin:0}}>{t.teacherDir} ({allTeachers.length})</h3>
+        <div style={{display:"flex",gap:7}}>
+          <button onClick={()=>{setShowAddForm(!showAddForm);setEditingId(null);}} style={{background:showAddForm?"#546E7A":"#4CAF50",border:"none",borderRadius:7,color:"#fff",padding:"7px 14px",fontSize:12,cursor:"pointer"}}>
+            ＋ {t.dirAddManualTeacher}
+          </button>
+          <button onClick={()=>setShowPaste(!showPaste)} style={{background:"#1A6B8A",border:"none",borderRadius:7,color:"#fff",padding:"7px 14px",fontSize:12,cursor:"pointer"}}>
+            📋 {t.pasteFromExcel}
+          </button>
+        </div>
+      </div>
+
+      {/* Manual add form */}
+      {showAddForm && (
+        <div style={{background:"#F5F5F5",borderRadius:12,border:"0.5px solid #E0E0E0",padding:"1.25rem",marginBottom:"1.25rem"}}>
+          <div style={{fontWeight:500,fontSize:14,color:"#172F39",marginBottom:12}}>{t.dirAddManualTeacher}</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10}}>
+            {[
+              {k:"nameEn",   l:t.dirTeacherName, ph:"John Smith"},
+              {k:"yearsExp", l:t.dirYearsExp,    ph:"5"},
+              {k:"joinYear", l:t.dirRegYear,     ph:"2025"},
+            ].map(({k,l,ph})=>(
+              <div key={k}>
+                <label style={lStyle}>{l}</label>
+                <input style={iStyle} value={addForm[k]||""} onChange={e=>setAddForm(f=>({...f,[k]:e.target.value}))} placeholder={ph}/>
+              </div>
+            ))}
+            <div>
+              <label style={lStyle}>{lang==="zh"?"連結帳號（選填）":"Link Account (optional)"}</label>
+              <select style={iStyle} value={addForm.linkedUserId||""} onChange={e=>setAddForm(f=>({...f,linkedUserId:e.target.value}))}>
+                <option value="">{lang==="zh"?"—不連結—":"—None—"}</option>
+                {teachers.filter(u=>!dirEntries.some(d=>d.linkedUserId===u.id)).map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}>
+            <label style={{...lStyle,marginTop:0}}>{t.teacherBio}</label>
+            <button onClick={()=>setAddForm(f=>({...f,bio:DEFAULT_TEACHER_BIO[lang]||DEFAULT_TEACHER_BIO.en}))} style={{fontSize:11,padding:"3px 10px",borderRadius:5,border:"0.5px solid #1A6B8A",background:"transparent",color:"#1A6B8A",cursor:"pointer"}}>
+              ✨ {t.useTemplate}
+            </button>
+          </div>
+          <textarea value={addForm.bio||""} onChange={e=>setAddForm(f=>({...f,bio:e.target.value}))} rows={4} placeholder={t.teacherBioPlaceholder} style={{...iStyle,resize:"vertical",lineHeight:1.6,fontFamily:"inherit"}}/>
+          <div style={{display:"flex",gap:8,marginTop:14}}>
+            <button onClick={saveAdd} style={{padding:"8px 20px",borderRadius:7,background:"#4CAF50",border:"none",color:"#fff",fontSize:13,fontWeight:500,cursor:"pointer"}}>✓ {t.dirSave}</button>
+            <button onClick={()=>setShowAddForm(false)} style={{padding:"8px 14px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>{t.cancel}</button>
+          </div>
+        </div>
+      )}
+
+      {/* Paste panel */}
+      {showPaste && (
+        <div style={{background:"#F5F5F5",borderRadius:12,border:"0.5px solid #E0E0E0",padding:"1.25rem",marginBottom:"1.5rem"}}>
+          <p style={{fontSize:12,color:"#546E7A",margin:"0 0 8px",lineHeight:1.6}}>{t.teacherPasteHint}</p>
+          <div style={{fontSize:11,background:"#E3F2FD",color:"#1565C0",borderRadius:5,padding:"5px 10px",marginBottom:10,fontFamily:"monospace"}}>{t.teacherExcelCols}</div>
+          <textarea value={pasteText} onChange={e=>setPasteText(e.target.value)} placeholder={lang==="zh"?"在此貼上從 Excel 複製的內容…":"Paste Excel content here…"} style={{...iStyle,height:110,resize:"vertical",fontFamily:"monospace",lineHeight:1.5}}/>
+          <div style={{display:"flex",gap:8,marginTop:10}}>
+            <button onClick={parseExcel} disabled={!pasteText.trim()} style={{padding:"7px 16px",borderRadius:7,background:pasteText.trim()?"#1A6B8A":"#E0E0E0",border:"none",color:pasteText.trim()?"#fff":"#9E9E9E",fontSize:12,cursor:pasteText.trim()?"pointer":"not-allowed"}}>🔍 {t.parseRows}</button>
+            <button onClick={()=>{setPasteText("");setParsed([]);}} style={{padding:"7px 12px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:12,cursor:"pointer"}}>{t.cancel}</button>
+          </div>
+          {parsed.length>0 && (
+            <div style={{marginTop:"1.25rem"}}>
+              <div style={{fontSize:13,fontWeight:500,color:"#172F39",marginBottom:8}}>{t.parsedPreview} — {parsed.length} {lang==="zh"?"筆":"rows"}</div>
+              <div style={{overflowX:"auto",borderRadius:8,border:"0.5px solid #E0E0E0",marginBottom:12}}>
+                <table style={{width:"100%",borderCollapse:"collapse",minWidth:420}}>
+                  <thead style={{background:"#F5F5F5"}}>
+                    <tr>
+                      <th style={{...thStyle,width:36}}><input type="checkbox" checked={selected.size===parsed.length&&parsed.length>0} onChange={e=>{if(e.target.checked)setSelected(new Set(parsed.map((_,i)=>i)));else setSelected(new Set());}} style={{cursor:"pointer"}}/></th>
+                      {[t.dirTeacherName,t.dirYearsExp,t.dirRegYear,t.dirStatus].map(h=><th key={h} style={thStyle}>{h}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {parsed.map((row,i)=>{
+                      const exists=isLinked(row.nameEn);
+                      return (
+                        <tr key={i} style={{background:selected.has(i)?"rgba(26,107,138,0.04)":"transparent"}}>
+                          <td style={{...tdStyle,width:36}}><input type="checkbox" checked={selected.has(i)} onChange={()=>toggleSel(i)} disabled={!!exists} style={{cursor:exists?"not-allowed":"pointer"}}/></td>
+                          <td style={tdStyle}>{row.nameEn}</td>
+                          <td style={tdStyle}>{row.yearsExp}</td>
+                          <td style={tdStyle}>{row.joinYear}</td>
+                          <td style={tdStyle}>{exists?<span style={{fontSize:11,background:"#E8F5E9",color:"#2E7D32",borderRadius:4,padding:"2px 7px"}}>✓ {t.accountCreated}</span>:<span style={{fontSize:11,background:"#FFF3E0",color:"#E65100",borderRadius:4,padding:"2px 7px"}}>{t.dirNoAccount}</span>}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{fontSize:11,color:"#546E7A",marginBottom:10}}>{t.randomPwd}</div>
+              <button onClick={createAccounts} disabled={selected.size===0} style={{padding:"8px 18px",borderRadius:7,background:selected.size>0?"#4CAF50":"#E0E0E0",border:"none",color:selected.size>0?"#fff":"#9E9E9E",fontSize:13,fontWeight:500,cursor:selected.size>0?"pointer":"not-allowed"}}>
+                ✓ {t.createAccounts} ({[...selected].filter(i=>!isLinked(parsed[i]?.nameEn)).length})
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Table */}
+      {allTeachers.length===0 ? (
+        <p style={{color:"#9E9E9E",fontSize:13,textAlign:"center",padding:"2rem 0"}}>{lang==="zh"?"尚無老師資料":"No teacher data yet"}</p>
+      ) : (
+        <div style={{overflowX:"auto",borderRadius:10,border:"0.5px solid #E0E0E0"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",minWidth:620}}>
+            <thead><tr>{cols.map((h,i)=><th key={i} style={thStyle}>{h}</th>)}</tr></thead>
+            <tbody>
+              {allTeachers.map((d,i)=>{
+                const linkedUser = users.find(u=>u.id===d.linkedUserId);
+                const entryId = d.id||d.linkedUserId;
+                const isEditing = editingId===entryId;
+
+                if (isEditing) {
+                  const ef = editForm;
+                  const inEd = (k,ph)=><input style={{...iStyle,minWidth:70}} value={ef[k]||""} onChange={e=>setEditForm(f=>({...f,[k]:e.target.value}))} placeholder={ph||""}/>;
+                  return (
+                    <>
+                      <tr key={entryId} style={{background:"#EEF6FB"}}>
+                        <td style={tdStyle}>{inEd("nameEn","John Smith")}</td>
+                        <td style={tdStyle}>{inEd("yearsExp","5")}</td>
+                        <td style={tdStyle}>{inEd("joinYear","2025")}</td>
+                        <td style={tdStyle}>—</td>
+                        <td style={tdStyle} colSpan={2}>
+                          <div style={{display:"flex",gap:5}}>
+                            <button onClick={saveEdit} style={{padding:"5px 12px",borderRadius:5,background:"#1A6B8A",border:"none",color:"#fff",fontSize:11,cursor:"pointer"}}>✓ {t.dirSave}</button>
+                            <button onClick={cancelEdit} style={{padding:"5px 10px",borderRadius:5,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:11,cursor:"pointer"}}>{t.cancel}</button>
+                          </div>
+                        </td>
+                      </tr>
+                      <tr key={entryId+"_bio"} style={{background:"#EEF6FB"}}>
+                        <td colSpan={6} style={{...tdStyle,paddingTop:0}}>
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                            <label style={{fontSize:11,color:"#546E7A"}}>{t.teacherBio}</label>
+                            <button onClick={()=>setEditForm(f=>({...f,bio:DEFAULT_TEACHER_BIO[lang]||DEFAULT_TEACHER_BIO.en}))} style={{fontSize:10,padding:"2px 8px",borderRadius:4,border:"0.5px solid #1A6B8A",background:"transparent",color:"#1A6B8A",cursor:"pointer"}}>
+                              ✨ {t.useTemplate}
+                            </button>
+                          </div>
+                          <textarea value={ef.bio||""} onChange={e=>setEditForm(f=>({...f,bio:e.target.value}))} rows={3} placeholder={t.teacherBioPlaceholder} style={{...iStyle,resize:"vertical",lineHeight:1.6,fontFamily:"inherit"}}/>
+                        </td>
+                      </tr>
+                    </>
+                  );
+                }
+
+                return (
+                  <tr key={entryId} style={{background:i%2===0?"#FFFFFF":"#FAFAFA"}} onMouseEnter={e=>e.currentTarget.style.background="#EEF6FB"} onMouseLeave={e=>e.currentTarget.style.background=i%2===0?"#FFFFFF":"#FAFAFA"}>
+                    <td style={tdStyle}>
+                      <div style={{fontWeight:500}}>{d.nameEn||"—"}</div>
+                      {linkedUser&&<div style={{fontSize:10,color:"#9E9E9E"}}>@{linkedUser.username}</div>}
+                    </td>
+                    <td style={tdStyle}>{d.yearsExp?`${d.yearsExp} ${t.yearsUnit}`:"—"}</td>
+                    <td style={tdStyle}>{d.joinYear||"—"}</td>
+                    <td style={tdStyle}>
+                      <button onClick={()=>setSalaryTarget({id:entryId,nameEn:d.nameEn,linkedUserId:d.linkedUserId})} style={{fontSize:11,padding:"4px 10px",borderRadius:5,border:"0.5px solid #2E7D32",background:"transparent",color:"#2E7D32",cursor:"pointer",fontWeight:500}}>
+                        💰 {t.salaryManage}
+                      </button>
+                    </td>
+                    <td style={tdStyle}>
+                      {linkedUser
+                        ? <span style={{fontSize:11,background:"#E8F5E9",color:"#2E7D32",borderRadius:4,padding:"2px 7px"}}>✓ {t.dirHasAccount}</span>
+                        : <span style={{fontSize:11,background:"#FFF3E0",color:"#E65100",borderRadius:4,padding:"2px 7px"}}>{t.dirNoAccount}</span>}
+                    </td>
+                    <td style={tdStyle}>
+                      <div style={{display:"flex",gap:4}}>
+                        <button onClick={()=>setPreviewTarget(d)} title={t.previewStudentView} style={{padding:"4px 9px",borderRadius:4,border:"0.5px solid #7B1FA2",background:"transparent",color:"#7B1FA2",fontSize:11,cursor:"pointer"}}>👁</button>
+                        <button onClick={()=>startEdit(d)} style={{padding:"4px 9px",borderRadius:4,border:"0.5px solid #CFD8DC",background:"transparent",color:"#1A6B8A",fontSize:11,cursor:"pointer"}}>{t.dirEdit}</button>
+                        {d._fromDir && <button onClick={()=>setConfirmDelDirId(entryId)} style={{padding:"4px 9px",borderRadius:4,border:"0.5px solid #FFCDD2",background:"transparent",color:"#D32F2F",fontSize:11,cursor:"pointer"}}>✕</button>}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Admin preview: exactly what a student sees on the Teacher Introduction tab */}
+      {previewTarget && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9300,padding:"1rem"}} onClick={()=>setPreviewTarget(null)}>
+          <div style={{background:"#F5F5F5",borderRadius:16,width:"100%",maxWidth:420,boxSizing:"border-box",boxShadow:"0 8px 36px rgba(23,47,57,0.2)",overflow:"hidden"}} onClick={e=>e.stopPropagation()}>
+            <div style={{background:"#172F39",padding:"13px 18px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{fontSize:14,fontWeight:600,color:"#fff"}}>👁 {t.teacherPreviewTitle}</span>
+              <button onClick={()=>setPreviewTarget(null)} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",color:"#fff",fontSize:16}}>×</button>
+            </div>
+            <div style={{padding:"18px"}}>
+              <TeacherProfileCard entry={previewTarget} lang={lang}/>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── People Directory (wraps Student + Teacher directories) ──────────────────
+function PeopleDirectory({ users, setUsers, lang, setToast, enrollments, attendance, courses }) {
+  const t = T[lang];
+  const [subTab, setSubTab] = useState("students"); // students | teachers
+  return (
+    <div>
+      <h3 style={{fontSize:16,fontWeight:600,color:"#172F39",margin:"0 0 12px"}}>{t.peopleDir}</h3>
+      <div style={{display:"flex",gap:5,marginBottom:18}}>
+        {[["students",t.peopleDirStudents],["teachers",t.peopleDirTeachers]].map(([k,l])=>(
+          <button key={k} onClick={()=>setSubTab(k)} style={{padding:"7px 16px",borderRadius:7,fontSize:13,cursor:"pointer",border:subTab===k?"none":"0.5px solid #CFD8DC",background:subTab===k?"#1A6B8A":"transparent",color:subTab===k?"#fff":"#546E7A",fontWeight:subTab===k?600:400}}>
+            {l}
+          </button>
+        ))}
+      </div>
+      {subTab==="students" && <StudentDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses}/>}
+      {subTab==="teachers" && <TeacherDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast}/>}
+    </div>
+  );
+}
+
 // ─── Admin panel ──────────────────────────────────────────────────────────────
 function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, lang, setToast, introText, setIntroText, feedback, setFeedback }) {
   const t = T[lang];
@@ -3519,8 +4077,8 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
     {key:"courses", label:t.courses},
     {key:"enroll",  label:t.enrollments},
     {key:"leave",   label:t.leaveReview},
-    {key:"feedback",label:t.feedbackReview, badge:pendingFbCount},
-    {key:"studir",  label:t.studentDir},
+    {key:"feedback",label:t.feedbackCenterTitle, badge:pendingFbCount},
+    {key:"peopledir", label:t.peopleDir},
     {key:"users",   label:t.manageUsers},
     {key:"tstats",  label:t.teacherStats},
     {key:"sstats",  label:t.studentStats},
@@ -3540,8 +4098,8 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
       {tab==="courses"&&<CourseManager users={users} courses={courses} setCourses={setCourses} lang={lang} setToast={setToast} materials={materials} setMaterials={setMaterials}/>}
       {tab==="enroll" &&<EnrollmentManager users={users} courses={courses} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} lang={lang} setToast={setToast}/>}
       {tab==="leave"  &&<LeaveReview users={users} courses={courses} absences={absences} setAbsences={setAbsences} attendance={attendance} setAttendance={setAttendance} enrollments={enrollments} lang={lang}/>}
-      {tab==="feedback"&&<FeedbackReview users={users} courses={courses} enrollments={enrollments} feedback={feedback||[]} setFeedback={setFeedback} lang={lang} setToast={setToast}/>}
-      {tab==="studir" &&<StudentDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses}/>}
+      {tab==="feedback"&&<FeedbackCenter users={users} courses={courses} enrollments={enrollments} attendance={attendance} feedback={feedback||[]} setFeedback={setFeedback} lang={lang} setToast={setToast}/>}
+      {tab==="peopledir" &&<PeopleDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses}/>}
       {tab==="users"  &&<UserManager users={users} setUsers={setUsers} lang={lang} setToast={setToast}/>}
       {tab==="tstats" &&<TeacherStats users={users} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang}/>}
       {tab==="sstats" &&<StudentStats users={users} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang}/>}
@@ -3553,13 +4111,45 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
 // ─── Feedback Review (admin) ──────────────────────────────────────────────────
 // Simple check-and-approve flow: view the teacher's written feedback, then
 // one click to Approve (becomes visible to the student) or Reject.
-function FeedbackReview({ users, courses, enrollments, feedback, setFeedback, lang, setToast }) {
+// Compute completed sessions that have no feedback entry at all yet (excludes
+// sessions marked absent/excused/teacher_leave, since feedback isn't expected there)
+function computeMissingFeedback(courses, enrollments, feedback, attendance) {
+  const missing = [];
+  (enrollments||[]).forEach(enr => {
+    const course = courses.find(c=>c.id===enr.courseId);
+    if (!course) return;
+    (enr.scheduledDates||[]).forEach(s => {
+      if (!isSessionOver(s.date, course.start, course.duration)) return;
+      const attRec = (attendance||[]).find(a=>a.enrollmentId===enr.id && a.date===s.date);
+      if (attRec && attRec.type!=="other") return; // absent/excused/teacher_leave — feedback not expected
+      const hasFeedback = (feedback||[]).some(f=>f.enrollmentId===enr.id && f.date===s.date);
+      if (!hasFeedback) missing.push({ course, enrollment: enr, date: s.date, dayIndex: s.dayIndex, sessionNo: s.sessionNo });
+    });
+  });
+  return missing;
+}
+
+// Monday (YYYY-MM-DD) of the week containing dateStr — used as a grouping key
+function getMondayKey(dateStr) {
+  const d = new Date(dateStr+"T00:00:00");
+  const dow = (d.getDay()+6)%7;
+  d.setDate(d.getDate()-dow);
+  return fmtYMD(d);
+}
+
+function FeedbackCenter({ users, courses, enrollments, attendance, feedback, setFeedback, lang, setToast }) {
   const t = T[lang];
+  const [subTab, setSubTab] = useState("review"); // review | tracking | overview
   const [filter, setFilter] = useState("pending"); // pending | all
   const [rejectTarget, setRejectTarget] = useState(null); // feedback id (or "_batch") pending a reject-reason prompt
   const [rejectNote, setRejectNote] = useState("");
   const [selected, setSelected] = useState(new Set()); // selected feedback ids (pending only)
   const [showBatchInput, setShowBatchInput] = useState(false);
+  const [batchInputCourseId, setBatchInputCourseId] = useState(null);
+  const [overviewStudents, setOverviewStudents] = useState(new Set()); // selected student ids for the Overview sub-tab
+  const [showOverviewPicker, setShowOverviewPicker] = useState(false);
+
+  const allStudentUsers = users.filter(u=>u.role==="student");
 
   const getCourse = id => courses.find(c=>c.id===id);
   const getUser = id => users.find(u=>u.id===id);
@@ -3608,9 +4198,43 @@ function FeedbackReview({ users, courses, enrollments, feedback, setFeedback, la
     rejected: {label:t.feedbackStatusRejected, color:"#D32F2F", bg:"#FFEBEE"},
   };
 
+  // ── Missing-feedback tracking, grouped by week (most recent first) ──
+  const missing = computeMissingFeedback(courses, enrollments, feedback, attendance);
+  const missingByWeek = {};
+  missing.forEach(m => {
+    const wk = getMondayKey(m.date);
+    if (!missingByWeek[wk]) missingByWeek[wk] = [];
+    missingByWeek[wk].push(m);
+  });
+  const weekKeys = Object.keys(missingByWeek).sort((a,b)=>b.localeCompare(a));
+
+  const openBatchInputFor = (courseId) => { setBatchInputCourseId(courseId); setShowBatchInput(true); };
+
+  // ── Overview: all sessions (with any feedback attached) for the selected student(s), grouped by week ──
+  const overviewRows = overviewStudents.size>0
+    ? enrollments
+        .filter(enr => overviewStudents.has(enr.studentId))
+        .flatMap(enr => {
+          const course = courses.find(c=>c.id===enr.courseId);
+          if (!course) return [];
+          return (enr.scheduledDates||[]).map(s => ({
+            course, enrollment: enr, studentId: enr.studentId,
+            date: s.date, dayIndex: s.dayIndex, sessionNo: s.sessionNo,
+            fb: (feedback||[]).find(f=>f.enrollmentId===enr.id && f.date===s.date) || null,
+          }));
+        })
+    : [];
+  const overviewByWeek = {};
+  overviewRows.forEach(r => {
+    const wk = getMondayKey(r.date);
+    if (!overviewByWeek[wk]) overviewByWeek[wk] = [];
+    overviewByWeek[wk].push(r);
+  });
+  const overviewWeekKeys = Object.keys(overviewByWeek).sort((a,b)=>b.localeCompare(a));
+
   return (
     <div>
-      {showBatchInput && <BatchFeedbackModal users={users} courses={courses} enrollments={enrollments} setFeedback={setFeedback} lang={lang} setToast={setToast} onClose={()=>setShowBatchInput(false)}/>}
+      {showBatchInput && <BatchFeedbackModal users={users} courses={courses} enrollments={enrollments} setFeedback={setFeedback} lang={lang} setToast={setToast} initialCourseId={batchInputCourseId} onClose={()=>{setShowBatchInput(false);setBatchInputCourseId(null);}}/>}
 
       {/* Reject reason modal (single or batch) */}
       {rejectTarget && (
@@ -3639,99 +4263,255 @@ function FeedbackReview({ users, courses, enrollments, feedback, setFeedback, la
 
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10,marginBottom:4}}>
         <div>
-          <h3 style={{fontSize:16,fontWeight:600,color:"#172F39",margin:"0 0 4px"}}>{t.feedbackReview}</h3>
-          <p style={{fontSize:12,color:"#9E9E9E",margin:0}}>{t.feedbackReviewDesc}</p>
+          <h3 style={{fontSize:16,fontWeight:600,color:"#172F39",margin:"0 0 4px"}}>{t.feedbackCenterTitle}</h3>
+          <p style={{fontSize:12,color:"#9E9E9E",margin:0}}>{t.feedbackCenterDesc}</p>
         </div>
-        <button onClick={()=>setShowBatchInput(true)} style={{background:"#7B1FA2",border:"none",borderRadius:7,color:"#fff",padding:"8px 16px",fontSize:12,fontWeight:500,cursor:"pointer",whiteSpace:"nowrap"}}>
+        <button onClick={()=>openBatchInputFor(null)} style={{background:"#7B1FA2",border:"none",borderRadius:7,color:"#fff",padding:"8px 16px",fontSize:12,fontWeight:500,cursor:"pointer",whiteSpace:"nowrap"}}>
           📋 {t.feedbackBatchInput}
         </button>
       </div>
 
-      {/* Filter */}
-      <div style={{display:"flex",gap:5,marginTop:14,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
-        {[["pending",t.feedbackReview],["all",t.feedbackAllReviewed]].map(([k,l])=>(
-          <button key={k} onClick={()=>{setFilter(k);setSelected(new Set());}} style={{padding:"5px 14px",borderRadius:6,fontSize:12,cursor:"pointer",border:filter===k?"none":"0.5px solid #CFD8DC",background:filter===k?"#1A6B8A":"transparent",color:filter===k?"#fff":"#546E7A"}}>
-            {k==="pending"?(lang==="zh"?"待審核":"Pending"):(lang==="zh"?"全部":"All")}
+      {/* Sub-tabs: Review vs Tracking vs Overview */}
+      <div style={{display:"flex",gap:5,marginTop:16,marginBottom:16,flexWrap:"wrap"}}>
+        {[["review",t.fbTabReview,pendingIds.length],["tracking",t.fbTabTracking,missing.length],["overview",t.fbTabOverview,0]].map(([k,l,badge])=>(
+          <button key={k} onClick={()=>setSubTab(k)} style={{position:"relative",padding:"7px 16px",borderRadius:7,fontSize:13,cursor:"pointer",border:subTab===k?"none":"0.5px solid #CFD8DC",background:subTab===k?"#1A6B8A":"transparent",color:subTab===k?"#fff":"#546E7A",fontWeight:subTab===k?600:400}}>
+            {l}
+            {badge>0 && <span style={{marginLeft:6,fontSize:10,background:subTab===k?"rgba(255,255,255,0.25)":"#D32F2F",color:"#fff",borderRadius:9,padding:"1px 6px",fontWeight:700}}>{badge}</span>}
           </button>
         ))}
       </div>
 
-      {/* Batch selection toolbar — only relevant when there's pending items in view */}
-      {pendingIds.length>0 && (
-        <div style={{display:"flex",alignItems:"center",gap:10,background:"#F5F5F5",border:"0.5px solid #E0E0E0",borderRadius:8,padding:"8px 12px",marginBottom:14,flexWrap:"wrap"}}>
-          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"#546E7A",cursor:"pointer"}}>
-            <input type="checkbox" checked={allPendingSelected} onChange={toggleSelAll} style={{cursor:"pointer"}}/>
-            {t.feedbackSelectAll}
-          </label>
-          {selected.size>0 && (
-            <>
-              <span style={{fontSize:12,color:"#1A6B8A",fontWeight:500}}>{t.feedbackSelected.replace("{n}", selected.size)}</span>
-              <button onClick={batchApprove} style={{marginLeft:"auto",background:"#2E7D32",border:"none",borderRadius:6,color:"#fff",padding:"6px 14px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
-                ✓ {t.feedbackBatchApprove}
+      {/* ══════════ REVIEW SUB-TAB ══════════ */}
+      {subTab==="review" && (
+        <>
+          {/* Filter */}
+          <div style={{display:"flex",gap:5,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
+            {[["pending",t.feedbackReview],["all",t.feedbackAllReviewed]].map(([k,l])=>(
+              <button key={k} onClick={()=>{setFilter(k);setSelected(new Set());}} style={{padding:"5px 14px",borderRadius:6,fontSize:12,cursor:"pointer",border:filter===k?"none":"0.5px solid #CFD8DC",background:filter===k?"#1A6B8A":"transparent",color:filter===k?"#fff":"#546E7A"}}>
+                {k==="pending"?(lang==="zh"?"待審核":"Pending"):(lang==="zh"?"全部":"All")}
               </button>
-              <button onClick={batchReject} style={{background:"transparent",border:"1px solid #D32F2F",borderRadius:6,color:"#D32F2F",padding:"6px 14px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
-                ✕ {t.feedbackBatchReject}
-              </button>
-            </>
-          )}
-        </div>
-      )}
+            ))}
+          </div>
 
-      {list.length===0 && (
-        <div style={{textAlign:"center",padding:"2.5rem 0",color:"#9E9E9E"}}>
-          <div style={{fontSize:28,marginBottom:8}}>✅</div>
-          <div style={{fontSize:13}}>{t.feedbackNoPending}</div>
-        </div>
-      )}
-
-      {list.map(f => {
-        const course = getCourse(f.courseId);
-        const teacher = getUser(f.teacherId);
-        const student = getUser(f.studentId);
-        const meta = STATUS_META[f.status];
-        return (
-          <div key={f.id} style={{background:selected.has(f.id)?"#EEF6FB":"#FFFFFF",border:`1px solid ${selected.has(f.id)?"#1A6B8A":meta.color+"33"}`,borderRadius:10,padding:"14px 16px",marginBottom:10,display:"flex",gap:10}}>
-            {f.status==="pending" && (
-              <input type="checkbox" checked={selected.has(f.id)} onChange={()=>toggleSel(f.id)} style={{marginTop:2,cursor:"pointer",flexShrink:0}}/>
-            )}
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,marginBottom:8,flexWrap:"wrap"}}>
-                <div>
-                  <div style={{fontWeight:600,fontSize:13,color:"#172F39"}}>{course?.subject||"—"}</div>
-                  <div style={{fontSize:11,color:"#9E9E9E",marginTop:2}}>
-                    {t.feedbackDate}: {f.date} ({T[lang].days[f.dayIndex]}) · #{f.sessionNo}
-                  </div>
-                  <div style={{fontSize:11,color:"#546E7A",marginTop:2}}>
-                    {t.feedbackBy}: <strong>{teacher?.name||"—"}</strong> → {t.feedbackFor}: <strong>{student?.name||"—"}</strong>
-                  </div>
-                </div>
-                <span style={{fontSize:11,background:meta.bg,color:meta.color,borderRadius:5,padding:"3px 10px",fontWeight:600,flexShrink:0}}>● {meta.label}</span>
-              </div>
-              <div style={{background:"#F5F5F5",borderRadius:8,padding:"10px 13px",fontSize:13,color:"#172F39",lineHeight:1.7,whiteSpace:"pre-wrap",marginBottom:10}}>
-                {f.text}
-              </div>
-              {f.status==="rejected" && f.reviewNote && (
-                <div style={{fontSize:11,color:"#D32F2F",marginBottom:10}}>↳ {t.feedbackRejectReason.split("（")[0].split("(")[0]}: {f.reviewNote}</div>
-              )}
-              {f.status==="pending" && (
-                <div style={{display:"flex",gap:8}}>
-                  <button onClick={()=>approve(f)} style={{flex:1,background:"#2E7D32",border:"none",borderRadius:7,color:"#fff",padding:"8px",fontSize:13,fontWeight:600,cursor:"pointer"}}>
-                    ✓ {t.feedbackApprove}
+          {/* Batch selection toolbar — only relevant when there's pending items in view */}
+          {pendingIds.length>0 && (
+            <div style={{display:"flex",alignItems:"center",gap:10,background:"#F5F5F5",border:"0.5px solid #E0E0E0",borderRadius:8,padding:"8px 12px",marginBottom:14,flexWrap:"wrap"}}>
+              <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"#546E7A",cursor:"pointer"}}>
+                <input type="checkbox" checked={allPendingSelected} onChange={toggleSelAll} style={{cursor:"pointer"}}/>
+                {t.feedbackSelectAll}
+              </label>
+              {selected.size>0 && (
+                <>
+                  <span style={{fontSize:12,color:"#1A6B8A",fontWeight:500}}>{t.feedbackSelected.replace("{n}", selected.size)}</span>
+                  <button onClick={batchApprove} style={{marginLeft:"auto",background:"#2E7D32",border:"none",borderRadius:6,color:"#fff",padding:"6px 14px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                    ✓ {t.feedbackBatchApprove}
                   </button>
-                  <button onClick={()=>openReject(f)} style={{flex:1,background:"transparent",border:"1px solid #D32F2F",borderRadius:7,color:"#D32F2F",padding:"8px",fontSize:13,fontWeight:600,cursor:"pointer"}}>
-                    ✕ {t.feedbackReject}
+                  <button onClick={batchReject} style={{background:"transparent",border:"1px solid #D32F2F",borderRadius:6,color:"#D32F2F",padding:"6px 14px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                    ✕ {t.feedbackBatchReject}
                   </button>
-                </div>
-              )}
-              {f.status!=="pending" && (
-                <button onClick={()=>setFeedback(prev=>prev.map(x=>x.id===f.id?{...x,status:"pending",reviewedAt:"",reviewedBy:"",reviewNote:""}:x))} style={{fontSize:11,padding:"5px 12px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>
-                  {lang==="zh"?"重新送審":"Re-open for review"}
-                </button>
+                </>
               )}
             </div>
+          )}
+
+          {list.length===0 && (
+            <div style={{textAlign:"center",padding:"2.5rem 0",color:"#9E9E9E"}}>
+              <div style={{fontSize:28,marginBottom:8}}>✅</div>
+              <div style={{fontSize:13}}>{t.feedbackNoPending}</div>
+            </div>
+          )}
+
+          {list.map(f => {
+            const course = getCourse(f.courseId);
+            const teacher = getUser(f.teacherId);
+            const student = getUser(f.studentId);
+            const meta = STATUS_META[f.status];
+            return (
+              <div key={f.id} style={{background:selected.has(f.id)?"#EEF6FB":"#FFFFFF",border:`1px solid ${selected.has(f.id)?"#1A6B8A":meta.color+"33"}`,borderRadius:10,padding:"14px 16px",marginBottom:10,display:"flex",gap:10}}>
+                {f.status==="pending" && (
+                  <input type="checkbox" checked={selected.has(f.id)} onChange={()=>toggleSel(f.id)} style={{marginTop:2,cursor:"pointer",flexShrink:0}}/>
+                )}
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,marginBottom:8,flexWrap:"wrap"}}>
+                    <div>
+                      <div style={{fontWeight:600,fontSize:13,color:"#172F39"}}>{course?.subject||"—"}</div>
+                      <div style={{fontSize:11,color:"#9E9E9E",marginTop:2}}>
+                        {t.feedbackDate}: {f.date} ({T[lang].days[f.dayIndex]}) · #{f.sessionNo}
+                      </div>
+                      <div style={{fontSize:11,color:"#546E7A",marginTop:2}}>
+                        {t.feedbackBy}: <strong>{teacher?.name||"—"}</strong> → {t.feedbackFor}: <strong>{student?.name||"—"}</strong>
+                      </div>
+                    </div>
+                    <span style={{fontSize:11,background:meta.bg,color:meta.color,borderRadius:5,padding:"3px 10px",fontWeight:600,flexShrink:0}}>● {meta.label}</span>
+                  </div>
+                  <div style={{background:"#F5F5F5",borderRadius:8,padding:"10px 13px",fontSize:13,color:"#172F39",lineHeight:1.7,whiteSpace:"pre-wrap",marginBottom:10}}>
+                    {f.text}
+                  </div>
+                  {f.status==="rejected" && f.reviewNote && (
+                    <div style={{fontSize:11,color:"#D32F2F",marginBottom:10}}>↳ {t.feedbackRejectReason.split("（")[0].split("(")[0]}: {f.reviewNote}</div>
+                  )}
+                  {f.status==="pending" && (
+                    <div style={{display:"flex",gap:8}}>
+                      <button onClick={()=>approve(f)} style={{flex:1,background:"#2E7D32",border:"none",borderRadius:7,color:"#fff",padding:"8px",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                        ✓ {t.feedbackApprove}
+                      </button>
+                      <button onClick={()=>openReject(f)} style={{flex:1,background:"transparent",border:"1px solid #D32F2F",borderRadius:7,color:"#D32F2F",padding:"8px",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                        ✕ {t.feedbackReject}
+                      </button>
+                    </div>
+                  )}
+                  {f.status!=="pending" && (
+                    <button onClick={()=>setFeedback(prev=>prev.map(x=>x.id===f.id?{...x,status:"pending",reviewedAt:"",reviewedBy:"",reviewNote:""}:x))} style={{fontSize:11,padding:"5px 12px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>
+                      {lang==="zh"?"重新送審":"Re-open for review"}
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </>
+      )}
+
+      {/* ══════════ TRACKING SUB-TAB ══════════ */}
+      {subTab==="tracking" && (
+        <>
+          <p style={{fontSize:12,color:"#9E9E9E",margin:"0 0 14px"}}>{t.fbTrackingDesc}</p>
+
+          {weekKeys.length===0 && (
+            <div style={{textAlign:"center",padding:"2.5rem 0",color:"#9E9E9E"}}>
+              <div style={{fontSize:28,marginBottom:8}}>🎉</div>
+              <div style={{fontSize:13}}>{t.fbTrackingEmpty}</div>
+            </div>
+          )}
+
+          {weekKeys.map(wk => {
+            const items = missingByWeek[wk].sort((a,b)=>a.date.localeCompare(b.date));
+            const monday = new Date(wk+"T00:00:00");
+            const sunday = new Date(monday); sunday.setDate(monday.getDate()+6);
+            const rangeLabel = `${fmtMD(monday)} – ${fmtMD(sunday)}`;
+            return (
+              <div key={wk} style={{marginBottom:"1.5rem"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                  <span style={{fontSize:13,fontWeight:600,color:"#172F39"}}>{t.fbWeekOf} {rangeLabel}</span>
+                  <span style={{fontSize:10,background:"#FFF3E0",color:"#E65100",borderRadius:9,padding:"2px 8px",fontWeight:700}}>{t.fbTrackingCount.replace("{n}", items.length)}</span>
+                  <div style={{flex:1,height:"0.5px",background:"#E0E0E0"}}/>
+                </div>
+                {items.map((m,i) => {
+                  const teacher = getUser(m.course.teacherId);
+                  const student = getUser(m.course.studentId);
+                  return (
+                    <div key={i} style={{display:"flex",alignItems:"center",gap:10,background:"#FFF8E1",border:"0.5px solid #FFE0B2",borderRadius:9,padding:"9px 13px",marginBottom:6,flexWrap:"wrap"}}>
+                      <span style={{fontSize:10,color:"#9E9E9E",minWidth:60}}>{m.date} ({T[lang].days[m.dayIndex]})</span>
+                      <span style={{fontSize:10,background:"#FFFFFF",border:"0.5px solid #E0E0E0",borderRadius:4,padding:"1px 6px",color:"#9E9E9E"}}>#{m.sessionNo}</span>
+                      <div style={{flex:1,minWidth:120}}>
+                        <div style={{fontSize:12,fontWeight:600,color:"#172F39"}}>{m.course.subject}</div>
+                        <div style={{fontSize:11,color:"#546E7A"}}>{teacher?.name||"—"} → {student?.name||"—"}</div>
+                      </div>
+                      <button onClick={()=>openBatchInputFor(m.course.id)} style={{fontSize:11,padding:"5px 12px",borderRadius:6,background:"#7B1FA2",border:"none",color:"#fff",cursor:"pointer",fontWeight:500,whiteSpace:"nowrap"}}>
+                        📋 {lang==="zh"?"前往填寫":"Fill in"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </>
+      )}
+
+      {/* ══════════ OVERVIEW SUB-TAB ══════════ */}
+      {subTab==="overview" && (
+        <>
+          <p style={{fontSize:12,color:"#9E9E9E",margin:"0 0 12px"}}>{t.fbOverviewDesc}</p>
+
+          {/* Student multi-select picker (same pattern as the admin schedule filter) */}
+          <div style={{position:"relative",marginBottom:16}}>
+            <button onClick={()=>setShowOverviewPicker(p=>!p)} style={{display:"flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:7,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13,cursor:"pointer"}}>
+              👤 {overviewStudents.size===0
+                ? t.fbSelectStudents
+                : (lang==="zh"?`已選 ${overviewStudents.size} 位學生`:`${overviewStudents.size} student(s) selected`)}
+              <span style={{fontSize:9,color:"#9E9E9E"}}>{showOverviewPicker?"▲":"▼"}</span>
+            </button>
+            {showOverviewPicker && (
+              <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,zIndex:50,background:"#FFFFFF",border:"0.5px solid #CFD8DC",borderRadius:8,boxShadow:"0 4px 16px rgba(23,47,57,0.15)",minWidth:220,maxHeight:300,overflowY:"auto",padding:"6px 0"}}>
+                {allStudentUsers.length===0 && <div style={{padding:"10px 12px",fontSize:12,color:"#9E9E9E"}}>—</div>}
+                {allStudentUsers.map(s=>(
+                  <label key={s.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 12px",fontSize:12,color:"#546E7A",cursor:"pointer"}}>
+                    <input type="checkbox" checked={overviewStudents.has(s.id)} onChange={()=>setOverviewStudents(prev=>{const n=new Set(prev); n.has(s.id)?n.delete(s.id):n.add(s.id); return n;})} style={{cursor:"pointer"}}/>
+                    {s.name}
+                  </label>
+                ))}
+                <div style={{padding:"6px 12px",borderTop:"0.5px solid #F0F0F0",marginTop:4,display:"flex",gap:6}}>
+                  <button onClick={()=>setOverviewStudents(new Set())} style={{flex:1,padding:"6px",borderRadius:5,background:"transparent",border:"0.5px solid #CFD8DC",color:"#9E9E9E",fontSize:11,cursor:"pointer"}}>
+                    {lang==="zh"?"清除":"Clear"}
+                  </button>
+                  <button onClick={()=>setShowOverviewPicker(false)} style={{flex:1,padding:"6px",borderRadius:5,background:"#1A6B8A",border:"none",color:"#fff",fontSize:11,cursor:"pointer"}}>
+                    {lang==="zh"?"完成":"Done"}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
-        );
-      })}
+
+          {overviewStudents.size===0 && (
+            <div style={{textAlign:"center",padding:"2.5rem 0",color:"#9E9E9E"}}>
+              <div style={{fontSize:28,marginBottom:8}}>👤</div>
+              <div style={{fontSize:13}}>{t.fbOverviewSelectPrompt}</div>
+            </div>
+          )}
+
+          {overviewStudents.size>0 && overviewWeekKeys.length===0 && (
+            <div style={{textAlign:"center",padding:"2.5rem 0",color:"#9E9E9E"}}>
+              <div style={{fontSize:28,marginBottom:8}}>📭</div>
+              <div style={{fontSize:13}}>{t.fbOverviewNoSessions}</div>
+            </div>
+          )}
+
+          {overviewWeekKeys.map(wk => {
+            const items = overviewByWeek[wk].sort((a,b)=>a.date.localeCompare(b.date) || a.course.subject.localeCompare(b.course.subject));
+            const monday = new Date(wk+"T00:00:00");
+            const sunday = new Date(monday); sunday.setDate(monday.getDate()+6);
+            const rangeLabel = `${fmtMD(monday)} – ${fmtMD(sunday)}`;
+            return (
+              <div key={wk} style={{marginBottom:"1.5rem"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                  <span style={{fontSize:13,fontWeight:600,color:"#172F39"}}>{t.fbWeekOf} {rangeLabel}</span>
+                  <div style={{flex:1,height:"0.5px",background:"#E0E0E0"}}/>
+                </div>
+                {items.map((r,i) => {
+                  const teacher = getUser(r.course.teacherId);
+                  const student = getUser(r.studentId);
+                  const meta = r.fb ? STATUS_META[r.fb.status] : null;
+                  return (
+                    <div key={i} style={{background:"#FFFFFF",border:`1px solid ${meta?meta.color+"33":"#E0E0E0"}`,borderRadius:9,padding:"10px 14px",marginBottom:8}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,flexWrap:"wrap",marginBottom:r.fb?8:0}}>
+                        <div>
+                          <div style={{fontSize:12,fontWeight:600,color:"#172F39"}}>{r.course.subject}</div>
+                          <div style={{fontSize:11,color:"#9E9E9E",marginTop:2}}>
+                            {r.date} ({T[lang].days[r.dayIndex]}) · #{r.sessionNo} · {r.course.start}
+                          </div>
+                          <div style={{fontSize:11,color:"#546E7A",marginTop:2}}>
+                            {overviewStudents.size>1 && <>{student?.name||"—"} · </>}{teacher?.name||"—"}
+                          </div>
+                        </div>
+                        {meta
+                          ? <span style={{fontSize:10,background:meta.bg,color:meta.color,borderRadius:5,padding:"2px 9px",fontWeight:600,flexShrink:0}}>● {meta.label}</span>
+                          : <span style={{fontSize:10,background:"#F5F5F5",color:"#9E9E9E",borderRadius:5,padding:"2px 9px",flexShrink:0}}>{t.fbNotWritten}</span>
+                        }
+                      </div>
+                      {r.fb && (
+                        <div style={{background:"#F5F5F5",borderRadius:7,padding:"9px 12px",fontSize:12,color:"#172F39",lineHeight:1.7,whiteSpace:"pre-wrap"}}>
+                          {r.fb.text}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </>
+      )}
     </div>
   );
 }
@@ -3749,9 +4529,9 @@ function normalizeFeedbackDate(str) {
   return `${y}-${mo.padStart(2,"0")}-${d.padStart(2,"0")}`;
 }
 
-function BatchFeedbackModal({ users, courses, enrollments, setFeedback, lang, setToast, onClose }) {
+function BatchFeedbackModal({ users, courses, enrollments, setFeedback, lang, setToast, onClose, initialCourseId }) {
   const t = T[lang];
-  const [courseId, setCourseId] = useState(courses[0]?.id || "");
+  const [courseId, setCourseId] = useState(initialCourseId || courses[0]?.id || "");
   const [pasteText, setPasteText] = useState("");
   const [parsed, setParsed] = useState([]); // [{date, text, match: {enrollment,session} | null}]
   const [selected, setSelected] = useState(new Set());
@@ -4446,6 +5226,49 @@ function StudentClassHistory({ currentUser, enrollments, attendance, courses, us
 }
 
 // ─── Student / Teacher Layout (sidebar + main) ────────────────────────────────
+// ─── Student Teacher Introduction Panel ───────────────────────────────────────
+// Shows the student's own teacher(s) — basic profile with years of experience
+// and teaching philosophy/strengths, filled in (and editable) by admin.
+function StudentTeacherIntroPanel({ currentUser, users, courses, teacherDirEntries, dirLoaded, lang }) {
+  const t = T[lang];
+
+  if (!dirLoaded) {
+    return (
+      <div style={{padding:"1.25rem",textAlign:"center",color:"#9E9E9E"}}>
+        <div style={{fontSize:32,marginBottom:8}}>⏳</div>
+        <div style={{fontSize:13}}>{lang==="zh"?"載入中…":"Loading…"}</div>
+      </div>
+    );
+  }
+
+  // Find the student's own teacher(s) via their courses
+  const myTeacherIds = [...new Set(courses.filter(c=>c.studentId===currentUser.id).map(c=>c.teacherId))];
+  const myTeachers = myTeacherIds.map(id=>users.find(u=>u.id===id)).filter(Boolean);
+
+  return (
+    <div style={{padding:"1.25rem"}}>
+      <div style={{marginBottom:16}}>
+        <h3 style={{fontSize:15,fontWeight:600,color:"#172F39",margin:"0 0 3px"}}>{t.teacherIntro}</h3>
+        <p style={{fontSize:12,color:"#9E9E9E",margin:0}}>{t.teacherIntroDesc}</p>
+      </div>
+
+      {myTeachers.length===0 && (
+        <div style={{textAlign:"center",padding:"2.5rem 0",color:"#9E9E9E"}}>
+          <div style={{fontSize:28,marginBottom:8}}>🎓</div>
+          <div style={{fontSize:13}}>{lang==="zh"?"尚無授課老師":"No teacher assigned yet"}</div>
+        </div>
+      )}
+
+      <div style={{display:"flex",flexDirection:"column",gap:14}}>
+        {myTeachers.map(teacher=>{
+          const entry = teacherDirEntries.find(d=>d.linkedUserId===teacher.id) || {nameEn:teacher.name};
+          return <TeacherProfileCard key={teacher.id} entry={entry} lang={lang}/>;
+        })}
+      </div>
+    </div>
+  );
+}
+
 function StudentTeacherLayout({ currentUser, users, courses, lang, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, setToast, feedback, setFeedback }) {
   const t = T[lang];
   const isStudent = currentUser.role==="student";
@@ -4453,9 +5276,11 @@ function StudentTeacherLayout({ currentUser, users, courses, lang, absences, set
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [dirEntries, setDirEntries] = useState([]);
   const [dirLoaded, setDirLoaded] = useState(false);
+  const [teacherDirEntries, setTeacherDirEntries] = useState([]);
   useEffect(()=>{
     (async()=>{
       try{ const r=await window.storage.get("cp3_student_dir"); if(r?.value) setDirEntries(JSON.parse(r.value)); }catch{}
+      try{ const r2=await window.storage.get("cp3_teacher_dir"); if(r2?.value) setTeacherDirEntries(JSON.parse(r2.value)); }catch{}
       setDirLoaded(true);
     })();
   },[]);
@@ -4470,6 +5295,7 @@ function StudentTeacherLayout({ currentUser, users, courses, lang, absences, set
     ? [
         { key:"progress",      icon:"🏆", zh:"獎牌進度", en:"My Progress" },
         { key:"history",       icon:"📋", zh:"課程紀錄", en:"Class History"},
+        { key:"teacherIntro",  icon:"🎓", zh:"老師介紹", en:"My Teachers" },
         { key:"schedule_side", icon:"📅", zh:"課表",     en:"Schedule"   },
       ]
     : [
@@ -4573,6 +5399,8 @@ function StudentTeacherLayout({ currentUser, users, courses, lang, absences, set
             ? <StudentProgressPanel currentUser={currentUser} enrollments={enrollments} attendance={attendance} courses={courses} lang={lang} dirLoaded={dirLoaded} confirmedOverride={myConfirmedOverride}/>
             : isStudent && sideTab==="history"
               ? <StudentClassHistory currentUser={currentUser} enrollments={enrollments} attendance={attendance} courses={courses} users={users} lang={lang} dirLoaded={dirLoaded} feedback={feedback}/>
+            : isStudent && sideTab==="teacherIntro"
+              ? <StudentTeacherIntroPanel currentUser={currentUser} users={users} courses={courses} teacherDirEntries={teacherDirEntries} dirLoaded={dirLoaded} lang={lang}/>
             : isTeacher && sideTab==="students"
               ? <TeacherStudentsPanel currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} attendance={attendance} lang={lang} dirEntries={dirEntries}/>
               : <div style={{padding:"1.5rem"}}>
