@@ -746,9 +746,25 @@ function ConfirmModal({ title, message, confirmLabel, onConfirm, onCancel, dange
 // ─── Material Panel (modal — full course, all sessions) ──────────────────────
 // Shows ALL materials for a course, optionally pre-filtered to a specific day.
 // Each entry stores: courseId, dayIndex (0-6), date (YYYY-MM-DD), title, url, desc
-function MaterialPanel({ course, initialDayFilter, users, lang, currentUser, materials, setMaterials, setToast, onClose }) {
+function MaterialPanel({ course, initialDayFilter, users, lang, currentUser, materials, setMaterials, setToast, onClose, enrollments }) {
   const t = T[lang];
   const canEdit = currentUser.role === "admin" || currentUser.role === "teacher";
+
+  // The set of days a material can actually be tagged with MUST come from the
+  // course's real scheduled sessions (enrollment.scheduledDates), not from
+  // course.days — if an admin edits a course's weekly days AFTER an enrollment
+  // already exists, course.days can drift out of sync with what's actually
+  // displayed on the schedule. Using course.days here was the root cause of
+  // materials silently never appearing: they'd get tagged with a dayIndex that
+  // matched the (edited) course template but not any real displayed session.
+  const scheduledDayIndexes = [...new Set(
+    (enrollments||[])
+      .filter(e => e.courseId === course.id)
+      .flatMap(e => (e.scheduledDates||[]).map(s => s.dayIndex))
+  )].sort((a,b)=>a-b);
+  // Fall back to course.days only when there's no enrollment yet at all (brand
+  // new course), so the picker isn't empty before any 排課 has been created.
+  const validDays = scheduledDayIndexes.length > 0 ? scheduledDayIndexes : (course.days || []);
 
   // ── filter / sort state ──
   // initialDayFilter: number 0-6 or null (show all)
@@ -765,7 +781,7 @@ function MaterialPanel({ course, initialDayFilter, users, lang, currentUser, mat
   // Monday, materials saved without explicitly re-picking a day silently got
   // tagged with a dayIndex the course never has, so they never showed up
   // on the schedule (the batch editor already guarded against this).
-  const validDefaultDay = (dayFilter >= 0 && course.days?.includes(dayFilter)) ? dayFilter : (course.days?.[0] ?? 0);
+  const validDefaultDay = (dayFilter >= 0 && validDays.includes(dayFilter)) ? dayFilter : (validDays[0] ?? 0);
   const blankDate = getDateForDow(validDefaultDay);
   const blank = { title:"", url:"", date: blankDate, desc:"", dayIndex: validDefaultDay };
   const [form, setForm] = useState(blank);
@@ -785,7 +801,7 @@ function MaterialPanel({ course, initialDayFilter, users, lang, currentUser, mat
 
   const openAdd = () => {
     setEditing(null);
-    const d = (dayFilter >= 0 && course.days?.includes(dayFilter)) ? dayFilter : (course.days?.[0] ?? 0);
+    const d = (dayFilter >= 0 && validDays.includes(dayFilter)) ? dayFilter : (validDays[0] ?? 0);
     setForm({...blank, date: getDateForDow(d), dayIndex: d});
     setShowForm(true);
   };
@@ -794,7 +810,7 @@ function MaterialPanel({ course, initialDayFilter, users, lang, currentUser, mat
     if (!form.url.trim()) return;
     // Guard: the selected day must be one the course actually meets on,
     // otherwise the material silently never shows up on the schedule.
-    if (course.days?.length && !course.days.includes(form.dayIndex)) {
+    if (validDays.length && !validDays.includes(form.dayIndex)) {
       setToast(lang==="zh" ? "請選擇該課程有安排的星期" : "Please select a day this course actually meets on");
       return;
     }
@@ -857,7 +873,7 @@ function MaterialPanel({ course, initialDayFilter, users, lang, currentUser, mat
             <button onClick={()=>setDayFilter(-1)} style={{padding:"4px 11px",borderRadius:20,fontSize:11,cursor:"pointer",border:dayFilter===-1?"none":"0.5px solid #CFD8DC",background:dayFilter===-1?"#1A6B8A":"transparent",color:dayFilter===-1?"#fff":"#546E7A"}}>
               {t.allDays} ({materials.filter(m=>m.courseId===course.id).length})
             </button>
-            {course.days?.map(d => {
+            {validDays.map(d => {
               const cnt = materials.filter(m => m.courseId===course.id && m.dayIndex===d).length;
               return (
                 <button key={d} onClick={()=>setDayFilter(d)} style={{padding:"4px 11px",borderRadius:20,fontSize:11,cursor:"pointer",border:dayFilter===d?"none":"0.5px solid #CFD8DC",background:dayFilter===d?"#1A6B8A":"transparent",color:dayFilter===d?"#fff":"#546E7A"}}>
@@ -895,7 +911,7 @@ function MaterialPanel({ course, initialDayFilter, users, lang, currentUser, mat
               {/* Day selector inside form */}
               <label style={lStyle}>{t.matDayLabel}</label>
               <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:4}}>
-                {course.days?.map(d => (
+                {validDays.map(d => (
                   <button key={d} type="button" onClick={()=>fset("dayIndex",d)} style={{padding:"4px 9px",borderRadius:5,fontSize:11,cursor:"pointer",border:`1px solid ${form.dayIndex===d?"#1A6B8A":"#CFD8DC"}`,background:form.dayIndex===d?"#1A6B8A":"transparent",color:form.dayIndex===d?"#fff":"#546E7A"}}>
                     {T[lang].days[d]}
                   </button>
@@ -943,7 +959,7 @@ function MaterialPanel({ course, initialDayFilter, users, lang, currentUser, mat
               </div>
 
               {grouped[dateKey].map((m, idx) => {
-                const isOrphanDay = course.days?.length && !course.days.includes(m.dayIndex);
+                const isOrphanDay = validDays.length && !validDays.includes(m.dayIndex);
                 return (
                 <div key={m.id} style={{background:"#F5F5F5",border:`0.5px solid ${isOrphanDay?"#FFB74D":"#E0E0E0"}`,borderRadius:10,padding:"12px 14px",marginBottom:6}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
@@ -1178,7 +1194,7 @@ function SlotCalendarView({ slots, users, lang, currentUser, absences, materials
 
   return (
     <div style={{overflowX:"auto"}}>
-      {matTarget&&<MaterialPanel course={matTarget.course} initialDayFilter={matTarget.dayIndex} users={users} lang={lang} currentUser={currentUser} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setMatTarget(null)}/>}
+      {matTarget&&<MaterialPanel course={matTarget.course} initialDayFilter={matTarget.dayIndex} users={users} lang={lang} currentUser={currentUser} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setMatTarget(null)} enrollments={enrollments}/>}
       {detTarget&&<CourseDetailModal course={detTarget.course} dayIndex={detTarget.dayIndex} users={users} lang={lang} materials={materials} onClose={()=>setDetTarget(null)}/>}
       {adminEditTarget&&<AdminSessionModal slot={adminEditTarget} users={users} lang={lang} attendance={attendance||[]} setAttendance={setAttendance} enrollments={enrollments||[]} setEnrollments={setEnrollments} courses={courses||[]} setToast={setToast} onClose={()=>setAdminEditTarget(null)}/>}
       {fbTarget&&<FeedbackModal slot={fbTarget} currentUser={currentUser} users={users} lang={lang} feedback={feedback||[]} setFeedback={setFeedback} setToast={setToast} onClose={()=>setFbTarget(null)} readOnly={isStudent}/>}
@@ -1568,7 +1584,7 @@ function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, ma
   return (
     <>
       {showDetail&&<CourseDetailModal course={course} dayIndex={dayIndex} users={users} lang={lang} materials={materials} onClose={()=>setShowDetail(false)}/>}
-      {showMat&&<MaterialPanel course={course} initialDayFilter={matInitDay} users={users} lang={lang} currentUser={currentUser} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setShowMat(false)}/>}
+      {showMat&&<MaterialPanel course={course} initialDayFilter={matInitDay} users={users} lang={lang} currentUser={currentUser} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setShowMat(false)} enrollments={enrollments}/>}
       {showAdminEdit&&<AdminSessionModal slot={slot} users={users} lang={lang} attendance={attendance||[]} setAttendance={setAttendance} enrollments={enrollments||[]} setEnrollments={setEnrollments} courses={courses||[]} setToast={setToast} onClose={()=>setShowAdminEdit(false)}/>}
       {showFeedback&&<FeedbackModal slot={slot} currentUser={currentUser} users={users} lang={lang} feedback={feedback||[]} setFeedback={setFeedback} setToast={setToast} onClose={()=>setShowFeedback(false)} readOnly={isStudent}/>}
       <div style={{background:cardBg,border:`1.5px solid ${cardBorder}`,borderRadius:10,padding:"10px 14px",marginBottom:8,opacity:cardOpacity}}>
@@ -1881,10 +1897,22 @@ function CourseForm({ course, users, onSave, onCancel, lang }) {
 // ─── Batch Material Modal ─────────────────────────────────────────────────────
 // Admin can pick student + teacher → see matched courses → enter multiple material rows at once
 // Can also load existing materials for bulk-edit
-function BatchMaterialModal({ users, courses, materials, setMaterials, lang, setToast, onClose }) {
+function BatchMaterialModal({ users, courses, materials, setMaterials, lang, setToast, onClose, enrollments }) {
   const t = T[lang];
   const teachers = users.filter(u=>u.role==="teacher");
   const students = users.filter(u=>u.role==="student");
+
+  // Real scheduled days for a course, from its enrollment(s) — falls back to
+  // course.days only if no enrollment exists yet (brand new course).
+  const getScheduledDays = (courseId) => {
+    const days = [...new Set(
+      (enrollments||[])
+        .filter(e => e.courseId === courseId)
+        .flatMap(e => (e.scheduledDates||[]).map(s => s.dayIndex))
+    )];
+    if (days.length > 0) return days.sort((a,b)=>a-b);
+    return courses.find(c=>c.id===courseId)?.days || [];
+  };
 
   const [selTeacher, setSelTeacher] = useState(teachers[0]?.id||"");
   const [selStudent, setSelStudent] = useState(students[0]?.id||"");
@@ -1931,8 +1959,8 @@ function BatchMaterialModal({ users, courses, materials, setMaterials, lang, set
     const newMats = [];
     valid.forEach(r=>{
       targetCourses.forEach(c=>{
-        // Only add to courses that have this dayIndex in their schedule
-        if (!c.days?.includes(r.dayIndex)) return;
+        // Only add to courses that actually meet on this day (per real schedule, not course template)
+        if (!getScheduledDays(c.id).includes(r.dayIndex)) return;
         newMats.push({id:genId(), courseId:c.id, dayIndex:r.dayIndex, date:r.date,
           title:r.title.trim()||r.url.trim(), url:r.url.trim(), desc:r.desc,
           addedBy:"admin", addedAt:new Date().toISOString()});
@@ -2089,7 +2117,7 @@ function BatchMaterialModal({ users, courses, materials, setMaterials, lang, set
 }
 
 // ─── Course manager ───────────────────────────────────────────────────────────
-function CourseManager({ users, courses, setCourses, lang, setToast, materials, setMaterials }) {
+function CourseManager({ users, courses, setCourses, lang, setToast, materials, setMaterials, enrollments }) {
   const t = T[lang];
   const [showAdd,setShowAdd] = useState(false);
   const [editing,setEditing] = useState(null);
@@ -2113,8 +2141,8 @@ function CourseManager({ users, courses, setCourses, lang, setToast, materials, 
   return (
     <div>
       {confirmDelCourseId && <ConfirmModal title={lang==="zh"?"刪除課程":"Delete Course"} message={lang==="zh"?"確認要刪除此課程？此操作無法復原，相關教材紀錄也將失效。":"Delete this course? This cannot be undone."} confirmLabel={lang==="zh"?"確認刪除":"Delete"} onConfirm={doDelCourse} onCancel={()=>setConfirmDelCourseId(null)} danger/>}
-      {matTarget && <MaterialPanel course={matTarget} initialDayFilter={null} users={users} lang={lang} currentUser={fakeAdmin} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setMatTarget(null)}/>}
-      {showBatch && <BatchMaterialModal users={users} courses={courses} materials={materials} setMaterials={setMaterials} lang={lang} setToast={setToast} onClose={()=>setShowBatch(false)}/>}
+      {matTarget && <MaterialPanel course={matTarget} initialDayFilter={null} users={users} lang={lang} currentUser={fakeAdmin} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setMatTarget(null)} enrollments={enrollments}/>}
+      {showBatch && <BatchMaterialModal users={users} courses={courses} materials={materials} setMaterials={setMaterials} lang={lang} setToast={setToast} onClose={()=>setShowBatch(false)} enrollments={enrollments}/>}
       <div style={{display:"flex",gap:8,marginBottom:"1rem",flexWrap:"wrap"}}>
         <button onClick={()=>{setShowAdd(true);setEditing(null);}} style={{background:"#1A6B8A",border:"none",borderRadius:7,color:"#fff",padding:"8px 16px",fontSize:13,cursor:"pointer"}}>+ {t.addCourse}</button>
         <button onClick={()=>setShowBatch(true)} style={{background:"transparent",border:"1px solid #4A9FD4",borderRadius:7,color:"#1A6B8A",padding:"8px 16px",fontSize:13,cursor:"pointer"}}>📦 {t.batchMaterials}</button>
@@ -2128,13 +2156,19 @@ function CourseManager({ users, courses, setCourses, lang, setToast, materials, 
       <div style={{display:"flex",flexDirection:"column",gap:8}}>
         {courses.map(c=>{
           const matCount = materials.filter(m=>m.courseId===c.id).length;
+          const hasEnrollment = (enrollments||[]).some(e=>e.courseId===c.id);
           return (
-          <div key={c.id} style={{background:"#FFFFFF",border:"0.5px solid #E0E0E0",borderRadius:10,padding:"12px 14px"}}>
+          <div key={c.id} style={{background:"#FFFFFF",border:`0.5px solid ${hasEnrollment?"#E0E0E0":"#FFCC80"}`,borderRadius:10,padding:"12px 14px"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:6}}>
               <div>
                 <span style={{fontWeight:500,fontSize:14,color:"#172F39"}}>{c.subject}</span>
                 <div style={{fontSize:12,color:"#546E7A",marginTop:2}}>{c.days?.map(d=>t.days[d]).join("、")} ({c.days?.length}{lang==="zh"?"堂/週":"x/wk"}) · {c.start}–{addMins(c.start,c.duration)} · {c.duration}min</div>
                 <div style={{fontSize:12,color:"#546E7A"}}>{getName(c.teacherId)} → {getName(c.studentId)}</div>
+                {!hasEnrollment && (
+                  <div style={{fontSize:11,color:"#E65100",marginTop:4,background:"#FFF3E0",borderRadius:4,padding:"2px 8px",display:"inline-block"}}>
+                    ⚠️ {lang==="zh"?"尚無付費排課紀錄，此課程不會出現在課表上（教材也不會顯示）":"No enrollment yet — this course won't appear on the schedule (materials won't show either)"}
+                  </div>
+                )}
               </div>
               <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
                 <button onClick={()=>setMatTarget(c)} style={{fontSize:12,padding:"5px 11px",borderRadius:5,border:"0.5px solid #4A9FD4",background:"transparent",color:"#1A6B8A",cursor:"pointer"}}>
@@ -4143,7 +4177,7 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
           </button>
         ))}
       </div>
-      {tab==="courses"&&<CourseManager users={users} courses={courses} setCourses={setCourses} lang={lang} setToast={setToast} materials={materials} setMaterials={setMaterials}/>}
+      {tab==="courses"&&<CourseManager users={users} courses={courses} setCourses={setCourses} lang={lang} setToast={setToast} materials={materials} setMaterials={setMaterials} enrollments={enrollments}/>}
       {tab==="enroll" &&<EnrollmentManager users={users} courses={courses} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} lang={lang} setToast={setToast}/>}
       {tab==="leave"  &&<LeaveReview users={users} courses={courses} absences={absences} setAbsences={setAbsences} attendance={attendance} setAttendance={setAttendance} enrollments={enrollments} lang={lang}/>}
       {tab==="feedback"&&<FeedbackCenter users={users} courses={courses} enrollments={enrollments} attendance={attendance} feedback={feedback||[]} setFeedback={setFeedback} lang={lang} setToast={setToast}/>}
