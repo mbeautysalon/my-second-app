@@ -3,17 +3,45 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ES Online Course Platform</title>
+    <meta name="theme-color" content="#C9897A" />
+
+    <!-- Favicon (browser tab icon) -->
+    <link rel="icon" type="image/png" href="/logo.png" />
+    <link rel="apple-touch-icon" href="/logo.png" />
+
+    <!-- Primary Meta -->
+    <meta name="description" content="EnjoyStudy Tutor Online, we provide the best teachers as your online tutors!" />
+
+    <!-- Open Graph (LINE, Facebook, IG share previews) -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="ES-EnjoyStudy Tutor Online" />
+    <meta property="og:description" content="We provide the best teachers as your online tutors!" />
+    <meta property="og:image" content="https://es-enjoystudy-tutor-online.vercel.app/logo.png" />
+    <meta property="og:image:width" content="351" />
+    <meta property="og:image:height" content="364" />
+    <meta property="og:site_name" content="ES-EnjoyStudy Tutor Online" />
+    <meta property="og:url" content="https://es-enjoystudy-tutor-online.vercel.app" />
+
+    <!-- Twitter / X Card -->
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="ES-EnjoyStudy Tutor Online" />
+    <meta name="twitter:description" content="We provide the best teachers as your online tutors!" />
+    <meta name="twitter:image" content="https://es-enjoystudy-tutor-online.vercel.app/logo.png" />
+
+    <title>ES-EnjoyStudy Tutor Online</title>
+
     <style>
-      /* CSS reset — this is what Claude's Artifact preview applies automatically.
-         Without it, browser default styles on body/button/input/table cause the
-         layout to look broken ("跑版") when deployed standalone. */
+      /* CSS reset — without this, browser default styles on body/button/input/table
+         cause the layout to look broken ("跑版") when running outside the Claude
+         Artifact preview environment. */
       *, *::before, *::after {
         box-sizing: border-box;
       }
       html, body {
         margin: 0;
         padding: 0;
+        overflow-x: hidden;
+        max-width: 100%;
       }
       body {
         font-family: system-ui, -apple-system, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
@@ -42,6 +70,7 @@
     </style>
   </head>
   <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
