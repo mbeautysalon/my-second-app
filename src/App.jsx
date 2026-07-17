@@ -203,7 +203,7 @@ const T = {
     peopleDirChanges:"通知變更",
     // Student settings
     settingsTab:"基本資訊與設定", settingsDesc:"更新你的基本資料與密碼",
-    settingsBasicInfo:"基本資訊", settingsName:"名字", settingsBirthDate:"出生年月日",
+    settingsBasicInfo:"基本資訊", settingsNameEn:"英文姓名", settingsNameCn:"中文姓名", settingsBirthDate:"出生年月日",
     settingsAvatar:"大頭貼", settingsEmail:"Email", settingsPhone:"聯絡電話（手機）",
     settingsOptionalNote:"以下欄位皆為選填，可留空", settingsSaveInfo:"儲存變更",
     settingsPendingBanner:"您有一筆資料變更正在等待管理員審核合併",
@@ -222,6 +222,7 @@ const T = {
     changeNotifMerge:"合併至既有資料", changeNotifDismiss:"忽略",
     changeNotifMerged:"已合併至既有資料", changeNotifDismissed:"已忽略此筆異動",
     changeNotifStatus:"狀態", changeNotifStatusPending:"待審核", changeNotifStatusMerged:"已合併", changeNotifStatusDismissed:"已忽略",
+    changeNotifStatusAutoApplied:"已自動套用", changeNotifAutoAppliedNote:"此變更無需審核，已直接套用至師生資料庫",
     teacherDir:"老師資料庫", dirTeacherName:"老師姓名", dirYearsExp:"教學年資",
     teacherExcelCols:"老師姓名 | 教學年資 | 加入年份",
     teacherPasteHint:"直接從 Excel 複製並貼上（Tab 分隔，欄位順序：老師姓名、教學年資、加入年份）",
@@ -400,7 +401,7 @@ const T = {
     peopleDirChanges:"Change Notifications",
     // Student settings
     settingsTab:"Basic Info & Settings", settingsDesc:"Update your basic info and password",
-    settingsBasicInfo:"Basic Info", settingsName:"Name", settingsBirthDate:"Date of Birth",
+    settingsBasicInfo:"Basic Info", settingsNameEn:"English Name", settingsNameCn:"Chinese Name", settingsBirthDate:"Date of Birth",
     settingsAvatar:"Avatar", settingsEmail:"Email", settingsPhone:"Contact Number (Mobile)",
     settingsOptionalNote:"All fields below are optional — feel free to leave any blank", settingsSaveInfo:"Save Changes",
     settingsPendingBanner:"You have a pending profile change awaiting admin review",
@@ -419,6 +420,7 @@ const T = {
     changeNotifMerge:"Merge into Records", changeNotifDismiss:"Dismiss",
     changeNotifMerged:"Merged into records", changeNotifDismissed:"Change dismissed",
     changeNotifStatus:"Status", changeNotifStatusPending:"Pending", changeNotifStatusMerged:"Merged", changeNotifStatusDismissed:"Dismissed",
+    changeNotifStatusAutoApplied:"Auto-applied", changeNotifAutoAppliedNote:"No review needed — already applied to the student directory",
     teacherDir:"Teacher Directory", dirTeacherName:"Teacher Name", dirYearsExp:"Years of Teaching",
     teacherExcelCols:"Teacher Name | Years of Teaching | Join Year",
     teacherPasteHint:"Paste directly from Excel (Tab-separated, columns: Teacher Name, Years of Teaching, Join Year)",
@@ -1855,15 +1857,44 @@ function CourseForm({ course, users, onSave, onCancel, lang }) {
   const defT = teachers[0]?.id||"";
   const defS = students[0]?.id||"";
   const autoSubject = (sId,tId) => `ES English Study - ${students.find(u=>u.id===sId)?.name||""} and ${teachers.find(u=>u.id===tId)?.name||""}`;
-  const blank = {subject:autoSubject(defS,defT),teacherId:defT,studentId:defS,days:[0],start:"09:00",duration:50,meetingUrl:"",_edited:false};
-  const [form,setForm] = useState(()=>course?{...course,_edited:true}:blank);
+
+  // A course can now have MULTIPLE time-slot "blocks" — each block is a group
+  // of days that share one start time (e.g. Sat 9:00 as one block, Sun 8:00 as
+  // another block for the same teacher/student). Existing single-block courses
+  // (one `days[]` + one `start`) still edit exactly as before — this only adds
+  // the ability to have more than one block when needed.
+  const blankBlock = () => ({ _bid: genId(), days:[0], start:"09:00" });
+  const blank = {subject:autoSubject(defS,defT),teacherId:defT,studentId:defS,duration:50,meetingUrl:"",_edited:false,blocks:[blankBlock()]};
+  const [form,setForm] = useState(()=>{
+    if (!course) return blank;
+    return {...course, _edited:true, blocks:[{_bid:genId(), days:course.days||[0], start:course.start||"09:00"}]};
+  });
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
   const handleTeacher = v => setForm(f=>({...f,teacherId:v,subject:f._edited?f.subject:autoSubject(f.studentId,v)}));
   const handleStudent = v => setForm(f=>({...f,studentId:v,subject:f._edited?f.subject:autoSubject(v,f.teacherId)}));
-  const toggleDay = d => { const cur=form.days||[]; const next=cur.includes(d)?cur.filter(x=>x!==d):[...cur,d].sort((a,b)=>a-b); set("days",next.length?next:[d]); };
-  const endTime = addMins(form.start, form.duration);
+
+  const updateBlock = (bid, patch) => setForm(f=>({...f, blocks: f.blocks.map(b=>b._bid===bid?{...b,...patch}:b)}));
+  const toggleBlockDay = (bid, d) => setForm(f=>({...f, blocks: f.blocks.map(b=>{
+    if (b._bid!==bid) return b;
+    const cur = b.days||[];
+    const next = cur.includes(d) ? cur.filter(x=>x!==d) : [...cur,d].sort((a,b2)=>a-b2);
+    return {...b, days: next.length?next:[d]};
+  })}));
+  const addBlock = () => setForm(f=>({...f, blocks:[...f.blocks, blankBlock()]}));
+  const removeBlock = (bid) => setForm(f=>({...f, blocks: f.blocks.length>1 ? f.blocks.filter(b=>b._bid!==bid) : f.blocks}));
+
   const iStyle = {width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13};
   const lStyle = {display:"block",fontSize:12,color:"#546E7A",marginBottom:4,marginTop:12};
+
+  const totalSessionsPerWeek = form.blocks.reduce((sum,b)=>sum+(b.days?.length||0),0);
+
+  const handleSave = () => {
+    const { _edited, blocks, ...shared } = form;
+    // One course record per block — this is what enables different days to
+    // have different start times while staying the same teacher/student/subject.
+    const records = blocks.map(b => ({ ...shared, days: b.days, start: b.start }));
+    onSave(records);
+  };
 
   return (
     <div>
@@ -1873,13 +1904,7 @@ function CourseForm({ course, users, onSave, onCancel, lang }) {
       </div>
       <label style={lStyle}>{t.subjectName}</label>
       <input style={iStyle} value={form.subject} onChange={e=>setForm(f=>({...f,subject:e.target.value,_edited:true}))} placeholder={t.autoSubjectHint}/>
-      <label style={lStyle}>{t.selectDay}</label>
-      <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:4}}>
-        {t.days.map((d,i)=>(
-          <button key={i} type="button" onClick={()=>toggleDay(i)} style={{padding:"5px 10px",borderRadius:5,fontSize:12,cursor:"pointer",border:`1px solid ${form.days?.includes(i)?"#1A6B8A":"#CFD8DC"}`,background:form.days?.includes(i)?"#1A6B8A":"transparent",color:form.days?.includes(i)?"#fff":"#546E7A"}}>{d}</button>
-        ))}
-      </div>
-      <div style={{fontSize:11,color:"#9E9E9E",marginBottom:8}}>{t.sessionsPerWeek}: <strong style={{color:"#172F39"}}>{form.days?.length||0}</strong> {lang==="zh"?"堂/週":"sessions/week"}</div>
+
       <label style={lStyle}>{t.duration}</label>
       <div style={{display:"flex",gap:8}}>
         {[25,50].map(d=>(
@@ -1888,14 +1913,46 @@ function CourseForm({ course, users, onSave, onCancel, lang }) {
           </button>
         ))}
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-        <div><label style={lStyle}>{t.startTime}</label><input type="time" style={iStyle} value={form.start} onChange={e=>set("start",e.target.value)}/></div>
-        <div><label style={lStyle}>{t.endTime}</label><div style={{...iStyle,background:"#F5F5F5",color:"#9E9E9E",borderStyle:"dashed",cursor:"not-allowed",display:"flex",alignItems:"center",marginTop:16}}>{endTime}</div></div>
-      </div>
+
+      {/* ── Time slots — one block per group of days sharing a start time ── */}
+      <label style={lStyle}>{lang==="zh"?"上課時段（可新增多組，星期跟時間可各自不同）":"Time Slots (add more — days & times can differ per slot)"}</label>
+      {form.blocks.map((b,idx)=>{
+        const blockEnd = addMins(b.start, form.duration);
+        return (
+          <div key={b._bid} style={{background:"#F5F5F5",borderRadius:8,border:"0.5px solid #E0E0E0",padding:"10px 12px",marginBottom:8}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+              <span style={{fontSize:11,fontWeight:600,color:"#546E7A"}}>{lang==="zh"?`時段 ${idx+1}`:`Slot ${idx+1}`}</span>
+              {form.blocks.length>1 && (
+                <button type="button" onClick={()=>removeBlock(b._bid)} style={{fontSize:11,padding:"2px 8px",borderRadius:4,border:"0.5px solid #FFCDD2",background:"transparent",color:"#D32F2F",cursor:"pointer"}}>✕ {lang==="zh"?"移除":"Remove"}</button>
+              )}
+            </div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:6}}>
+              {t.days.map((d,i)=>(
+                <button key={i} type="button" onClick={()=>toggleBlockDay(b._bid,i)} style={{padding:"5px 10px",borderRadius:5,fontSize:12,cursor:"pointer",border:`1px solid ${b.days?.includes(i)?"#1A6B8A":"#CFD8DC"}`,background:b.days?.includes(i)?"#1A6B8A":"transparent",color:b.days?.includes(i)?"#fff":"#546E7A"}}>{d}</button>
+              ))}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div>
+                <label style={{...lStyle,marginTop:0}}>{t.startTime}</label>
+                <input type="time" style={iStyle} value={b.start} onChange={e=>updateBlock(b._bid,{start:e.target.value})}/>
+              </div>
+              <div>
+                <label style={{...lStyle,marginTop:0}}>{t.endTime}</label>
+                <div style={{...iStyle,background:"#FFFFFF",color:"#9E9E9E",borderStyle:"dashed",cursor:"not-allowed",display:"flex",alignItems:"center"}}>{blockEnd}</div>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+      <button type="button" onClick={addBlock} style={{width:"100%",padding:"8px",borderRadius:6,border:"1px dashed #1A6B8A",background:"transparent",color:"#1A6B8A",fontSize:12,cursor:"pointer",marginBottom:6}}>
+        + {lang==="zh"?"新增時段（可設定不同星期與時間）":"Add Time Slot (different day/time)"}
+      </button>
+      <div style={{fontSize:11,color:"#9E9E9E",marginBottom:8}}>{t.sessionsPerWeek}: <strong style={{color:"#172F39"}}>{totalSessionsPerWeek}</strong> {lang==="zh"?"堂/週":"sessions/week"}</div>
+
       <label style={lStyle}>{t.meetingUrl}</label>
       <input style={iStyle} value={form.meetingUrl} onChange={e=>set("meetingUrl",e.target.value)} placeholder="https://..."/>
       <div style={{display:"flex",gap:8,marginTop:16}}>
-        <button onClick={()=>{const{_edited,...clean}=form;onSave(clean);}} style={{flex:1,background:"#1A6B8A",border:"none",borderRadius:6,color:"#fff",padding:"9px",fontSize:13,fontWeight:500,cursor:"pointer"}}>{t.save}</button>
+        <button onClick={handleSave} style={{flex:1,background:"#1A6B8A",border:"none",borderRadius:6,color:"#fff",padding:"9px",fontSize:13,fontWeight:500,cursor:"pointer"}}>{t.save}</button>
         <button onClick={onCancel} style={{flex:1,background:"#F5F5F5",border:"0.5px solid #CFD8DC",borderRadius:6,color:"#172F39",padding:"9px",fontSize:13,cursor:"pointer"}}>{t.cancel}</button>
       </div>
     </div>
@@ -2132,10 +2189,25 @@ function CourseManager({ users, courses, setCourses, lang, setToast, materials, 
   const [matTarget,setMatTarget] = useState(null);
   const [showBatch,setShowBatch] = useState(false);
   const [confirmDelCourseId, setConfirmDelCourseId] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [onlyUnenrolled, setOnlyUnenrolled] = useState(false);
+  const [collapsedGroups, setCollapsedGroups] = useState(new Set());
   const getName = id=>users.find(u=>u.id===id)?.name||id;
-  const save = form => {
-    if (editing) { setCourses(courses.map(c=>c.id===editing.id?{...form,id:editing.id}:c)); setToast(t.courseUpdated); }
-    else { setCourses([...courses,{...form,id:genId()}]); setToast(t.courseAdded); }
+  const save = records => {
+    // records is an array of one-or-more course objects (one per time-slot block).
+    // Editing: the first record updates the existing course; any additional
+    // blocks become new course records. Adding: every record is newly created.
+    if (editing) {
+      const [first, ...rest] = records;
+      setCourses([
+        ...courses.map(c=>c.id===editing.id?{...first,id:editing.id}:c),
+        ...rest.map(r=>({...r,id:genId()})),
+      ]);
+      setToast(rest.length ? (lang==="zh"?`已更新，並新增 ${rest.length} 個時段`:`Updated, plus ${rest.length} new time slot(s)`) : t.courseUpdated);
+    } else {
+      setCourses([...courses, ...records.map(r=>({...r,id:genId()}))]);
+      setToast(records.length>1 ? (lang==="zh"?`已新增 ${records.length} 個時段的課程`:`Added course with ${records.length} time slots`) : t.courseAdded);
+    }
     setShowAdd(false); setEditing(null);
   };
   const del = id => { setConfirmDelCourseId(id); };
@@ -2145,6 +2217,29 @@ function CourseManager({ users, courses, setCourses, lang, setToast, materials, 
     setConfirmDelCourseId(null);
   };
   const fakeAdmin = { id:"admin", role:"admin", name:"Admin" };
+
+  // ── Search + grouping (display only — never touches courses/enrollments data) ──
+  const q = searchQuery.trim().toLowerCase();
+  const filtered = courses.filter(c=>{
+    const hasEnrollment = (enrollments||[]).some(e=>e.courseId===c.id);
+    if (onlyUnenrolled && hasEnrollment) return false;
+    if (!q) return true;
+    const teacherName = getName(c.teacherId).toLowerCase();
+    const studentName = getName(c.studentId).toLowerCase();
+    return c.subject.toLowerCase().includes(q) || teacherName.includes(q) || studentName.includes(q);
+  });
+
+  const groups = {}; // teacherId -> courses[]
+  filtered.forEach(c=>{
+    const key = c.teacherId || "_none";
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(c);
+  });
+  const groupKeys = Object.keys(groups).sort((a,b)=>getName(a).localeCompare(getName(b)));
+
+  const toggleGroup = (key) => setCollapsedGroups(prev=>{const n=new Set(prev); n.has(key)?n.delete(key):n.add(key); return n;});
+  const collapseAll = () => setCollapsedGroups(new Set(groupKeys));
+  const expandAll = () => setCollapsedGroups(new Set());
 
   return (
     <div>
@@ -2161,32 +2256,76 @@ function CourseManager({ users, courses, setCourses, lang, setToast, materials, 
           <CourseForm course={editing} users={users} lang={lang} onSave={save} onCancel={()=>{setShowAdd(false);setEditing(null);}}/>
         </div>
       )}
-      <div style={{display:"flex",flexDirection:"column",gap:8}}>
-        {courses.map(c=>{
-          const matCount = materials.filter(m=>m.courseId===c.id).length;
-          const hasEnrollment = (enrollments||[]).some(e=>e.courseId===c.id);
+
+      {/* ── Search + filter toolbar ── */}
+      <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:12}}>
+        <input
+          value={searchQuery}
+          onChange={e=>setSearchQuery(e.target.value)}
+          placeholder={lang==="zh"?"🔍 搜尋課程名稱、老師或學生…":"🔍 Search course, teacher, or student…"}
+          style={{flex:1,minWidth:200,boxSizing:"border-box",padding:"8px 12px",borderRadius:7,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13}}
+        />
+        <label style={{display:"flex",alignItems:"center",gap:5,fontSize:12,color:"#546E7A",cursor:"pointer",whiteSpace:"nowrap"}}>
+          <input type="checkbox" checked={onlyUnenrolled} onChange={e=>setOnlyUnenrolled(e.target.checked)} style={{cursor:"pointer"}}/>
+          ⚠️ {lang==="zh"?"只顯示未排課":"Unenrolled only"}
+        </label>
+        <button onClick={collapseAll} style={{fontSize:12,padding:"6px 12px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer",whiteSpace:"nowrap"}}>{lang==="zh"?"全部收合":"Collapse All"}</button>
+        <button onClick={expandAll} style={{fontSize:12,padding:"6px 12px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer",whiteSpace:"nowrap"}}>{lang==="zh"?"全部展開":"Expand All"}</button>
+      </div>
+      <div style={{fontSize:11,color:"#9E9E9E",marginBottom:10}}>
+        {lang==="zh"?`共 ${filtered.length} 堂課程（${groupKeys.length} 位老師）`:`${filtered.length} course(s) across ${groupKeys.length} teacher(s)`}
+      </div>
+
+      {filtered.length===0 && (
+        <p style={{color:"#9E9E9E",fontSize:13,textAlign:"center",padding:"2rem 0"}}>{lang==="zh"?"沒有符合條件的課程":"No courses match your search"}</p>
+      )}
+
+      {/* ── Grouped by teacher, each section collapsible ── */}
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {groupKeys.map(teacherId=>{
+          const groupCourses = groups[teacherId];
+          const collapsed = collapsedGroups.has(teacherId);
+          const unenrolledInGroup = groupCourses.filter(c=>!(enrollments||[]).some(e=>e.courseId===c.id)).length;
           return (
-          <div key={c.id} style={{background:"#FFFFFF",border:`0.5px solid ${hasEnrollment?"#E0E0E0":"#FFCC80"}`,borderRadius:10,padding:"12px 14px"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:6}}>
-              <div>
-                <span style={{fontWeight:500,fontSize:14,color:"#172F39"}}>{c.subject}</span>
-                <div style={{fontSize:12,color:"#546E7A",marginTop:2}}>{c.days?.map(d=>t.days[d]).join("、")} ({c.days?.length}{lang==="zh"?"堂/週":"x/wk"}) · {c.start}–{addMins(c.start,c.duration)} · {c.duration}min</div>
-                <div style={{fontSize:12,color:"#546E7A"}}>{getName(c.teacherId)} → {getName(c.studentId)}</div>
-                {!hasEnrollment && (
-                  <div style={{fontSize:11,color:"#E65100",marginTop:4,background:"#FFF3E0",borderRadius:4,padding:"2px 8px",display:"inline-block"}}>
-                    ⚠️ {lang==="zh"?"尚無付費排課紀錄，此課程不會出現在課表上（教材也不會顯示）":"No enrollment yet — this course won't appear on the schedule (materials won't show either)"}
-                  </div>
-                )}
-              </div>
-              <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                <button onClick={()=>setMatTarget(c)} style={{fontSize:12,padding:"5px 11px",borderRadius:5,border:"0.5px solid #4A9FD4",background:"transparent",color:"#1A6B8A",cursor:"pointer"}}>
-                  📄 {t.materials}{matCount>0?` (${matCount})`:""}
-                </button>
-                <button onClick={()=>{setEditing(c);setShowAdd(false);}} style={{fontSize:12,padding:"5px 11px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>{t.editCourse}</button>
-                <button onClick={()=>del(c.id)} style={{fontSize:12,padding:"5px 11px",borderRadius:5,border:"0.5px solid #C0392B",background:"transparent",color:"#D32F2F",cursor:"pointer"}}>{t.deleteCourse}</button>
-              </div>
+            <div key={teacherId} style={{border:"0.5px solid #E0E0E0",borderRadius:10,overflow:"hidden"}}>
+              <button onClick={()=>toggleGroup(teacherId)} style={{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:"#F5F5F5",border:"none",cursor:"pointer",textAlign:"left"}}>
+                <span style={{fontSize:11,color:"#546E7A",transform:collapsed?"rotate(-90deg)":"rotate(0deg)",transition:"transform 0.15s",display:"inline-block"}}>▼</span>
+                <span style={{fontWeight:600,fontSize:13,color:"#172F39"}}>👤 {teacherId==="_none"?(lang==="zh"?"未指定老師":"No Teacher"):getName(teacherId)}</span>
+                <span style={{fontSize:11,color:"#9E9E9E"}}>({groupCourses.length}{lang==="zh"?" 堂":""})</span>
+                {unenrolledInGroup>0 && <span style={{fontSize:10,background:"#FFF3E0",color:"#E65100",borderRadius:4,padding:"1px 7px",marginLeft:"auto"}}>⚠️ {unenrolledInGroup}</span>}
+              </button>
+              {!collapsed && (
+                <div style={{padding:"10px",display:"flex",flexDirection:"column",gap:8,background:"#FFFFFF"}}>
+                  {groupCourses.map(c=>{
+                    const matCount = materials.filter(m=>m.courseId===c.id).length;
+                    const hasEnrollment = (enrollments||[]).some(e=>e.courseId===c.id);
+                    return (
+                    <div key={c.id} style={{background:"#FFFFFF",border:`0.5px solid ${hasEnrollment?"#E0E0E0":"#FFCC80"}`,borderRadius:10,padding:"12px 14px"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:6}}>
+                        <div>
+                          <span style={{fontWeight:500,fontSize:14,color:"#172F39"}}>{c.subject}</span>
+                          <div style={{fontSize:12,color:"#546E7A",marginTop:2}}>{c.days?.map(d=>t.days[d]).join("、")} ({c.days?.length}{lang==="zh"?"堂/週":"x/wk"}) · {c.start}–{addMins(c.start,c.duration)} · {c.duration}min</div>
+                          <div style={{fontSize:12,color:"#546E7A"}}>{getName(c.teacherId)} → {getName(c.studentId)}</div>
+                          {!hasEnrollment && (
+                            <div style={{fontSize:11,color:"#E65100",marginTop:4,background:"#FFF3E0",borderRadius:4,padding:"2px 8px",display:"inline-block"}}>
+                              ⚠️ {lang==="zh"?"尚無付費排課紀錄，此課程不會出現在課表上（教材也不會顯示）":"No enrollment yet — this course won't appear on the schedule (materials won't show either)"}
+                            </div>
+                          )}
+                        </div>
+                        <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                          <button onClick={()=>setMatTarget(c)} style={{fontSize:12,padding:"5px 11px",borderRadius:5,border:"0.5px solid #4A9FD4",background:"transparent",color:"#1A6B8A",cursor:"pointer"}}>
+                            📄 {t.materials}{matCount>0?` (${matCount})`:""}
+                          </button>
+                          <button onClick={()=>{setEditing(c);setShowAdd(false);}} style={{fontSize:12,padding:"5px 11px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>{t.editCourse}</button>
+                          <button onClick={()=>del(c.id)} style={{fontSize:12,padding:"5px 11px",borderRadius:5,border:"0.5px solid #C0392B",background:"transparent",color:"#D32F2F",cursor:"pointer"}}>{t.deleteCourse}</button>
+                        </div>
+                      </div>
+                    </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          </div>
           );
         })}
       </div>
@@ -2608,6 +2747,13 @@ function EnrollmentManager({ users, courses, enrollments, setEnrollments, attend
   const [attTarget, setAttTarget] = useState(null); // {enrollment, sessionEntry}
   const [confirmDelEnrollId, setConfirmDelEnrollId] = useState(null);
 
+  // ── Search / grouping / collapse state (display only — never touches enrollment data) ──
+  const [searchQuery, setSearchQuery] = useState("");
+  const [expandedCards, setExpandedCards] = useState(new Set()); // enrollment ids whose session grid is shown
+  const [collapsedGroups, setCollapsedGroups] = useState(new Set()); // studentIds whose group is collapsed
+  const toggleCard = (id) => setExpandedCards(prev=>{const n=new Set(prev); n.has(id)?n.delete(id):n.add(id); return n;});
+  const toggleGroup = (id) => setCollapsedGroups(prev=>{const n=new Set(prev); n.has(id)?n.delete(id):n.add(id); return n;});
+
   // Courses for selected form (all courses)
   const allCourses = courses;
 
@@ -2717,6 +2863,25 @@ function EnrollmentManager({ users, courses, enrollments, setEnrollments, attend
     return { excused, absent, completed, upcoming, total };
   };
 
+  // ── Search + group-by-student (display only) ──
+  const q = searchQuery.trim().toLowerCase();
+  const filteredEnrollments = enrollments.filter(enr=>{
+    if (!q) return true;
+    const course = allCourses.find(c=>c.id===enr.courseId);
+    const subject = (course?.subject||"").toLowerCase();
+    const studentName = getName(enr.studentId).toLowerCase();
+    return subject.includes(q) || studentName.includes(q);
+  });
+  const enrollGroups = {}; // studentId -> enrollments[]
+  filteredEnrollments.forEach(enr=>{
+    const key = enr.studentId || "_none";
+    if (!enrollGroups[key]) enrollGroups[key] = [];
+    enrollGroups[key].push(enr);
+  });
+  const enrollGroupKeys = Object.keys(enrollGroups).sort((a,b)=>getName(a).localeCompare(getName(b)));
+  const collapseAllGroups = () => setCollapsedGroups(new Set(enrollGroupKeys));
+  const expandAllGroups = () => setCollapsedGroups(new Set());
+
   return (
     <div>
       {confirmDelEnrollId && (() => {
@@ -2810,73 +2975,115 @@ function EnrollmentManager({ users, courses, enrollments, setEnrollments, attend
         </div>
       )}
 
-      {/* ── Enrollment list ── */}
+      {/* ── Search + filter toolbar ── */}
+      {enrollments.length>0 && (
+        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:12}}>
+          <input
+            value={searchQuery}
+            onChange={e=>setSearchQuery(e.target.value)}
+            placeholder={lang==="zh"?"🔍 搜尋課程名稱或學生姓名…":"🔍 Search course or student…"}
+            style={{flex:1,minWidth:200,boxSizing:"border-box",padding:"8px 12px",borderRadius:7,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13}}
+          />
+          <button onClick={collapseAllGroups} style={{fontSize:12,padding:"6px 12px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer",whiteSpace:"nowrap"}}>{lang==="zh"?"全部收合":"Collapse All"}</button>
+          <button onClick={expandAllGroups} style={{fontSize:12,padding:"6px 12px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer",whiteSpace:"nowrap"}}>{lang==="zh"?"全部展開":"Expand All"}</button>
+        </div>
+      )}
+      {enrollments.length>0 && (
+        <div style={{fontSize:11,color:"#9E9E9E",marginBottom:10}}>
+          {lang==="zh"?`共 ${filteredEnrollments.length} 筆排課（${enrollGroupKeys.length} 位學生）`:`${filteredEnrollments.length} enrollment(s) across ${enrollGroupKeys.length} student(s)`}
+        </div>
+      )}
+
+      {/* ── Enrollment list — grouped by student, each group collapsible ── */}
       {enrollments.length===0 && !showForm && (
         <p style={{color:"#9E9E9E",fontSize:13,textAlign:"center",padding:"2rem 0"}}>{t.noEnrollments}</p>
       )}
-      {enrollments.map(enr=>{
-        const course = allCourses.find(c=>c.id===enr.courseId);
-        const stats = getStats(enr);
-        const now = today;
+      {enrollments.length>0 && filteredEnrollments.length===0 && (
+        <p style={{color:"#9E9E9E",fontSize:13,textAlign:"center",padding:"2rem 0"}}>{lang==="zh"?"沒有符合條件的排課紀錄":"No enrollments match your search"}</p>
+      )}
+
+      {enrollGroupKeys.map(studentId=>{
+        const groupEnrollments = enrollGroups[studentId];
+        const groupCollapsed = collapsedGroups.has(studentId);
         return (
-          <div key={enr.id} style={{background:"#FFFFFF",border:"0.5px solid #E0E0E0",borderRadius:12,padding:"14px 16px",marginBottom:12}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:8,marginBottom:10}}>
-              <div>
-                <div style={{fontWeight:500,fontSize:14,color:"#172F39"}}>{course?.subject||"—"}</div>
-                <div style={{fontSize:12,color:"#546E7A",marginTop:2}}>
-                  {lang==="zh"?"學生":"Student"}: {getName(enr.studentId)} · {t.payDate}: {enr.payDate}
-                </div>
-                <div style={{fontSize:12,color:"#546E7A"}}>
-                  {t.startDate}: {enr.startDate} · {t.totalSessions}: {enr.totalSessions}
-                </div>
-              </div>
-              {/* Stats pills */}
-              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                <span style={{fontSize:11,background:"rgba(76,175,80,0.15)",color:"#2E7D32",borderRadius:5,padding:"3px 9px",fontWeight:500}}>✓ {stats.completed} {lang==="zh"?"完課":""}</span>
-                <span style={{fontSize:11,background:"rgba(26,107,138,0.1)",color:"#9E9E9E",borderRadius:5,padding:"3px 9px"}}>📅 {enr.totalSessions} {lang==="zh"?"堂":""}</span>
-                {stats.upcoming>0&&<span style={{fontSize:11,background:"rgba(158,158,158,0.12)",color:"#9E9E9E",borderRadius:5,padding:"3px 9px"}}>○ {stats.upcoming} {lang==="zh"?"未完成":""}</span>}
-                {stats.excused>0&&<span style={{fontSize:11,background:"rgba(255,152,0,0.15)",color:"#E65100",borderRadius:5,padding:"3px 9px"}}>{lang==="zh"?"假":"Lv"} {stats.excused}</span>}
-                {stats.absent>0&&<span style={{fontSize:11,background:"rgba(211,47,47,0.15)",color:"#D32F2F",borderRadius:5,padding:"3px 9px"}}>✗ {stats.absent} {lang==="zh"?"缺勤":""}</span>}
-              </div>
-            </div>
+          <div key={studentId} style={{border:"0.5px solid #E0E0E0",borderRadius:10,overflow:"hidden",marginBottom:10}}>
+            <button onClick={()=>toggleGroup(studentId)} style={{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:"#F5F5F5",border:"none",cursor:"pointer",textAlign:"left"}}>
+              <span style={{fontSize:11,color:"#546E7A",transform:groupCollapsed?"rotate(-90deg)":"rotate(0deg)",transition:"transform 0.15s",display:"inline-block"}}>▼</span>
+              <span style={{fontWeight:600,fontSize:13,color:"#172F39"}}>🎓 {studentId==="_none"?(lang==="zh"?"未指定學生":"No Student"):getName(studentId)}</span>
+              <span style={{fontSize:11,color:"#9E9E9E"}}>({groupEnrollments.length}{lang==="zh"?" 筆":""})</span>
+            </button>
+            {!groupCollapsed && (
+              <div style={{padding:"10px",background:"#FFFFFF"}}>
+                {groupEnrollments.map(enr=>{
+                  const course = allCourses.find(c=>c.id===enr.courseId);
+                  const stats = getStats(enr);
+                  const cardExpanded = expandedCards.has(enr.id);
+                  return (
+                    <div key={enr.id} style={{background:"#FFFFFF",border:"0.5px solid #E0E0E0",borderRadius:12,padding:"14px 16px",marginBottom:10}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:8,marginBottom:cardExpanded?10:0}}>
+                        <div>
+                          <div style={{fontWeight:500,fontSize:14,color:"#172F39"}}>{course?.subject||"—"}</div>
+                          <div style={{fontSize:12,color:"#546E7A",marginTop:2}}>
+                            {t.payDate}: {enr.payDate} · {t.startDate}: {enr.startDate}
+                          </div>
+                        </div>
+                        {/* Stats pills */}
+                        <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                          <span style={{fontSize:11,background:"rgba(76,175,80,0.15)",color:"#2E7D32",borderRadius:5,padding:"3px 9px",fontWeight:500}}>✓ {stats.completed} {lang==="zh"?"完課":""}</span>
+                          <span style={{fontSize:11,background:"rgba(26,107,138,0.1)",color:"#9E9E9E",borderRadius:5,padding:"3px 9px"}}>📅 {enr.totalSessions} {lang==="zh"?"堂":""}</span>
+                          {stats.upcoming>0&&<span style={{fontSize:11,background:"rgba(158,158,158,0.12)",color:"#9E9E9E",borderRadius:5,padding:"3px 9px"}}>○ {stats.upcoming} {lang==="zh"?"未完成":""}</span>}
+                          {stats.excused>0&&<span style={{fontSize:11,background:"rgba(255,152,0,0.15)",color:"#E65100",borderRadius:5,padding:"3px 9px"}}>{lang==="zh"?"假":"Lv"} {stats.excused}</span>}
+                          {stats.absent>0&&<span style={{fontSize:11,background:"rgba(211,47,47,0.15)",color:"#D32F2F",borderRadius:5,padding:"3px 9px"}}>✗ {stats.absent} {lang==="zh"?"缺勤":""}</span>}
+                          <button onClick={()=>toggleCard(enr.id)} style={{fontSize:11,padding:"3px 10px",borderRadius:5,border:"0.5px solid #4A9FD4",background:cardExpanded?"#EEF6FB":"transparent",color:"#1A6B8A",cursor:"pointer",whiteSpace:"nowrap"}}>
+                            {cardExpanded?(lang==="zh"?"▲ 收合堂次":"▲ Hide sessions"):(lang==="zh"?"▼ 查看堂次":"▼ View sessions")}
+                          </button>
+                        </div>
+                      </div>
 
-            {/* Session list — 3-color system */}
-            <div style={{maxHeight:220,overflowY:"auto",display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:5,marginBottom:10}}>
-              {(enr.scheduledDates||[]).map((s,i)=>{
-                const status = getSessionStatus(enr, s);
-                const att = getAttendance(enr.id, s.date);
-                const STATE = {
-                  completed:     {bg:"#E8F5E9",border:"#4CAF50", icon:"✓", iconColor:"#2E7D32"},
-                  absent:        {bg:"#FFEBEE",border:"#D32F2F", icon:"✗", iconColor:"#D32F2F"},
-                  excused:       {bg:"#E3F2FD",border:"#1A6B8A", icon:"假", iconColor:"#1A6B8A"},
-                  teacher_leave: {bg:"#FFF8E1",border:"#FF9800", icon:"師", iconColor:"#E65100"},
-                  upcoming:      {bg:"#FAFAFA",border:"#E0E0E0", icon:"",  iconColor:"#9E9E9E"},
-                };
-                const st = STATE[status]||STATE.upcoming;
-                return (
-                  <div key={i} style={{background:st.bg,borderRadius:7,padding:"8px 10px",fontSize:11,border:`1.5px solid ${st.border}`,transition:"all 0.15s"}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
-                      <span style={{color:"#9E9E9E",fontSize:10}}>#{s.sessionNo}</span>
-                      {st.icon && <span style={{fontSize:10,color:st.iconColor,fontWeight:700}}>{st.icon}</span>}
+                      {/* Session grid — collapsed by default, this is what ate up all the vertical space */}
+                      {cardExpanded && (
+                        <div style={{maxHeight:220,overflowY:"auto",display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:5,marginBottom:10}}>
+                          {(enr.scheduledDates||[]).map((s,i)=>{
+                            const status = getSessionStatus(enr, s);
+                            const att = getAttendance(enr.id, s.date);
+                            const STATE = {
+                              completed:     {bg:"#E8F5E9",border:"#4CAF50", icon:"✓", iconColor:"#2E7D32"},
+                              absent:        {bg:"#FFEBEE",border:"#D32F2F", icon:"✗", iconColor:"#D32F2F"},
+                              excused:       {bg:"#E3F2FD",border:"#1A6B8A", icon:"假", iconColor:"#1A6B8A"},
+                              teacher_leave: {bg:"#FFF8E1",border:"#FF9800", icon:"師", iconColor:"#E65100"},
+                              upcoming:      {bg:"#FAFAFA",border:"#E0E0E0", icon:"",  iconColor:"#9E9E9E"},
+                            };
+                            const st = STATE[status]||STATE.upcoming;
+                            return (
+                              <div key={i} style={{background:st.bg,borderRadius:7,padding:"8px 10px",fontSize:11,border:`1.5px solid ${st.border}`,transition:"all 0.15s"}}>
+                                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
+                                  <span style={{color:"#9E9E9E",fontSize:10}}>#{s.sessionNo}</span>
+                                  {st.icon && <span style={{fontSize:10,color:st.iconColor,fontWeight:700}}>{st.icon}</span>}
+                                </div>
+                                <div style={{color:"#172F39",fontWeight:600,marginBottom:1}}>{s.date}</div>
+                                <div style={{color:"#546E7A",fontSize:10}}>{T[lang].days[s.dayIndex]}</div>
+                                {att?.note && <div style={{fontSize:9,color:st.iconColor,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={att.note}>{att.note}</div>}
+                                {s.date <= today && (
+                                  <button onClick={()=>setAttTarget({enrollment:enr,sessionEntry:s})}
+                                    style={{marginTop:5,width:"100%",fontSize:9,padding:"2px 0",borderRadius:4,background:"transparent",border:`0.5px solid ${st.border}`,color:st.iconColor,cursor:"pointer"}}>
+                                    {att?(lang==="zh"?"修改":"Edit"):(lang==="zh"?"記錄":"Record")}
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      <div style={{display:"flex",gap:6}}>
+                        <button onClick={()=>startEdit(enr)} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>{lang==="zh"?"編輯排課":"Edit"}</button>
+                        <button onClick={()=>deleteEnrollment(enr.id)} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"0.5px solid #C0392B",background:"transparent",color:"#D32F2F",cursor:"pointer"}}>{t.deleteCourse}</button>
+                      </div>
                     </div>
-                    <div style={{color:"#172F39",fontWeight:600,marginBottom:1}}>{s.date}</div>
-                    <div style={{color:"#546E7A",fontSize:10}}>{T[lang].days[s.dayIndex]}</div>
-                    {att?.note && <div style={{fontSize:9,color:st.iconColor,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={att.note}>{att.note}</div>}
-                    {s.date <= today && (
-                      <button onClick={()=>setAttTarget({enrollment:enr,sessionEntry:s})}
-                        style={{marginTop:5,width:"100%",fontSize:9,padding:"2px 0",borderRadius:4,background:"transparent",border:`0.5px solid ${st.border}`,color:st.iconColor,cursor:"pointer"}}>
-                        {att?(lang==="zh"?"修改":"Edit"):(lang==="zh"?"記錄":"Record")}
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-            <div style={{display:"flex",gap:6}}>
-              <button onClick={()=>startEdit(enr)} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>{lang==="zh"?"編輯排課":"Edit"}</button>
-              <button onClick={()=>deleteEnrollment(enr.id)} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"0.5px solid #C0392B",background:"transparent",color:"#D32F2F",cursor:"pointer"}}>{t.deleteCourse}</button>
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         );
       })}
@@ -4180,41 +4387,35 @@ function ChangeNotifications({ users, setUsers, lang, setToast, profileChanges, 
     .sort((a,b)=>b.requestedAt.localeCompare(a.requestedAt));
 
   const FIELD_LABEL = {
-    name: t.settingsName, birthDate: t.settingsBirthDate, avatar: t.settingsAvatar,
+    nameEn: t.settingsNameEn, nameCn: t.settingsNameCn, birthDate: t.settingsBirthDate, avatar: t.settingsAvatar,
     email: t.settingsEmail, phone: t.settingsPhone,
   };
 
   const STATUS_META = {
-    pending:   {label:t.changeNotifStatusPending,   color:"#E65100", bg:"#FFF3E0"},
-    merged:    {label:t.changeNotifStatusMerged,    color:"#2E7D32", bg:"#E8F5E9"},
-    dismissed: {label:t.changeNotifStatusDismissed, color:"#9E9E9E", bg:"#F5F5F5"},
+    pending:      {label:t.changeNotifStatusPending,     color:"#E65100", bg:"#FFF3E0"},
+    merged:       {label:t.changeNotifStatusMerged,      color:"#2E7D32", bg:"#E8F5E9"},
+    dismissed:    {label:t.changeNotifStatusDismissed,   color:"#9E9E9E", bg:"#F5F5F5"},
+    auto_applied: {label:t.changeNotifStatusAutoApplied, color:"#1A6B8A", bg:"#E3F2FD"},
   };
 
   const merge = (change) => {
-    // Name → users array (this is what's referenced everywhere: courses, schedule, teacher's roster, etc.)
-    // AND the student directory's nameEn field, so 師生資料庫 stays in sync too.
-    if (change.changes.name) {
-      setUsers(prev => prev.map(u => u.id===change.studentId ? {...u, name:change.changes.name} : u));
-
-      const existingIdx = dirEntries.findIndex(d=>d.linkedUserId===change.studentId);
-      const next = existingIdx >= 0
-        ? dirEntries.map((d,i)=> i===existingIdx ? {...d, nameEn:change.changes.name} : d)
-        : [...dirEntries, {id:genId(), nameEn:change.changes.name, linkedUserId:change.studentId}];
-      saveDirEntries(next);
+    // English name → users array (referenced everywhere: courses, schedule,
+    // teacher's roster, etc.) AND the directory's nameEn field.
+    // Chinese name → only the directory's nameCn field (no separate slot elsewhere).
+    const dirPatch = {};
+    if (change.changes.nameEn) {
+      setUsers(prev => prev.map(u => u.id===change.studentId ? {...u, name:change.changes.nameEn} : u));
+      dirPatch.nameEn = change.changes.nameEn;
     }
-    // Any other fields (legacy records only — these now apply instantly and never
-    // reach this queue, but handled here defensively for backward compatibility)
-    const otherFields = {...change.changes};
-    delete otherFields.name;
-    if (Object.keys(otherFields).length > 0) {
+    if (change.changes.nameCn !== undefined) {
+      dirPatch.nameCn = change.changes.nameCn;
+    }
+    if (Object.keys(dirPatch).length > 0) {
       const existingIdx = dirEntries.findIndex(d=>d.linkedUserId===change.studentId);
-      let next;
-      if (existingIdx >= 0) {
-        next = dirEntries.map((d,i)=> i===existingIdx ? {...d, ...otherFields} : d);
-      } else {
-        const student = getStudent(change.studentId);
-        next = [...dirEntries, {id:genId(), nameEn:student?.name||"", linkedUserId:change.studentId, ...otherFields}];
-      }
+      const student = getStudent(change.studentId);
+      const next = existingIdx >= 0
+        ? dirEntries.map((d,i)=> i===existingIdx ? {...d, ...dirPatch} : d)
+        : [...dirEntries, {id:genId(), nameEn:student?.name||"", linkedUserId:change.studentId, ...dirPatch}];
       saveDirEntries(next);
     }
     setProfileChanges(prev => prev.map(c => c.id===change.id ? {...c, status:"merged", mergedAt:new Date().toISOString(), mergedBy:"admin"} : c));
@@ -4298,6 +4499,9 @@ function ChangeNotifications({ users, setUsers, lang, setToast, profileChanges, 
                   ✕ {t.changeNotifDismiss}
                 </button>
               </div>
+            )}
+            {c.status==="auto_applied" && (
+              <div style={{fontSize:11,color:"#1A6B8A"}}>ℹ️ {t.changeNotifAutoAppliedNote}</div>
             )}
           </div>
         );
@@ -6099,7 +6303,12 @@ function StudentSettingsPanel({ currentUser, users, setUsers, dirEntries, saveDi
   const myDirEntry = dirEntries.find(d=>d.linkedUserId===currentUser.id);
   const myPending = (profileChanges||[]).filter(c=>c.studentId===currentUser.id && c.status==="pending").sort((a,b)=>b.requestedAt.localeCompare(a.requestedAt))[0];
 
-  const [name, setName] = useState(currentUser.name || "");
+  // Chinese and English names are tracked separately and BOTH require admin
+  // review. English name is what's used everywhere else in the system
+  // (schedule, teacher's roster, etc.) so it maps to users.name on merge;
+  // Chinese name lives in the student directory (nameCn).
+  const [nameEn, setNameEn] = useState(currentUser.name || "");
+  const [nameCn, setNameCn] = useState(myDirEntry?.nameCn || "");
   const [birthDate, setBirthDate] = useState(myDirEntry?.birthDate || "");
   const [avatar, setAvatar] = useState(myDirEntry?.avatar || "");
   const [email, setEmail] = useState(myDirEntry?.email || "");
@@ -6119,21 +6328,30 @@ function StudentSettingsPanel({ currentUser, users, setUsers, dirEntries, saveDi
   }
 
   const saveInfo = () => {
-    // Name is the only field that needs admin review before it takes effect,
-    // since it's what shows up everywhere else in the system (schedule,
-    // teacher's roster, etc). Everything else applies immediately.
-    const nameChanged = name.trim() && name.trim() !== currentUser.name;
+    // Names (Chinese + English) are the only fields that need admin review
+    // before taking effect. Everything else applies immediately, but STILL
+    // generates a notification record so admin has visibility into every
+    // change a student makes — it's just already-applied, not blocking.
+    const nameChanges = {};
+    const namePrevious = {};
+    if (nameEn.trim() && nameEn.trim() !== currentUser.name) { nameChanges.nameEn = nameEn.trim(); namePrevious.nameEn = currentUser.name; }
+    if (nameCn.trim() !== (myDirEntry?.nameCn||"")) { nameChanges.nameCn = nameCn.trim(); namePrevious.nameCn = myDirEntry?.nameCn||""; }
+    const hasNameChanges = Object.keys(nameChanges).length > 0;
 
     const immediateFields = {};
-    if (birthDate !== (myDirEntry?.birthDate||"")) immediateFields.birthDate = birthDate;
-    if (avatar !== (myDirEntry?.avatar||"")) immediateFields.avatar = avatar;
-    if (email !== (myDirEntry?.email||"")) immediateFields.email = email;
-    if (phone !== (myDirEntry?.phone||"")) immediateFields.phone = phone;
+    const immediatePrevious = {};
+    if (birthDate !== (myDirEntry?.birthDate||"")) { immediateFields.birthDate = birthDate; immediatePrevious.birthDate = myDirEntry?.birthDate||""; }
+    if (avatar !== (myDirEntry?.avatar||"")) { immediateFields.avatar = avatar; immediatePrevious.avatar = myDirEntry?.avatar||""; }
+    if (email !== (myDirEntry?.email||"")) { immediateFields.email = email; immediatePrevious.email = myDirEntry?.email||""; }
+    if (phone !== (myDirEntry?.phone||"")) { immediateFields.phone = phone; immediatePrevious.phone = myDirEntry?.phone||""; }
     const hasImmediateChanges = Object.keys(immediateFields).length > 0;
 
-    if (!nameChanged && !hasImmediateChanges) { setToast(t.settingsNoChange); return; }
+    if (!hasNameChanges && !hasImmediateChanges) { setToast(t.settingsNoChange); return; }
 
-    // Apply birth date / avatar / email / phone right away — no review needed
+    const now = new Date().toISOString();
+
+    // Apply birth date / avatar / email / phone right away — no review needed —
+    // but still log a notification record (status "auto_applied") for admin visibility.
     if (hasImmediateChanges) {
       const existingIdx = dirEntries.findIndex(d=>d.linkedUserId===currentUser.id);
       let next;
@@ -6143,15 +6361,22 @@ function StudentSettingsPanel({ currentUser, users, setUsers, dirEntries, saveDi
         next = [...dirEntries, {id:genId(), nameEn:currentUser.name, linkedUserId:currentUser.id, ...immediateFields}];
       }
       saveDirEntries(next);
+      setProfileChanges(prev => [...prev, {
+        id:genId(), studentId:currentUser.id, requestedAt:now,
+        changes:immediateFields, previousValues:immediatePrevious,
+        status:"auto_applied", mergedAt:now, mergedBy:"system",
+      }]);
     }
 
-    // Name still requires admin review, since it's referenced everywhere else
-    if (nameChanged) {
-      const rec = { id:genId(), studentId:currentUser.id, requestedAt:new Date().toISOString(), changes:{name:name.trim()}, previousValues:{name:currentUser.name}, status:"pending" };
-      setProfileChanges(prev => [...prev, rec]);
+    // Names still require admin review, since English name is referenced everywhere else
+    if (hasNameChanges) {
+      setProfileChanges(prev => [...prev, {
+        id:genId(), studentId:currentUser.id, requestedAt:now,
+        changes:nameChanges, previousValues:namePrevious, status:"pending",
+      }]);
     }
 
-    setToast(nameChanged ? t.settingsSubmitted : t.settingsSavedInstant);
+    setToast(hasNameChanges ? t.settingsSubmitted : t.settingsSavedInstant);
   };
 
   const updatePassword = () => {
@@ -6179,7 +6404,8 @@ function StudentSettingsPanel({ currentUser, users, setUsers, dirEntries, saveDi
           {currentAvatar?.icon || currentUser.name.slice(0,2).toUpperCase()}
         </div>
         <div style={{fontSize:12,color:"#546E7A",lineHeight:1.9}}>
-          <div><strong style={{color:"#172F39"}}>{t.settingsName}</strong>：{currentUser.name || t.settingsNoneValue}</div>
+          <div><strong style={{color:"#172F39"}}>{t.settingsNameEn}</strong>：{currentUser.name || t.settingsNoneValue}</div>
+          <div><strong style={{color:"#172F39"}}>{t.settingsNameCn}</strong>：{myDirEntry?.nameCn || t.settingsNoneValue}</div>
           <div><strong style={{color:"#172F39"}}>{t.settingsBirthDate}</strong>：{myDirEntry?.birthDate || t.settingsNoneValue}</div>
           <div><strong style={{color:"#172F39"}}>{t.settingsEmail}</strong>：{myDirEntry?.email || t.settingsNoneValue}</div>
           <div><strong style={{color:"#172F39"}}>{t.settingsPhone}</strong>：{myDirEntry?.phone || t.settingsNoneValue}</div>
@@ -6188,7 +6414,9 @@ function StudentSettingsPanel({ currentUser, users, setUsers, dirEntries, saveDi
 
       {myPending && (
         <div style={{background:"#FFF3E0",border:"0.5px solid #FFE0B2",borderRadius:8,padding:"10px 13px",marginBottom:16,fontSize:12,color:"#E65100"}}>
-          ⏳ {t.settingsPendingBanner}{myPending.changes?.name?`：「${myPending.changes.name}」`:""}
+          ⏳ {t.settingsPendingBanner}
+          {myPending.changes?.nameEn?`：${t.settingsNameEn}「${myPending.changes.nameEn}」`:""}
+          {myPending.changes?.nameCn?`${myPending.changes?.nameEn?"、":"："}${t.settingsNameCn}「${myPending.changes.nameCn}」`:""}
         </div>
       )}
 
@@ -6198,8 +6426,11 @@ function StudentSettingsPanel({ currentUser, users, setUsers, dirEntries, saveDi
         <div style={{fontSize:11,color:"#9E9E9E"}}>{t.settingsOptionalNote}</div>
         <div style={{fontSize:11,color:"#1A6B8A",marginTop:4}}>ℹ️ {t.settingsNameReviewNote}</div>
 
-        <label style={lStyle}>{t.settingsName}</label>
-        <input style={iStyle} value={name} onChange={e=>setName(e.target.value)} placeholder={currentUser.name}/>
+        <label style={lStyle}>{t.settingsNameEn}</label>
+        <input style={iStyle} value={nameEn} onChange={e=>setNameEn(e.target.value)} placeholder={currentUser.name}/>
+
+        <label style={lStyle}>{t.settingsNameCn}</label>
+        <input style={iStyle} value={nameCn} onChange={e=>setNameCn(e.target.value)} placeholder={lang==="zh"?"例：王小明":"e.g. 王小明"}/>
 
         <label style={lStyle}>{t.settingsBirthDate}</label>
         <input type="date" style={iStyle} value={birthDate} onChange={e=>setBirthDate(e.target.value)}/>
