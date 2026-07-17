@@ -200,6 +200,28 @@ const T = {
     dirAgeDisplay:"歲", dirAgeFormat:"{current}（{year}：{join}加入）",
     // People directory (student + teacher)
     peopleDir:"師生資料庫", peopleDirStudents:"學生資料庫", peopleDirTeachers:"老師資料庫",
+    peopleDirChanges:"通知變更",
+    // Student settings
+    settingsTab:"基本資訊與設定", settingsDesc:"更新你的基本資料與密碼",
+    settingsBasicInfo:"基本資訊", settingsName:"名字", settingsBirthDate:"出生年月日",
+    settingsAvatar:"大頭貼", settingsEmail:"Email", settingsPhone:"聯絡電話（手機）",
+    settingsOptionalNote:"以下欄位皆為選填，可留空", settingsSaveInfo:"儲存變更",
+    settingsPendingBanner:"您有一筆資料變更正在等待管理員審核合併",
+    settingsSubmitted:"已送出變更，待管理員審核合併", settingsNoChange:"沒有變更可儲存",
+    settingsSavedInstant:"已更新，立即生效",
+    settingsNameReviewNote:"名字變更需經管理員審核合併，其餘欄位儲存後立即生效",
+    settingsNoneValue:"無", settingsCurrentInfo:"目前資料",
+    settingsChangePwd:"更改密碼", settingsCurrentPwd:"目前密碼", settingsNewPwd:"新密碼",
+    settingsConfirmPwd:"確認新密碼", settingsPwdMismatch:"兩次輸入的新密碼不一致",
+    settingsCurrentPwdWrong:"目前密碼不正確", settingsPwdUpdated:"密碼已更新",
+    settingsUpdatePwdBtn:"更新密碼",
+    // Admin change notifications
+    changeNotifTitle:"通知變更", changeNotifDesc:"學員自行更新的資料異動，審核後才會合併到正式資料",
+    changeNotifNone:"目前沒有待審核的異動", changeNotifFrom:"由", changeNotifAt:"提交時間",
+    changeNotifField:"欄位", changeNotifOld:"原值", changeNotifNew:"新值",
+    changeNotifMerge:"合併至既有資料", changeNotifDismiss:"忽略",
+    changeNotifMerged:"已合併至既有資料", changeNotifDismissed:"已忽略此筆異動",
+    changeNotifStatus:"狀態", changeNotifStatusPending:"待審核", changeNotifStatusMerged:"已合併", changeNotifStatusDismissed:"已忽略",
     teacherDir:"老師資料庫", dirTeacherName:"老師姓名", dirYearsExp:"教學年資",
     teacherExcelCols:"老師姓名 | 教學年資 | 加入年份",
     teacherPasteHint:"直接從 Excel 複製並貼上（Tab 分隔，欄位順序：老師姓名、教學年資、加入年份）",
@@ -217,24 +239,6 @@ const T = {
     teacherYears:"教學年資", teacherYearsUnit:"年教學經驗",
     previewStudentView:"預覽學生檢視畫面", noBioYet:"尚未填寫教學理念",
     teacherPreviewTitle:"學生檢視預覽",
-    // Student progress
-    myProgress:"我的學習進度",
-    mySchedule:"本週課表",
-    totalSessions:"累積完課",
-    fullSession:"堂",
-    halfSession:"半堂",
-    fullLabel:"完整堂（50分）",
-    halfLabel:"迷你堂（25分）",
-    progressBadge:"目前等級",
-    nextBadge:"下一個等級",
-    sessionsToNext:"還差",
-    sessionsToNextUnit:"堂就升級！",
-    alreadyMax:"已達最高等級 🏆",
-    bronze:"銅牌 Bronze",silver:"銀牌 Silver",gold:"金牌 Gold",
-    platinum:"白金 Platinum",diamond:"鑽石 Diamond",
-    badgeProgress:"距離 {badge} 還差 {n} 堂！",
-    completedHint:"持續上課，累積更多堂數，解鎖下一個等級！",
-    sessionBreakdown:"堂數明細",
   },
   en: {
     appName:"ES Online Course Platform", login:"Login", logout:"Logout", username:"Username", password:"Password",
@@ -393,6 +397,28 @@ const T = {
     dirAgeDisplay:"yrs", dirAgeFormat:"{current}（{year}: joined at {join}）",
     // People directory (student + teacher)
     peopleDir:"Teacher & Student Directory", peopleDirStudents:"Student Directory", peopleDirTeachers:"Teacher Directory",
+    peopleDirChanges:"Change Notifications",
+    // Student settings
+    settingsTab:"Basic Info & Settings", settingsDesc:"Update your basic info and password",
+    settingsBasicInfo:"Basic Info", settingsName:"Name", settingsBirthDate:"Date of Birth",
+    settingsAvatar:"Avatar", settingsEmail:"Email", settingsPhone:"Contact Number (Mobile)",
+    settingsOptionalNote:"All fields below are optional — feel free to leave any blank", settingsSaveInfo:"Save Changes",
+    settingsPendingBanner:"You have a pending profile change awaiting admin review",
+    settingsSubmitted:"Change submitted, awaiting admin review", settingsNoChange:"No changes to save",
+    settingsSavedInstant:"Updated — effective immediately",
+    settingsNameReviewNote:"Name changes require admin review before taking effect; all other fields save instantly",
+    settingsNoneValue:"None", settingsCurrentInfo:"Current Info",
+    settingsChangePwd:"Change Password", settingsCurrentPwd:"Current Password", settingsNewPwd:"New Password",
+    settingsConfirmPwd:"Confirm New Password", settingsPwdMismatch:"New passwords don't match",
+    settingsCurrentPwdWrong:"Current password is incorrect", settingsPwdUpdated:"Password updated",
+    settingsUpdatePwdBtn:"Update Password",
+    // Admin change notifications
+    changeNotifTitle:"Change Notifications", changeNotifDesc:"Students' self-submitted profile edits — review before merging into official records",
+    changeNotifNone:"No pending changes to review", changeNotifFrom:"From", changeNotifAt:"Submitted",
+    changeNotifField:"Field", changeNotifOld:"Old Value", changeNotifNew:"New Value",
+    changeNotifMerge:"Merge into Records", changeNotifDismiss:"Dismiss",
+    changeNotifMerged:"Merged into records", changeNotifDismissed:"Change dismissed",
+    changeNotifStatus:"Status", changeNotifStatusPending:"Pending", changeNotifStatusMerged:"Merged", changeNotifStatusDismissed:"Dismissed",
     teacherDir:"Teacher Directory", dirTeacherName:"Teacher Name", dirYearsExp:"Years of Teaching",
     teacherExcelCols:"Teacher Name | Years of Teaching | Join Year",
     teacherPasteHint:"Paste directly from Excel (Tab-separated, columns: Teacher Name, Years of Teaching, Join Year)",
@@ -410,24 +436,6 @@ const T = {
     teacherYears:"Years of Teaching", teacherYearsUnit:"years of experience",
     previewStudentView:"Preview Student View", noBioYet:"No teaching philosophy written yet",
     teacherPreviewTitle:"Student View Preview",
-    // Student progress
-    myProgress:"My Progress",
-    mySchedule:"This Week",
-    totalSessions:"Completed Sessions",
-    fullSession:"session",
-    halfSession:"half",
-    fullLabel:"Full session (50 min)",
-    halfLabel:"Mini session (25 min)",
-    progressBadge:"Current Badge",
-    nextBadge:"Next Badge",
-    sessionsToNext:"Only",
-    sessionsToNextUnit:"more sessions to go!",
-    alreadyMax:"Maximum badge achieved 🏆",
-    bronze:"Bronze",silver:"Silver",gold:"Gold",
-    platinum:"Platinum",diamond:"Diamond",
-    badgeProgress:"{n} sessions away from {badge}!",
-    completedHint:"Keep going to unlock the next badge!",
-    sessionBreakdown:"Breakdown",
   },
 };
 
@@ -3395,6 +3403,7 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
 
   const cols = [
     t.dirStudentName, t.dirCnName, t.dirAge,
+    lang==="zh"?"聯絡資訊":"Contact Info",
     lang==="zh"?"加入年":"Join Yr",
     t.dirRegDate, t.dirStartDate, t.dirDuration,
     lang==="zh"?"積分":"Points",
@@ -3538,6 +3547,14 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
                       <td style={tdStyle}>{inEd("nameEn","John Smith")}</td>
                       <td style={tdStyle}>{inEd("nameCn","中文")}</td>
                       <td style={tdStyle}>{inEd("age","15")}</td>
+                      {/* Contact info — birthDate/email/phone are normally self-service via student Settings, but admin can adjust here too */}
+                      <td style={tdStyle}>
+                        <div style={{display:"flex",flexDirection:"column",gap:3,minWidth:110}}>
+                          <input style={iStyle} value={ef.birthDate||""} onChange={e=>setEditForm(f=>({...f,birthDate:e.target.value}))} placeholder="YYYY-MM-DD" title={t.settingsBirthDate}/>
+                          <input style={iStyle} value={ef.email||""} onChange={e=>setEditForm(f=>({...f,email:e.target.value}))} placeholder="email" title={t.settingsEmail}/>
+                          <input style={iStyle} value={ef.phone||""} onChange={e=>setEditForm(f=>({...f,phone:e.target.value}))} placeholder="phone" title={t.settingsPhone}/>
+                        </div>
+                      </td>
                       <td style={tdStyle}>{inEd("regYear","2025")}</td>
                       <td style={tdStyle}>{inEd("regDate","2025-01")}</td>
                       <td style={tdStyle}>{inEd("startDate","2025-02")}</td>
@@ -3578,6 +3595,14 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
                       {ageDisplay!=="—"
                         ? <span title={`加入年份: ${d.regYear||"?"}, 加入年齡: ${d.age||"?"}`}>{ageDisplay}</span>
                         : "—"}
+                    </td>
+                    {/* Contact info — birthDate/email/phone, self-service via student Settings */}
+                    <td style={tdStyle}>
+                      <div style={{fontSize:11,color:"#546E7A",lineHeight:1.6}}>
+                        <div>🎂 {d.birthDate || "—"}</div>
+                        <div>✉️ {d.email || "—"}</div>
+                        <div>📱 {d.phone || "—"}</div>
+                      </div>
                     </td>
                     <td style={tdStyle}>{d.regYear||"—"}</td>
                     <td style={tdStyle}>{d.regDate||"—"}</td>
@@ -4130,37 +4155,192 @@ function TeacherDirectory({ users, setUsers, lang, setToast }) {
 }
 
 // ─── People Directory (wraps Student + Teacher directories) ──────────────────
-function PeopleDirectory({ users, setUsers, lang, setToast, enrollments, attendance, courses }) {
+// ─── Change Notifications (admin review queue for student self-submitted edits) ──
+function ChangeNotifications({ users, setUsers, lang, setToast, profileChanges, setProfileChanges }) {
   const t = T[lang];
-  const [subTab, setSubTab] = useState("students"); // students | teachers
+  const [filter, setFilter] = useState("pending"); // pending | all
+  const [dirEntries, setDirEntries] = useState([]);
+  const [dirLoaded, setDirLoaded] = useState(false);
+
+  useEffect(()=>{
+    (async()=>{
+      try{ const r=await window.storage.get("cp3_student_dir"); if(r?.value) setDirEntries(JSON.parse(r.value)); }catch{}
+      setDirLoaded(true);
+    })();
+  },[]);
+  const saveDirEntries = async (next) => {
+    setDirEntries(next);
+    try{ await window.storage.set("cp3_student_dir",JSON.stringify(next)); }catch{}
+  };
+
+  const getStudent = id => users.find(u=>u.id===id);
+
+  const list = (profileChanges||[])
+    .filter(c => filter==="all" || c.status==="pending")
+    .sort((a,b)=>b.requestedAt.localeCompare(a.requestedAt));
+
+  const FIELD_LABEL = {
+    name: t.settingsName, birthDate: t.settingsBirthDate, avatar: t.settingsAvatar,
+    email: t.settingsEmail, phone: t.settingsPhone,
+  };
+
+  const STATUS_META = {
+    pending:   {label:t.changeNotifStatusPending,   color:"#E65100", bg:"#FFF3E0"},
+    merged:    {label:t.changeNotifStatusMerged,    color:"#2E7D32", bg:"#E8F5E9"},
+    dismissed: {label:t.changeNotifStatusDismissed, color:"#9E9E9E", bg:"#F5F5F5"},
+  };
+
+  const merge = (change) => {
+    // Name → users array (this is what's referenced everywhere: courses, schedule, teacher's roster, etc.)
+    // AND the student directory's nameEn field, so 師生資料庫 stays in sync too.
+    if (change.changes.name) {
+      setUsers(prev => prev.map(u => u.id===change.studentId ? {...u, name:change.changes.name} : u));
+
+      const existingIdx = dirEntries.findIndex(d=>d.linkedUserId===change.studentId);
+      const next = existingIdx >= 0
+        ? dirEntries.map((d,i)=> i===existingIdx ? {...d, nameEn:change.changes.name} : d)
+        : [...dirEntries, {id:genId(), nameEn:change.changes.name, linkedUserId:change.studentId}];
+      saveDirEntries(next);
+    }
+    // Any other fields (legacy records only — these now apply instantly and never
+    // reach this queue, but handled here defensively for backward compatibility)
+    const otherFields = {...change.changes};
+    delete otherFields.name;
+    if (Object.keys(otherFields).length > 0) {
+      const existingIdx = dirEntries.findIndex(d=>d.linkedUserId===change.studentId);
+      let next;
+      if (existingIdx >= 0) {
+        next = dirEntries.map((d,i)=> i===existingIdx ? {...d, ...otherFields} : d);
+      } else {
+        const student = getStudent(change.studentId);
+        next = [...dirEntries, {id:genId(), nameEn:student?.name||"", linkedUserId:change.studentId, ...otherFields}];
+      }
+      saveDirEntries(next);
+    }
+    setProfileChanges(prev => prev.map(c => c.id===change.id ? {...c, status:"merged", mergedAt:new Date().toISOString(), mergedBy:"admin"} : c));
+    setToast(t.changeNotifMerged);
+  };
+
+  const dismiss = (change) => {
+    setProfileChanges(prev => prev.map(c => c.id===change.id ? {...c, status:"dismissed", mergedAt:new Date().toISOString(), mergedBy:"admin"} : c));
+    setToast(t.changeNotifDismissed);
+  };
+
+  return (
+    <div>
+      <h3 style={{fontSize:16,fontWeight:600,color:"#172F39",margin:"0 0 4px"}}>{t.changeNotifTitle}</h3>
+      <p style={{fontSize:12,color:"#9E9E9E",margin:"0 0 14px"}}>{t.changeNotifDesc}</p>
+
+      <div style={{display:"flex",gap:5,marginBottom:16}}>
+        {[["pending",lang==="zh"?"待審核":"Pending"],["all",lang==="zh"?"全部":"All"]].map(([k,l])=>(
+          <button key={k} onClick={()=>setFilter(k)} style={{padding:"5px 14px",borderRadius:6,fontSize:12,cursor:"pointer",border:filter===k?"none":"0.5px solid #CFD8DC",background:filter===k?"#1A6B8A":"transparent",color:filter===k?"#fff":"#546E7A"}}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {list.length===0 && (
+        <div style={{textAlign:"center",padding:"2.5rem 0",color:"#9E9E9E"}}>
+          <div style={{fontSize:28,marginBottom:8}}>✅</div>
+          <div style={{fontSize:13}}>{t.changeNotifNone}</div>
+        </div>
+      )}
+
+      {list.map(c => {
+        const student = getStudent(c.studentId);
+        const meta = STATUS_META[c.status];
+        return (
+          <div key={c.id} style={{background:"#FFFFFF",border:`1px solid ${meta.color}33`,borderRadius:10,padding:"14px 16px",marginBottom:10}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,marginBottom:10,flexWrap:"wrap"}}>
+              <div>
+                <div style={{fontWeight:600,fontSize:13,color:"#172F39"}}>{t.changeNotifFrom} {student?.name||"—"}</div>
+                <div style={{fontSize:11,color:"#9E9E9E",marginTop:2}}>{t.changeNotifAt}: {c.requestedAt.slice(0,16).replace("T"," ")}</div>
+              </div>
+              <span style={{fontSize:11,background:meta.bg,color:meta.color,borderRadius:5,padding:"3px 10px",fontWeight:600,flexShrink:0}}>● {meta.label}</span>
+            </div>
+
+            <div style={{background:"#F5F5F5",borderRadius:8,overflow:"hidden",marginBottom:c.status==="pending"?12:0}}>
+              <table style={{width:"100%",borderCollapse:"collapse"}}>
+                <thead>
+                  <tr style={{background:"#EEEEEE"}}>
+                    <th style={{fontSize:10,fontWeight:600,color:"#546E7A",padding:"6px 10px",textAlign:"left"}}>{t.changeNotifField}</th>
+                    <th style={{fontSize:10,fontWeight:600,color:"#546E7A",padding:"6px 10px",textAlign:"left"}}>{t.changeNotifOld}</th>
+                    <th style={{fontSize:10,fontWeight:600,color:"#546E7A",padding:"6px 10px",textAlign:"left"}}>{t.changeNotifNew}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.keys(c.changes).map(field=>{
+                    const isAvatar = field==="avatar";
+                    const oldVal = c.previousValues[field];
+                    const newVal = c.changes[field];
+                    return (
+                      <tr key={field} style={{borderTop:"0.5px solid #E0E0E0"}}>
+                        <td style={{fontSize:12,color:"#172F39",padding:"6px 10px",fontWeight:500}}>{FIELD_LABEL[field]||field}</td>
+                        <td style={{fontSize:12,color:"#9E9E9E",padding:"6px 10px"}}>
+                          {isAvatar ? (getAvatarById(oldVal)?.icon || "—") : (oldVal || "—")}
+                        </td>
+                        <td style={{fontSize:12,color:"#2E7D32",padding:"6px 10px",fontWeight:500}}>
+                          {isAvatar ? (getAvatarById(newVal)?.icon || "—") : (newVal || "—")}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {c.status==="pending" && (
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={()=>merge(c)} style={{flex:1,background:"#2E7D32",border:"none",borderRadius:7,color:"#fff",padding:"8px",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                  ✓ {t.changeNotifMerge}
+                </button>
+                <button onClick={()=>dismiss(c)} style={{flex:1,background:"transparent",border:"1px solid #9E9E9E",borderRadius:7,color:"#546E7A",padding:"8px",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                  ✕ {t.changeNotifDismiss}
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function PeopleDirectory({ users, setUsers, lang, setToast, enrollments, attendance, courses, profileChanges, setProfileChanges }) {
+  const t = T[lang];
+  const [subTab, setSubTab] = useState("students"); // students | teachers | changes
+  const pendingChangeCount = (profileChanges||[]).filter(c=>c.status==="pending").length;
   return (
     <div>
       <h3 style={{fontSize:16,fontWeight:600,color:"#172F39",margin:"0 0 12px"}}>{t.peopleDir}</h3>
-      <div style={{display:"flex",gap:5,marginBottom:18}}>
-        {[["students",t.peopleDirStudents],["teachers",t.peopleDirTeachers]].map(([k,l])=>(
-          <button key={k} onClick={()=>setSubTab(k)} style={{padding:"7px 16px",borderRadius:7,fontSize:13,cursor:"pointer",border:subTab===k?"none":"0.5px solid #CFD8DC",background:subTab===k?"#1A6B8A":"transparent",color:subTab===k?"#fff":"#546E7A",fontWeight:subTab===k?600:400}}>
+      <div style={{display:"flex",gap:5,marginBottom:18,flexWrap:"wrap"}}>
+        {[["students",t.peopleDirStudents],["teachers",t.peopleDirTeachers],["changes",t.peopleDirChanges]].map(([k,l])=>(
+          <button key={k} onClick={()=>setSubTab(k)} style={{position:"relative",padding:"7px 16px",borderRadius:7,fontSize:13,cursor:"pointer",border:subTab===k?"none":"0.5px solid #CFD8DC",background:subTab===k?"#1A6B8A":"transparent",color:subTab===k?"#fff":"#546E7A",fontWeight:subTab===k?600:400}}>
             {l}
+            {k==="changes" && pendingChangeCount>0 && <span style={{position:"absolute",top:-6,right:-6,background:"#D32F2F",color:"#fff",borderRadius:"50%",width:18,height:18,fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}>{pendingChangeCount}</span>}
           </button>
         ))}
       </div>
       {subTab==="students" && <StudentDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses}/>}
       {subTab==="teachers" && <TeacherDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast}/>}
+      {subTab==="changes" && <ChangeNotifications users={users} setUsers={setUsers} lang={lang} setToast={setToast} profileChanges={profileChanges} setProfileChanges={setProfileChanges}/>}
     </div>
   );
 }
 
 // ─── Admin panel ──────────────────────────────────────────────────────────────
-function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, lang, setToast, introText, setIntroText, feedback, setFeedback, teacherAvailability, setTeacherAvailability, availabilityOverrides, setAvailabilityOverrides }) {
+function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, lang, setToast, introText, setIntroText, feedback, setFeedback, teacherAvailability, setTeacherAvailability, availabilityOverrides, setAvailabilityOverrides, profileChanges, setProfileChanges }) {
   const t = T[lang];
   const [tab, setTab] = useState("courses");
   const pendingFbCount = (feedback||[]).filter(f=>f.status==="pending").length;
+  const pendingChangeCount = (profileChanges||[]).filter(c=>c.status==="pending").length;
   const tabs = [
     {key:"courses", label:t.courses},
     {key:"enroll",  label:t.enrollments},
     {key:"leave",   label:t.leaveReview},
     {key:"feedback",label:t.feedbackCenterTitle, badge:pendingFbCount},
     {key:"availability", label:t.availability},
-    {key:"peopledir", label:t.peopleDir},
+    {key:"peopledir", label:t.peopleDir, badge:pendingChangeCount},
     {key:"users",   label:t.manageUsers},
     {key:"tstats",  label:t.teacherStats},
     {key:"sstats",  label:t.studentStats},
@@ -4182,7 +4362,7 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
       {tab==="leave"  &&<LeaveReview users={users} courses={courses} absences={absences} setAbsences={setAbsences} attendance={attendance} setAttendance={setAttendance} enrollments={enrollments} lang={lang}/>}
       {tab==="feedback"&&<FeedbackCenter users={users} courses={courses} enrollments={enrollments} attendance={attendance} feedback={feedback||[]} setFeedback={setFeedback} lang={lang} setToast={setToast}/>}
       {tab==="availability"&&<AdminTeacherAvailability users={users} courses={courses} availability={teacherAvailability||[]} setAvailability={setTeacherAvailability} overrides={availabilityOverrides||[]} setOverrides={setAvailabilityOverrides} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang} setToast={setToast}/>}
-      {tab==="peopledir" &&<PeopleDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses}/>}
+      {tab==="peopledir" &&<PeopleDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses} profileChanges={profileChanges} setProfileChanges={setProfileChanges}/>}
       {tab==="users"  &&<UserManager users={users} setUsers={setUsers} lang={lang} setToast={setToast}/>}
       {tab==="tstats" &&<TeacherStats users={users} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang}/>}
       {tab==="sstats" &&<StudentStats users={users} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang}/>}
@@ -5894,6 +6074,177 @@ function AdminTeacherAvailability({ users, courses, availability, setAvailabilit
   );
 }
 
+// ─── Avatar options (generic icon set — no image upload needed) ──────────────
+const AVATAR_OPTIONS = [
+  { id:"fox",     icon:"🦊", bg:"#FFE0B2" },
+  { id:"bear",    icon:"🐻", bg:"#D7CCC8" },
+  { id:"panda",   icon:"🐼", bg:"#ECEFF1" },
+  { id:"lion",    icon:"🦁", bg:"#FFF3C4" },
+  { id:"koala",   icon:"🐨", bg:"#CFD8DC" },
+  { id:"tiger",   icon:"🐯", bg:"#FFCCBC" },
+  { id:"rabbit",  icon:"🐰", bg:"#F8BBD0" },
+  { id:"owl",     icon:"🦉", bg:"#D1C4E9" },
+  { id:"frog",    icon:"🐸", bg:"#C8E6C9" },
+  { id:"penguin", icon:"🐧", bg:"#B3E5FC" },
+  { id:"unicorn", icon:"🦄", bg:"#F3E5F5" },
+  { id:"turtle",  icon:"🐢", bg:"#DCEDC8" },
+];
+function getAvatarById(id) { return AVATAR_OPTIONS.find(a=>a.id===id) || null; }
+
+// ─── Student Settings Panel ───────────────────────────────────────────────────
+// Lets a student self-edit basic profile info (staged as a pending change for
+// admin to review/merge) and change their own password (applies immediately).
+function StudentSettingsPanel({ currentUser, users, setUsers, dirEntries, saveDirEntries, dirLoaded, profileChanges, setProfileChanges, lang, setToast }) {
+  const t = T[lang];
+  const myDirEntry = dirEntries.find(d=>d.linkedUserId===currentUser.id);
+  const myPending = (profileChanges||[]).filter(c=>c.studentId===currentUser.id && c.status==="pending").sort((a,b)=>b.requestedAt.localeCompare(a.requestedAt))[0];
+
+  const [name, setName] = useState(currentUser.name || "");
+  const [birthDate, setBirthDate] = useState(myDirEntry?.birthDate || "");
+  const [avatar, setAvatar] = useState(myDirEntry?.avatar || "");
+  const [email, setEmail] = useState(myDirEntry?.email || "");
+  const [phone, setPhone] = useState(myDirEntry?.phone || "");
+
+  const [curPwd, setCurPwd] = useState("");
+  const [newPwd, setNewPwd] = useState("");
+  const [confirmPwd, setConfirmPwd] = useState("");
+
+  if (!dirLoaded) {
+    return (
+      <div style={{padding:"1.25rem",textAlign:"center",color:"#9E9E9E"}}>
+        <div style={{fontSize:32,marginBottom:8}}>⏳</div>
+        <div style={{fontSize:13}}>{lang==="zh"?"載入中…":"Loading…"}</div>
+      </div>
+    );
+  }
+
+  const saveInfo = () => {
+    // Name is the only field that needs admin review before it takes effect,
+    // since it's what shows up everywhere else in the system (schedule,
+    // teacher's roster, etc). Everything else applies immediately.
+    const nameChanged = name.trim() && name.trim() !== currentUser.name;
+
+    const immediateFields = {};
+    if (birthDate !== (myDirEntry?.birthDate||"")) immediateFields.birthDate = birthDate;
+    if (avatar !== (myDirEntry?.avatar||"")) immediateFields.avatar = avatar;
+    if (email !== (myDirEntry?.email||"")) immediateFields.email = email;
+    if (phone !== (myDirEntry?.phone||"")) immediateFields.phone = phone;
+    const hasImmediateChanges = Object.keys(immediateFields).length > 0;
+
+    if (!nameChanged && !hasImmediateChanges) { setToast(t.settingsNoChange); return; }
+
+    // Apply birth date / avatar / email / phone right away — no review needed
+    if (hasImmediateChanges) {
+      const existingIdx = dirEntries.findIndex(d=>d.linkedUserId===currentUser.id);
+      let next;
+      if (existingIdx >= 0) {
+        next = dirEntries.map((d,i)=> i===existingIdx ? {...d, ...immediateFields} : d);
+      } else {
+        next = [...dirEntries, {id:genId(), nameEn:currentUser.name, linkedUserId:currentUser.id, ...immediateFields}];
+      }
+      saveDirEntries(next);
+    }
+
+    // Name still requires admin review, since it's referenced everywhere else
+    if (nameChanged) {
+      const rec = { id:genId(), studentId:currentUser.id, requestedAt:new Date().toISOString(), changes:{name:name.trim()}, previousValues:{name:currentUser.name}, status:"pending" };
+      setProfileChanges(prev => [...prev, rec]);
+    }
+
+    setToast(nameChanged ? t.settingsSubmitted : t.settingsSavedInstant);
+  };
+
+  const updatePassword = () => {
+    if (curPwd !== currentUser.password) { setToast(t.settingsCurrentPwdWrong); return; }
+    if (!newPwd || newPwd !== confirmPwd) { setToast(t.settingsPwdMismatch); return; }
+    setUsers(prev => prev.map(u => u.id===currentUser.id ? {...u, password:newPwd} : u));
+    setCurPwd(""); setNewPwd(""); setConfirmPwd("");
+    setToast(t.settingsPwdUpdated);
+  };
+
+  const iStyle = {width:"100%",boxSizing:"border-box",padding:"9px 11px",borderRadius:7,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13};
+  const lStyle = {fontSize:12,color:"#546E7A",display:"block",marginBottom:5,marginTop:12};
+  const currentAvatar = getAvatarById(myDirEntry?.avatar);
+
+  return (
+    <div style={{padding:"1.25rem"}}>
+      <div style={{marginBottom:14}}>
+        <h3 style={{fontSize:15,fontWeight:600,color:"#172F39",margin:"0 0 3px"}}>{t.settingsTab}</h3>
+        <p style={{fontSize:12,color:"#9E9E9E",margin:0}}>{t.settingsDesc}</p>
+      </div>
+
+      {/* Current official info — always shown at the top, "無" for anything unset */}
+      <div style={{display:"flex",alignItems:"center",gap:14,background:"#EEF6FB",borderRadius:12,padding:"14px 16px",marginBottom:16,border:"0.5px solid #CFE3EF"}}>
+        <div style={{width:52,height:52,borderRadius:"50%",background:currentAvatar?.bg||"#CFD8DC",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0}}>
+          {currentAvatar?.icon || currentUser.name.slice(0,2).toUpperCase()}
+        </div>
+        <div style={{fontSize:12,color:"#546E7A",lineHeight:1.9}}>
+          <div><strong style={{color:"#172F39"}}>{t.settingsName}</strong>：{currentUser.name || t.settingsNoneValue}</div>
+          <div><strong style={{color:"#172F39"}}>{t.settingsBirthDate}</strong>：{myDirEntry?.birthDate || t.settingsNoneValue}</div>
+          <div><strong style={{color:"#172F39"}}>{t.settingsEmail}</strong>：{myDirEntry?.email || t.settingsNoneValue}</div>
+          <div><strong style={{color:"#172F39"}}>{t.settingsPhone}</strong>：{myDirEntry?.phone || t.settingsNoneValue}</div>
+        </div>
+      </div>
+
+      {myPending && (
+        <div style={{background:"#FFF3E0",border:"0.5px solid #FFE0B2",borderRadius:8,padding:"10px 13px",marginBottom:16,fontSize:12,color:"#E65100"}}>
+          ⏳ {t.settingsPendingBanner}{myPending.changes?.name?`：「${myPending.changes.name}」`:""}
+        </div>
+      )}
+
+      {/* Basic info form */}
+      <div style={{background:"#F5F5F5",borderRadius:12,border:"0.5px solid #E0E0E0",padding:"1rem 1.1rem",marginBottom:16}}>
+        <div style={{fontWeight:600,fontSize:13,color:"#172F39",marginBottom:2}}>{t.settingsBasicInfo}</div>
+        <div style={{fontSize:11,color:"#9E9E9E"}}>{t.settingsOptionalNote}</div>
+        <div style={{fontSize:11,color:"#1A6B8A",marginTop:4}}>ℹ️ {t.settingsNameReviewNote}</div>
+
+        <label style={lStyle}>{t.settingsName}</label>
+        <input style={iStyle} value={name} onChange={e=>setName(e.target.value)} placeholder={currentUser.name}/>
+
+        <label style={lStyle}>{t.settingsBirthDate}</label>
+        <input type="date" style={iStyle} value={birthDate} onChange={e=>setBirthDate(e.target.value)}/>
+
+        <label style={lStyle}>{t.settingsAvatar}</label>
+        <div style={{display:"flex",flexWrap:"wrap",gap:8,marginTop:4}}>
+          {AVATAR_OPTIONS.map(a=>(
+            <button key={a.id} type="button" onClick={()=>setAvatar(a.id)} style={{width:42,height:42,borderRadius:"50%",background:a.bg,border:avatar===a.id?"2.5px solid #1A6B8A":"2px solid transparent",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              {a.icon}
+            </button>
+          ))}
+        </div>
+
+        <label style={lStyle}>{t.settingsEmail}</label>
+        <input type="email" style={iStyle} value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com"/>
+
+        <label style={lStyle}>{t.settingsPhone}</label>
+        <input style={iStyle} value={phone} onChange={e=>setPhone(e.target.value)} placeholder="09xx-xxx-xxx"/>
+
+        <button onClick={saveInfo} style={{marginTop:16,width:"100%",padding:"10px",borderRadius:8,background:"#1A6B8A",border:"none",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+          {t.settingsSaveInfo}
+        </button>
+      </div>
+
+      {/* Change password */}
+      <div style={{background:"#F5F5F5",borderRadius:12,border:"0.5px solid #E0E0E0",padding:"1rem 1.1rem"}}>
+        <div style={{fontWeight:600,fontSize:13,color:"#172F39"}}>{t.settingsChangePwd}</div>
+
+        <label style={lStyle}>{t.settingsCurrentPwd}</label>
+        <input type="password" style={iStyle} value={curPwd} onChange={e=>setCurPwd(e.target.value)}/>
+
+        <label style={lStyle}>{t.settingsNewPwd}</label>
+        <input type="password" style={iStyle} value={newPwd} onChange={e=>setNewPwd(e.target.value)}/>
+
+        <label style={lStyle}>{t.settingsConfirmPwd}</label>
+        <input type="password" style={iStyle} value={confirmPwd} onChange={e=>setConfirmPwd(e.target.value)}/>
+
+        <button onClick={updatePassword} disabled={!curPwd||!newPwd||!confirmPwd} style={{marginTop:16,width:"100%",padding:"10px",borderRadius:8,background:(curPwd&&newPwd&&confirmPwd)?"#2E7D32":"#E0E0E0",border:"none",color:(curPwd&&newPwd&&confirmPwd)?"#fff":"#9E9E9E",fontSize:13,fontWeight:600,cursor:(curPwd&&newPwd&&confirmPwd)?"pointer":"not-allowed"}}>
+          {t.settingsUpdatePwdBtn}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Student Teacher Introduction Panel ───────────────────────────────────────
 // Shows the student's own teacher(s) — basic profile with years of experience
 // and teaching philosophy/strengths, filled in (and editable) by admin.
@@ -5937,19 +6288,15 @@ function StudentTeacherIntroPanel({ currentUser, users, courses, teacherDirEntri
   );
 }
 
-function StudentTeacherLayout({ currentUser, users, courses, lang, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, setToast, feedback, setFeedback, teacherAvailability, setTeacherAvailability, availabilityOverrides, setAvailabilityOverrides }) {
+function StudentTeacherLayout({ currentUser, users, setUsers, courses, lang, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, setToast, feedback, setFeedback, teacherAvailability, setTeacherAvailability, availabilityOverrides, setAvailabilityOverrides, profileChanges, setProfileChanges, dirEntries, saveDirEntries, dirLoaded }) {
   const t = T[lang];
   const isStudent = currentUser.role==="student";
   const isTeacher = currentUser.role==="teacher";
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [dirEntries, setDirEntries] = useState([]);
-  const [dirLoaded, setDirLoaded] = useState(false);
   const [teacherDirEntries, setTeacherDirEntries] = useState([]);
   useEffect(()=>{
     (async()=>{
-      try{ const r=await window.storage.get("cp3_student_dir"); if(r?.value) setDirEntries(JSON.parse(r.value)); }catch{}
       try{ const r2=await window.storage.get("cp3_teacher_dir"); if(r2?.value) setTeacherDirEntries(JSON.parse(r2.value)); }catch{}
-      setDirLoaded(true);
     })();
   },[]);
   // The admin-confirmed official session count for the logged-in student (if any) —
@@ -5964,6 +6311,7 @@ function StudentTeacherLayout({ currentUser, users, courses, lang, absences, set
         { key:"progress",      icon:"🏆", zh:"獎牌進度", en:"My Progress" },
         { key:"history",       icon:"📋", zh:"課程紀錄", en:"Class History"},
         { key:"teacherIntro",  icon:"🎓", zh:"老師介紹", en:"My Teachers" },
+        { key:"settings",      icon:"⚙️", zh:"基本資訊與設定", en:"Basic Info & Settings" },
         { key:"schedule_side", icon:"📅", zh:"課表",     en:"Schedule"   },
       ]
     : [
@@ -5975,15 +6323,15 @@ function StudentTeacherLayout({ currentUser, users, courses, lang, absences, set
   const sideHasSidebar = isStudent || isTeacher;
 
   return (
-    <div style={{display:"flex",gap:0,alignItems:"flex-start",minHeight:"60vh"}}>
+    <div className="es-sidebar-layout" style={{display:"flex",gap:0,alignItems:"flex-start",minHeight:"60vh"}}>
       {/* ── Sidebar ── */}
       {sideHasSidebar && (
-        <div style={{flexShrink:0,transition:"width 0.2s",width:sidebarOpen?264:44,overflow:"hidden",position:"relative"}}>
-          <button onClick={()=>setSidebarOpen(o=>!o)} title={sidebarOpen?"收起":"展開"} style={{position:"absolute",top:8,right:4,zIndex:10,background:"#FFFFFF",border:"0.5px solid #E0E0E0",borderRadius:6,width:28,height:28,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,color:"#1A6B8A",boxShadow:"0 1px 4px rgba(0,0,0,0.08)"}}>
+        <div className="es-sidebar-outer" style={{flexShrink:0,transition:"width 0.2s",width:sidebarOpen?264:44,overflow:"hidden",position:"relative"}}>
+          <button className="es-sidebar-toggle" onClick={()=>setSidebarOpen(o=>!o)} title={sidebarOpen?"收起":"展開"} style={{position:"absolute",top:8,right:4,zIndex:10,background:"#FFFFFF",border:"0.5px solid #E0E0E0",borderRadius:6,width:28,height:28,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,color:"#1A6B8A",boxShadow:"0 1px 4px rgba(0,0,0,0.08)"}}>
             {sidebarOpen?"◀":"▶"}
           </button>
 
-          <div style={{background:"#FFFFFF",border:"0.5px solid #E0E0E0",borderRadius:12,overflow:"hidden",minHeight:400,boxShadow:"0 2px 12px rgba(23,47,57,0.06)",width:264}}>
+          <div className="es-sidebar-box" style={{background:"#FFFFFF",border:"0.5px solid #E0E0E0",borderRadius:12,overflow:"hidden",minHeight:400,boxShadow:"0 2px 12px rgba(23,47,57,0.06)",width:264}}>
             {/* Header */}
             <div style={{background:"#172F39",padding:"13px 14px",display:"flex",alignItems:"center",gap:10}}>
               <div style={{width:30,height:30,borderRadius:"50%",background:"#1A6B8A",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:600,color:"#fff",flexShrink:0}}>{currentUser.name.slice(0,2).toUpperCase()}</div>
@@ -5994,11 +6342,11 @@ function StudentTeacherLayout({ currentUser, users, courses, lang, absences, set
             </div>
 
             {/* Menu */}
-            <div style={{padding:"6px 0"}}>
+            <div className="es-sidebar-menu" style={{padding:"6px 0"}}>
               {menuItems.map(item=>(
-                <button key={item.key} onClick={()=>setSideTab(item.key)} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:sideTab===item.key?"#EEF6FB":"transparent",border:"none",borderLeft:sideTab===item.key?"3px solid #1A6B8A":"3px solid transparent",color:sideTab===item.key?"#1A6B8A":"#546E7A",fontSize:13,cursor:"pointer",textAlign:"left"}}>
+                <button key={item.key} className="es-sidebar-menu-item" onClick={()=>setSideTab(item.key)} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:sideTab===item.key?"#EEF6FB":"transparent",border:"none",borderLeft:sideTab===item.key?"3px solid #1A6B8A":"3px solid transparent",color:sideTab===item.key?"#1A6B8A":"#546E7A",fontSize:13,cursor:"pointer",textAlign:"left"}}>
                   <span style={{fontSize:15,flexShrink:0}}>{item.icon}</span>
-                  <span style={{fontWeight:sideTab===item.key?500:400}}>{lang==="zh"?item.zh:item.en}</span>
+                  <span style={{fontWeight:sideTab===item.key?500:400,whiteSpace:"nowrap"}}>{lang==="zh"?item.zh:item.en}</span>
                 </button>
               ))}
             </div>
@@ -6062,7 +6410,7 @@ function StudentTeacherLayout({ currentUser, users, courses, lang, absences, set
       )}
 
       {/* ── Main content ── */}
-      <div style={{flex:1,minWidth:0,marginLeft:sideHasSidebar?12:0}}>
+      <div className="es-sidebar-main" style={{flex:1,minWidth:0,marginLeft:sideHasSidebar?12:0,width:"100%"}}>
         <div style={{background:"#FFFFFF",borderRadius:14,border:"0.5px solid #E0E0E0",boxShadow:"0 2px 12px rgba(23,47,57,0.06)",overflow:"hidden"}}>
           {isStudent && sideTab==="progress"
             ? <StudentProgressPanel currentUser={currentUser} enrollments={enrollments} attendance={attendance} courses={courses} lang={lang} dirLoaded={dirLoaded} confirmedOverride={myConfirmedOverride}/>
@@ -6070,6 +6418,8 @@ function StudentTeacherLayout({ currentUser, users, courses, lang, absences, set
               ? <StudentClassHistory currentUser={currentUser} enrollments={enrollments} attendance={attendance} courses={courses} users={users} lang={lang} dirLoaded={dirLoaded} feedback={feedback}/>
             : isStudent && sideTab==="teacherIntro"
               ? <StudentTeacherIntroPanel currentUser={currentUser} users={users} courses={courses} teacherDirEntries={teacherDirEntries} dirLoaded={dirLoaded} lang={lang}/>
+            : isStudent && sideTab==="settings"
+              ? <StudentSettingsPanel currentUser={currentUser} users={users} setUsers={setUsers} dirEntries={dirEntries} saveDirEntries={saveDirEntries} dirLoaded={dirLoaded} profileChanges={profileChanges} setProfileChanges={setProfileChanges} lang={lang} setToast={setToast}/>
             : isTeacher && sideTab==="students"
               ? <TeacherStudentsPanel currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} attendance={attendance} lang={lang} dirEntries={dirEntries}/>
             : isTeacher && sideTab==="availability"
@@ -6081,6 +6431,54 @@ function StudentTeacherLayout({ currentUser, users, courses, lang, absences, set
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── Responsive styles ────────────────────────────────────────────────────────
+// This entire app is built with inline styles (no external stylesheet), which
+// means nothing adapts to viewport width by default — on phones/tablets the
+// fixed-width sidebar (264px) alone can exceed the screen width, forcing the
+// whole page to scroll horizontally and squeezing the schedule down to an
+// unusable sliver. This injects real CSS media queries (with !important, the
+// only way to override inline styles from an external rule) targeting a small
+// set of className hooks added to the key layout elements.
+function ResponsiveStyles() {
+  return (
+    <style>{`
+      html, body { overflow-x: hidden; max-width: 100%; }
+      .es-app-root { overflow-x: hidden; max-width: 100vw; }
+
+      @media (max-width: 860px) {
+        .es-main { padding: 0.75rem !important; }
+        .es-content-card { padding: 1rem !important; }
+      }
+
+      @media (max-width: 768px) {
+        .es-header { padding: 0 10px !important; }
+        .es-header-right { gap: 6px !important; }
+        .es-lang-toggle { padding: 4px 8px !important; font-size: 11px !important; }
+        .es-logout-btn { padding: 4px 8px !important; font-size: 11px !important; }
+
+        /* Stack the sidebar above the main content instead of squeezing beside it */
+        .es-sidebar-layout { flex-direction: column !important; }
+        .es-sidebar-outer { width: 100% !important; overflow: visible !important; }
+        .es-sidebar-box { width: 100% !important; }
+        .es-sidebar-toggle { display: none !important; }
+        .es-sidebar-main { margin-left: 0 !important; margin-top: 10px !important; }
+
+        /* Turn the vertical menu list into a horizontally scrollable tab strip */
+        .es-sidebar-menu { display: flex !important; overflow-x: auto !important; padding: 6px !important; gap: 4px !important; -webkit-overflow-scrolling: touch; }
+        .es-sidebar-menu-item { width: auto !important; flex-shrink: 0 !important; border-left: none !important; border-radius: 8px !important; padding: 8px 12px !important; }
+      }
+
+      @media (max-width: 480px) {
+        .es-main { padding: 0.5rem !important; }
+        .es-content-card { padding: 0.75rem !important; }
+        .es-header { padding: 0 8px !important; }
+        .es-header-title { display: none !important; }
+        .es-header-user-info { display: none !important; }
+      }
+    `}</style>
   );
 }
 
@@ -6098,6 +6496,12 @@ export default function App() {
   const [feedback,setFeedback,fbLoaded]=useStorage("cp3_feedback",[]);
   const [teacherAvailability,setTeacherAvailability,taLoaded]=useStorage("cp3_teacher_availability",[]);
   const [availabilityOverrides,setAvailabilityOverrides,aoLoaded]=useStorage("cp3_availability_overrides",[]);
+  const [profileChanges,setProfileChanges,pcLoaded]=useStorage("cp3_profile_changes",[]);
+  // Single canonical source for student directory data (birth date, avatar,
+  // email, phone, etc). Passed down to StudentTeacherLayout so the Settings
+  // panel writes here directly — the header reads the exact same state, so
+  // avatar changes are reflected immediately with no separate sync step needed.
+  const [studentDirEntries,setStudentDirEntries,sdLoaded]=useStorage("cp3_student_dir",[]);
   const [introText,setIntroText,introLoaded]=useStorage("cp3_intro_text","");
   const [toast,setToastMsg]=useState("");
   const t=T[lang];
@@ -6112,7 +6516,7 @@ export default function App() {
     }
   },[users]);
 
-  if(!uLoaded||!cLoaded||!aLoaded||!mLoaded||!eLoaded||!attLoaded||!fbLoaded||!taLoaded||!aoLoaded) return (
+  if(!uLoaded||!cLoaded||!aLoaded||!mLoaded||!eLoaded||!attLoaded||!fbLoaded||!taLoaded||!aoLoaded||!pcLoaded) return (
     <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#FAFAFA"}}>
       <span style={{color:"#1A6B8A",fontSize:16}}>Loading…</span>
     </div>
@@ -6123,9 +6527,12 @@ export default function App() {
   const initials=currentUser.name.slice(0,2).toUpperCase();
   const roleLabel=t[`role_${currentUser.role}`];
   const isAdmin=currentUser.role==="admin";
+  const myDirEntryForHeader = (studentDirEntries||[]).find(d=>d.linkedUserId===currentUser.id);
+  const headerAvatar = getAvatarById(myDirEntryForHeader?.avatar);
 
   return (
-    <div style={{minHeight:"100vh",background:"#FAFAFA",fontFamily:"system-ui, -apple-system, sans-serif"}}>
+    <div className="es-app-root" style={{minHeight:"100vh",background:"#FAFAFA",fontFamily:"system-ui, -apple-system, sans-serif",overflowX:"hidden"}}>
+      <ResponsiveStyles/>
       <Toast msg={toast}/>
       {syncFailures.size>0 && (
         <div style={{position:"fixed",top:0,left:0,right:0,zIndex:9999,background:"#D32F2F",color:"#fff",fontSize:12,padding:"6px 14px",textAlign:"center",fontWeight:500}}>
@@ -6134,21 +6541,21 @@ export default function App() {
             : `Some data failed to save (${syncFailures.size}) — check your connection and retry, or changes may be lost`}
         </div>
       )}
-      <header style={{background:"#172F39",borderBottom:"1px solid rgba(26,107,138,0.15)",padding:"0 1.25rem",display:"flex",alignItems:"center",justifyContent:"space-between",height:58,position:"sticky",top:0,zIndex:100}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <span style={{fontSize:20}}>📚</span>
-          <span style={{color:"#FFFFFF",fontWeight:500,fontSize:14}}>ES Platform</span>
+      <header className="es-header" style={{background:"#172F39",borderBottom:"1px solid rgba(26,107,138,0.15)",padding:"0 1.25rem",display:"flex",alignItems:"center",justifyContent:"space-between",height:58,position:"sticky",top:0,zIndex:100}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0,overflow:"hidden"}}>
+          <span style={{fontSize:20,flexShrink:0}}>📚</span>
+          <span className="es-header-title" style={{color:"#FFFFFF",fontWeight:500,fontSize:14,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>ES Platform</span>
         </div>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <button onClick={()=>setLang(lang==="zh"?"en":"zh")} style={{background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.25)",color:"#FFFFFF",borderRadius:6,padding:"4px 12px",cursor:"pointer",fontSize:12}}>{t.langToggle}</button>
-          <div style={{display:"flex",alignItems:"center",gap:7}}>
-            <div style={{width:30,height:30,borderRadius:"50%",background:"#1A6B8A",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:500,color:"#fff"}}>{initials}</div>
-            <div style={{lineHeight:1.2}}>
-              <div style={{color:"#FFFFFF",fontSize:13,fontWeight:500}}>{currentUser.name}</div>
+        <div className="es-header-right" style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+          <button className="es-lang-toggle" onClick={()=>setLang(lang==="zh"?"en":"zh")} style={{background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.25)",color:"#FFFFFF",borderRadius:6,padding:"4px 12px",cursor:"pointer",fontSize:12,flexShrink:0}}>{t.langToggle}</button>
+          <div style={{display:"flex",alignItems:"center",gap:7,minWidth:0}}>
+            <div style={{width:30,height:30,borderRadius:"50%",background:headerAvatar?headerAvatar.bg:"#1A6B8A",display:"flex",alignItems:"center",justifyContent:"center",fontSize:headerAvatar?15:11,fontWeight:500,color:headerAvatar?undefined:"#fff",flexShrink:0}}>{headerAvatar?headerAvatar.icon:initials}</div>
+            <div className="es-header-user-info" style={{lineHeight:1.2,minWidth:0}}>
+              <div style={{color:"#FFFFFF",fontSize:13,fontWeight:500,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:120}}>{currentUser.name}</div>
               <div style={{color:"rgba(255,255,255,0.65)",fontSize:11}}>{roleLabel}</div>
             </div>
           </div>
-          <button onClick={()=>setCurrentUser(null)} style={{background:"transparent",border:"1px solid rgba(255,255,255,0.15)",color:"rgba(255,255,255,0.7)",borderRadius:6,padding:"5px 10px",cursor:"pointer",fontSize:12}}>{t.logout}</button>
+          <button className="es-logout-btn" onClick={()=>setCurrentUser(null)} style={{background:"transparent",border:"1px solid rgba(255,255,255,0.15)",color:"rgba(255,255,255,0.7)",borderRadius:6,padding:"5px 10px",cursor:"pointer",fontSize:12,flexShrink:0}}>{t.logout}</button>
         </div>
       </header>
       {isAdmin&&(
@@ -6160,19 +6567,19 @@ export default function App() {
           ))}
         </div>
       )}
-      <main style={{maxWidth:isAdmin?820:980,margin:"0 auto",padding:"1.25rem"}}>
+      <main className="es-main" style={{maxWidth:isAdmin?820:980,margin:"0 auto",padding:"1.25rem",boxSizing:"border-box"}}>
         {/* ── Admin view ── */}
         {isAdmin && (
-          <div style={{background:"#FFFFFF",borderRadius:14,border:"0.5px solid #E0E0E0",boxShadow:"0 2px 12px rgba(23,47,57,0.06)",padding:"1.5rem"}}>
+          <div className="es-content-card" style={{background:"#FFFFFF",borderRadius:14,border:"0.5px solid #E0E0E0",boxShadow:"0 2px 12px rgba(23,47,57,0.06)",padding:"1.5rem"}}>
             {activeTab==="schedule"&&<ScheduleView currentUser={currentUser} users={users} courses={courses} lang={lang} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} setToast={setToast} feedback={feedback} setFeedback={setFeedback}/>}
-            {activeTab==="admin"&&<AdminPanel users={users} setUsers={setUsers} courses={courses} setCourses={setCourses} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} lang={lang} setToast={setToast} introText={introText} setIntroText={setIntroText} feedback={feedback} setFeedback={setFeedback} teacherAvailability={teacherAvailability} setTeacherAvailability={setTeacherAvailability} availabilityOverrides={availabilityOverrides} setAvailabilityOverrides={setAvailabilityOverrides}/>}
+            {activeTab==="admin"&&<AdminPanel users={users} setUsers={setUsers} courses={courses} setCourses={setCourses} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} lang={lang} setToast={setToast} introText={introText} setIntroText={setIntroText} feedback={feedback} setFeedback={setFeedback} teacherAvailability={teacherAvailability} setTeacherAvailability={setTeacherAvailability} availabilityOverrides={availabilityOverrides} setAvailabilityOverrides={setAvailabilityOverrides} profileChanges={profileChanges} setProfileChanges={setProfileChanges}/>}
           </div>
         )}
 
         {/* ── Student / Teacher sidebar layout ── */}
         {!isAdmin && (
           <StudentTeacherLayout
-            currentUser={currentUser} users={users} courses={courses} lang={lang}
+            currentUser={currentUser} users={users} setUsers={setUsers} courses={courses} lang={lang}
             absences={absences} setAbsences={setAbsences}
             materials={materials} setMaterials={setMaterials}
             enrollments={enrollments} setEnrollments={setEnrollments}
@@ -6180,6 +6587,8 @@ export default function App() {
             feedback={feedback} setFeedback={setFeedback}
             teacherAvailability={teacherAvailability} setTeacherAvailability={setTeacherAvailability}
             availabilityOverrides={availabilityOverrides} setAvailabilityOverrides={setAvailabilityOverrides}
+            profileChanges={profileChanges} setProfileChanges={setProfileChanges}
+            dirEntries={studentDirEntries} saveDirEntries={setStudentDirEntries} dirLoaded={sdLoaded}
             setToast={setToast}
           />
         )}
