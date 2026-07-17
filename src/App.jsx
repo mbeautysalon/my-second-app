@@ -6293,6 +6293,10 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, lang, abs
   const isStudent = currentUser.role==="student";
   const isTeacher = currentUser.role==="teacher";
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarHover, setSidebarHover] = useState(false);
+  // Sidebar starts open; after picking a menu item it auto-collapses to give the
+  // content more room, but hovering the mouse over it still reveals it temporarily.
+  const sidebarEffectiveOpen = sidebarOpen || sidebarHover;
   const [teacherDirEntries, setTeacherDirEntries] = useState([]);
   useEffect(()=>{
     (async()=>{
@@ -6326,9 +6330,9 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, lang, abs
     <div className="es-sidebar-layout" style={{display:"flex",gap:0,alignItems:"flex-start",minHeight:"60vh"}}>
       {/* ── Sidebar ── */}
       {sideHasSidebar && (
-        <div className="es-sidebar-outer" style={{flexShrink:0,transition:"width 0.2s",width:sidebarOpen?264:44,overflow:"hidden",position:"relative"}}>
+        <div className="es-sidebar-outer" onMouseEnter={()=>setSidebarHover(true)} onMouseLeave={()=>setSidebarHover(false)} style={{flexShrink:0,transition:"width 0.2s",width:sidebarEffectiveOpen?264:44,overflow:"hidden",position:"relative"}}>
           <button className="es-sidebar-toggle" onClick={()=>setSidebarOpen(o=>!o)} title={sidebarOpen?"收起":"展開"} style={{position:"absolute",top:8,right:4,zIndex:10,background:"#FFFFFF",border:"0.5px solid #E0E0E0",borderRadius:6,width:28,height:28,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,color:"#1A6B8A",boxShadow:"0 1px 4px rgba(0,0,0,0.08)"}}>
-            {sidebarOpen?"◀":"▶"}
+            {sidebarEffectiveOpen?"◀":"▶"}
           </button>
 
           <div className="es-sidebar-box" style={{background:"#FFFFFF",border:"0.5px solid #E0E0E0",borderRadius:12,overflow:"hidden",minHeight:400,boxShadow:"0 2px 12px rgba(23,47,57,0.06)",width:264}}>
@@ -6344,7 +6348,7 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, lang, abs
             {/* Menu */}
             <div className="es-sidebar-menu" style={{padding:"6px 0"}}>
               {menuItems.map(item=>(
-                <button key={item.key} className="es-sidebar-menu-item" onClick={()=>setSideTab(item.key)} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:sideTab===item.key?"#EEF6FB":"transparent",border:"none",borderLeft:sideTab===item.key?"3px solid #1A6B8A":"3px solid transparent",color:sideTab===item.key?"#1A6B8A":"#546E7A",fontSize:13,cursor:"pointer",textAlign:"left"}}>
+                <button key={item.key} className="es-sidebar-menu-item" onClick={()=>{setSideTab(item.key);setSidebarOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:sideTab===item.key?"#EEF6FB":"transparent",border:"none",borderLeft:sideTab===item.key?"3px solid #1A6B8A":"3px solid transparent",color:sideTab===item.key?"#1A6B8A":"#546E7A",fontSize:13,cursor:"pointer",textAlign:"left"}}>
                   <span style={{fontSize:15,flexShrink:0}}>{item.icon}</span>
                   <span style={{fontWeight:sideTab===item.key?500:400,whiteSpace:"nowrap"}}>{lang==="zh"?item.zh:item.en}</span>
                 </button>
