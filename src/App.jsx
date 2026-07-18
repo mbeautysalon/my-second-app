@@ -6337,6 +6337,12 @@ const AVATAR_OPTIONS = [
   { id:"penguin", icon:"🐧", bg:"#B3E5FC" },
   { id:"unicorn", icon:"🦄", bg:"#F3E5F5" },
   { id:"turtle",  icon:"🐢", bg:"#DCEDC8" },
+  { id:"man",     icon:"👨", bg:"#BBDEFB" },
+  { id:"woman",   icon:"👩", bg:"#FFCDD2" },
+  { id:"robot",   icon:"🤖", bg:"#CFD8DC" },
+  { id:"dog",     icon:"🐶", bg:"#FFE0B2" },
+  { id:"cat",     icon:"🐱", bg:"#FFF9C4" },
+  { id:"dragon",  icon:"🐉", bg:"#C8E6C9" },
 ];
 function getAvatarById(id) { return AVATAR_OPTIONS.find(a=>a.id===id) || null; }
 
