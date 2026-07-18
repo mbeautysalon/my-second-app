@@ -542,6 +542,36 @@ function addMins(timeStr, mins) {
   return `${String(Math.floor(t/60)).padStart(2,"0")}:${String(t%60).padStart(2,"0")}`;
 }
 
+// ─── Course schedule helpers ────────────────────────────────────────────────
+// A course can meet on different days at DIFFERENT times (e.g. Sat 9:00, Sun
+// 8:00) via `course.schedule = [{dayIndex, start}, ...]`. Older courses saved
+// before this existed only have `days[]` + a single shared `start` — these
+// helpers transparently normalize both shapes so the rest of the app can just
+// ask "what days does this course meet" / "what time does it start on day X"
+// without caring which format is stored.
+function getCourseSchedule(course) {
+  if (course?.schedule && course.schedule.length) return course.schedule;
+  return (course?.days||[]).map(d => ({ dayIndex: d, start: course?.start }));
+}
+function getCourseDays(course) {
+  return [...new Set(getCourseSchedule(course).map(s => s.dayIndex))].sort((a,b)=>a-b);
+}
+function getCourseStartForDay(course, dayIndex) {
+  const entry = getCourseSchedule(course).find(s => s.dayIndex === dayIndex);
+  return entry ? entry.start : course?.start;
+}
+// Human-readable summary like "週六 9:00、週日 8:00" — groups days that share
+// the same start time together, e.g. "一、三、五 16:00" if they're identical.
+function formatCourseScheduleSummary(course, lang) {
+  const sched = getCourseSchedule(course);
+  const byTime = {};
+  sched.forEach(s => { if (!byTime[s.start]) byTime[s.start] = []; byTime[s.start].push(s.dayIndex); });
+  return Object.entries(byTime)
+    .sort((a,b)=>a[0].localeCompare(b[0]))
+    .map(([start, days]) => `${days.sort((a,b)=>a-b).map(d=>T[lang].days[d]).join("、")} ${start}`)
+    .join(" ・ ");
+}
+
 // Returns array of 7 Date objects for Mon-Sun of the week at weekOffset (0=this week, -1=last, +1=next)
 function getWeekDates(weekOffset=0) {
   const now = new Date();
@@ -615,7 +645,8 @@ function AbsenceModal({ course, dayIndex, users, lang, currentUser, onConfirm, o
   const t = T[lang];
   const teacher = users.find(u=>u.id===course.teacherId);
   const student = users.find(u=>u.id===course.studentId);
-  const endTime = addMins(course.start, course.duration);
+  const startTime = getCourseStartForDay(course, dayIndex);
+  const endTime = addMins(startTime, course.duration);
 
   // ── Step 1: reason; Step 2: notify ──
   const [step, setStep] = useState(1);
@@ -627,7 +658,7 @@ function AbsenceModal({ course, dayIndex, users, lang, currentUser, onConfirm, o
     ? (lang==="zh" ? "病假" : "Sick Leave")
     : (lang==="zh" ? `事假（${personalNote||"…"}）` : `Personal Leave (${personalNote||"…"})`);
 
-  const msgBody = `[${t.absentNotif}] ${course.subject}\n${t.teacher}: ${teacher?.name} · ${t.student}: ${student?.name}\n${T[lang].days[dayIndex]} ${course.start}–${endTime}\n${lang==="zh"?"請假人":"By"}: ${currentUser.name}\n${lang==="zh"?"事由":"Reason"}: ${reasonLabel}`;
+  const msgBody = `[${t.absentNotif}] ${course.subject}\n${t.teacher}: ${teacher?.name} · ${t.student}: ${student?.name}\n${T[lang].days[dayIndex]} ${startTime}–${endTime}\n${lang==="zh"?"請假人":"By"}: ${currentUser.name}\n${lang==="zh"?"事由":"Reason"}: ${reasonLabel}`;
 
   const handleSend = (ch) => {
     setSent(s=>({...s,[ch]:true}));
@@ -651,7 +682,7 @@ function AbsenceModal({ course, dayIndex, users, lang, currentUser, onConfirm, o
         {/* Course info pill */}
         <div style={{background:"#F5F5F5",borderRadius:8,padding:"8px 12px",fontSize:12,color:"#546E7A",marginBottom:"1.25rem",lineHeight:1.6}}>
           <strong style={{color:"#172F39"}}>{course.subject}</strong><br/>
-          {T[lang].days[dayIndex]} · {course.start}–{endTime}
+          {T[lang].days[dayIndex]} · {startTime}–{endTime}
         </div>
 
         {/* ── Step 1: Reason ── */}
@@ -1019,7 +1050,8 @@ function CourseDetailModal({ course, dayIndex, users, lang, materials, onClose }
   const t = T[lang];
   const teacher = users.find(u=>u.id===course.teacherId);
   const student  = users.find(u=>u.id===course.studentId);
-  const endTime  = addMins(course.start, course.duration);
+  const startTime = getCourseStartForDay(course, dayIndex);
+  const endTime  = addMins(startTime, course.duration);
   const dayMats  = materials.filter(m=>m.courseId===course.id&&m.dayIndex===dayIndex)
     .sort((a,b)=>(b.date||"").localeCompare(a.date||""));
   const [copied, setCopied] = useState(false);
@@ -1040,7 +1072,7 @@ function CourseDetailModal({ course, dayIndex, users, lang, materials, onClose }
 **${classDate}
 
  Time&Student / 時間&學生
-**${course.start}-${endTime} **${student?.name||""}
+**${startTime}-${endTime} **${student?.name||""}
 
  Teacher / 老師: **${teacher?.name||""}
 
@@ -1081,7 +1113,7 @@ function CourseDetailModal({ course, dayIndex, users, lang, materials, onClose }
           {/* Info grid */}
           {[
             {icon:"📅", label: lang==="zh"?"日期":"Date",      val: classDate},
-            {icon:"⏰", label: lang==="zh"?"時間":"Time",      val: `${course.start} – ${endTime} (${course.duration}min)`},
+            {icon:"⏰", label: lang==="zh"?"時間":"Time",      val: `${startTime} – ${endTime} (${course.duration}min)`},
             {icon:"👤", label: lang==="zh"?"學生":"Student",   val: student?.name||"—"},
             {icon:"🎓", label: lang==="zh"?"老師":"Teacher",   val: teacher?.name||"—"},
           ].map(row=>(
@@ -1234,12 +1266,12 @@ function SlotCalendarView({ slots, users, lang, currentUser, absences, materials
                 {daySlots.map(sl=>{
                   const col=COLORS[(sl.course.id.charCodeAt(0)||0)%COLORS.length];
                   const isAbsent=absences.some(a=>a.courseId===sl.course.id&&a.dateStr===sl.date);
-                  const status=classStatusForWeek(weekDates,sl.dayIndex,sl.course.start,sl.course.duration);
+                  const status=classStatusForWeek(weekDates,sl.dayIndex,sl.start,sl.course.duration);
                   const isPast=status==="past";
                   const isOngoing=status==="ongoing";
-                  const leaveOk=canRequestLeaveForWeek(weekDates,sl.dayIndex,sl.course.start,sl.course.duration);
+                  const leaveOk=canRequestLeaveForWeek(weekDates,sl.dayIndex,sl.start,sl.course.duration);
                   const canAbsent=currentUser.role==="student"||currentUser.role==="teacher";
-                  const endTime=addMins(sl.course.start,sl.course.duration);
+                  const endTime=addMins(sl.start,sl.course.duration);
                   const teacher=users.find(u=>u.id===sl.course.teacherId);
                   const student=users.find(u=>u.id===sl.course.studentId);
                   const attRec=attendance.find(a=>a.enrollmentId===sl.enrollment.id&&a.date===sl.date);
@@ -1256,7 +1288,7 @@ function SlotCalendarView({ slots, users, lang, currentUser, absences, materials
                         <div style={{fontSize:10,fontWeight:600,color:dimText,lineHeight:1.3,wordBreak:"break-word",flex:1}}>{sl.course.subject.length>18?sl.course.subject.slice(0,16)+"…":sl.course.subject}</div>
                         <span style={{fontSize:9,color:dimText,opacity:0.5}}>ℹ</span>
                       </div>
-                      <div style={{fontSize:9,color:dimText,opacity:0.8,marginBottom:1}}>{sl.course.start}–{endTime}</div>
+                      <div style={{fontSize:9,color:dimText,opacity:0.8,marginBottom:1}}>{sl.start}–{endTime}</div>
                       <div style={{fontSize:8,color:"#9E9E9E",marginBottom:2}}>#{sl.sessionNo}</div>
                       {currentUser.role==="admin"&&teacher&&<div style={{fontSize:9,color:dimText,opacity:0.7}}>{teacher.name}</div>}
                       {currentUser.role!=="student"&&student&&<div style={{fontSize:9,color:dimText,opacity:0.7}}>{student.name}</div>}
@@ -1290,10 +1322,10 @@ function SlotCalendarView({ slots, users, lang, currentUser, absences, materials
 // Admin can set/edit the status of ANY session (past or future) from the schedule
 function AdminSessionModal({ slot, users, lang, attendance, setAttendance, enrollments, setEnrollments, courses, setToast, onClose }) {
   const t = T[lang];
-  const {course, date, dayIndex, sessionNo, enrollment} = slot;
+  const {course, date, dayIndex, sessionNo, enrollment, start:startTime} = slot;
   const teacher = users.find(u=>u.id===course.teacherId);
   const student  = users.find(u=>u.id===course.studentId);
-  const endTime  = addMins(course.start, course.duration);
+  const endTime  = addMins(startTime, course.duration);
 
   // Existing record for this session
   const existing = attendance.find(a=>a.enrollmentId===enrollment.id&&a.date===date);
@@ -1368,7 +1400,7 @@ function AdminSessionModal({ slot, users, lang, attendance, setAttendance, enrol
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
               <div>
                 <div style={{fontWeight:600,color:"#172F39",fontSize:13}}>{course.subject}</div>
-                <div>{date} ({T[lang].days[dayIndex]}) · {course.start}–{endTime}</div>
+                <div>{date} ({T[lang].days[dayIndex]}) · {startTime}–{endTime}</div>
                 <div>{lang==="zh"?"學生":"Student"}: {student?.name||"—"} · {lang==="zh"?"老師":"Teacher"}: {teacher?.name||"—"}</div>
               </div>
               <span style={{fontSize:11,background:"rgba(26,107,138,0.1)",color:"#1A6B8A",borderRadius:4,padding:"2px 7px",fontWeight:500,flexShrink:0}}>#{sessionNo}</span>
@@ -1431,10 +1463,10 @@ function AdminSessionModal({ slot, users, lang, attendance, setAttendance, enrol
 // and by students (read-only) to view feedback once admin has approved it.
 function FeedbackModal({ slot, currentUser, users, lang, feedback, setFeedback, setToast, onClose, readOnly }) {
   const t = T[lang];
-  const {course, date, dayIndex, sessionNo, enrollment} = slot;
+  const {course, date, dayIndex, sessionNo, enrollment, start:startTime} = slot;
   const teacher = users.find(u=>u.id===course.teacherId);
   const student  = users.find(u=>u.id===course.studentId);
-  const endTime  = addMins(course.start, course.duration);
+  const endTime  = addMins(startTime, course.duration);
 
   const existing = feedback.find(f=>f.enrollmentId===enrollment.id && f.date===date);
   const [text, setText] = useState(existing?.text || "");
@@ -1486,7 +1518,7 @@ function FeedbackModal({ slot, currentUser, users, lang, feedback, setFeedback, 
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
               <div>
                 <div style={{fontWeight:600,color:"#172F39",fontSize:13}}>{course.subject}</div>
-                <div>{date} ({T[lang].days[dayIndex]}) · {course.start}–{endTime}</div>
+                <div>{date} ({T[lang].days[dayIndex]}) · {startTime}–{endTime}</div>
                 <div>{lang==="zh"?"學生":"Student"}: {student?.name||"—"} · {lang==="zh"?"老師":"Teacher"}: {teacher?.name||"—"}</div>
               </div>
               <span style={{fontSize:11,background:"rgba(26,107,138,0.1)",color:"#1A6B8A",borderRadius:4,padding:"2px 7px",fontWeight:500,flexShrink:0}}>#{sessionNo}</span>
@@ -1543,18 +1575,18 @@ function FeedbackModal({ slot, currentUser, users, lang, feedback, setFeedback, 
 // ─── Slot course card (for list view) ────────────────────────────────────────
 function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, materials, setMaterials, onAbsent, setToast, weekDates, weekOffset, attendance, setAttendance, enrollments, setEnrollments, courses, feedback, setFeedback }) {
   const t = T[lang];
-  const {course, dayIndex, date, enrollment, sessionNo} = slot;
+  const {course, dayIndex, date, enrollment, sessionNo, start} = slot;
   const teacher = users.find(u=>u.id===course.teacherId);
   const student  = users.find(u=>u.id===course.studentId);
   const col = COLORS[colorIdx%COLORS.length];
-  const endTime = addMins(course.start, course.duration);
+  const endTime = addMins(start, course.duration);
   const isAbsent = absences.some(a=>a.courseId===course.id&&a.dateStr===date);
   const canAbsent = currentUser.role==="student"||currentUser.role==="teacher";
   const isAdmin = currentUser.role==="admin";
   const isTeacher = currentUser.role==="teacher";
   const isStudent = currentUser.role==="student";
-  const leaveOk  = canRequestLeaveForWeek(weekDates, dayIndex, course.start, course.duration);
-  const status   = classStatusForWeek(weekDates, dayIndex, course.start, course.duration);
+  const leaveOk  = canRequestLeaveForWeek(weekDates, dayIndex, start, course.duration);
+  const status   = classStatusForWeek(weekDates, dayIndex, start, course.duration);
   const isPast   = status==="past";
   const isOngoing= status==="ongoing";
   const attRec   = (attendance||[]).find(a=>a.enrollmentId===enrollment.id&&a.date===date);
@@ -1606,7 +1638,7 @@ function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, ma
           <div style={{display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
             {isPast&&<span style={{fontSize:10,background:"#F0F0F0",color:"#9E9E9E",borderRadius:4,padding:"1px 6px"}}>{lang==="zh"?"已結束":"Ended"}</span>}
             {isOngoing&&<span style={{fontSize:10,background:"rgba(76,175,80,0.15)",color:"#4CAF50",borderRadius:4,padding:"1px 6px"}}>{lang==="zh"?"進行中":"Live"}</span>}
-            <span style={{fontSize:12,color:textCol,opacity:0.9,whiteSpace:"nowrap"}}>{course.start}–{endTime}·{course.duration}m</span>
+            <span style={{fontSize:12,color:textCol,opacity:0.9,whiteSpace:"nowrap"}}>{start}–{endTime}·{course.duration}m</span>
             <button onClick={()=>setShowDetail(true)} style={{background:"transparent",border:`1px solid ${textCol}44`,borderRadius:4,color:textCol,fontSize:11,padding:"1px 6px",cursor:"pointer",opacity:0.7}}>ℹ</button>
             {/* Admin session edit button — all sessions, all times */}
             {isAdmin&&<button onClick={()=>setShowAdminEdit(true)} title={t.adminSessionEdit} style={{background:attRec?"rgba(26,107,138,0.1)":"transparent",border:`1px solid ${attRec?"#1A6B8A":"#CFD8DC"}`,borderRadius:4,color:attRec?"#1A6B8A":"#9E9E9E",fontSize:11,padding:"1px 6px",cursor:"pointer",fontWeight:attRec?600:400}}>📝</button>}
@@ -1660,12 +1692,16 @@ function getWeekSlots(courses, enrollments, weekDates) {
     (enr.scheduledDates||[]).forEach(s => {
       const idx = weekDateStrs.indexOf(s.date);
       if (idx !== -1) {
-        slots.push({ course, dayIndex: s.dayIndex, date: s.date, enrollment: enr, sessionNo: s.sessionNo });
+        // Resolve THIS day's actual start time — a course can have different
+        // times on different days (e.g. Sat 9:00, Sun 8:00), so we can't just
+        // assume course.start applies uniformly.
+        const start = getCourseStartForDay(course, s.dayIndex);
+        slots.push({ course, dayIndex: s.dayIndex, date: s.date, enrollment: enr, sessionNo: s.sessionNo, start });
       }
     });
   });
   // Sort by dayIndex then start time
-  slots.sort((a,b) => a.dayIndex - b.dayIndex || a.course.start.localeCompare(b.course.start));
+  slots.sort((a,b) => a.dayIndex - b.dayIndex || a.start.localeCompare(b.start));
   return slots;
 }
 
@@ -1725,7 +1761,7 @@ function ScheduleView({ currentUser, users, courses, lang, absences, setAbsences
     :`${weekOffset>0?"+":""}${weekOffset} ${lang==="zh"?"週":"wk"}`;
 
   const handleAbsent = (course, dayIndex) => {
-    if (!canRequestLeaveForWeek(weekDates, dayIndex, course.start, course.duration)) {
+    if (!canRequestLeaveForWeek(weekDates, dayIndex, getCourseStartForDay(course, dayIndex), course.duration)) {
       setToast(t.absentTooLate); return;
     }
     setAbsentTarget({course, dayIndex});
@@ -1858,16 +1894,25 @@ function CourseForm({ course, users, onSave, onCancel, lang }) {
   const defS = students[0]?.id||"";
   const autoSubject = (sId,tId) => `ES English Study - ${students.find(u=>u.id===sId)?.name||""} and ${teachers.find(u=>u.id===tId)?.name||""}`;
 
-  // A course can now have MULTIPLE time-slot "blocks" — each block is a group
-  // of days that share one start time (e.g. Sat 9:00 as one block, Sun 8:00 as
-  // another block for the same teacher/student). Existing single-block courses
-  // (one `days[]` + one `start`) still edit exactly as before — this only adds
-  // the ability to have more than one block when needed.
+  // A single course can meet at DIFFERENT times on different days (e.g. Sat
+  // 9:00, Sun 8:00) — internally this is ONE course record with
+  // `schedule: [{dayIndex, start}, ...]`. In the form, days that share the
+  // same start time are grouped into one editable "block" for convenience;
+  // on save all blocks flatten back into a single schedule[] on ONE record —
+  // this keeps the whole course (and therefore its enrollment/leave-deferral)
+  // unified, unlike creating separate courses per time slot.
   const blankBlock = () => ({ _bid: genId(), days:[0], start:"09:00" });
+  const blocksFromCourse = (c) => {
+    const sched = getCourseSchedule(c);
+    if (!sched.length) return [blankBlock()];
+    const byTime = {};
+    sched.forEach(s=>{ if(!byTime[s.start]) byTime[s.start]=[]; byTime[s.start].push(s.dayIndex); });
+    return Object.entries(byTime).map(([start,days])=>({_bid:genId(), days:days.sort((a,b)=>a-b), start}));
+  };
   const blank = {subject:autoSubject(defS,defT),teacherId:defT,studentId:defS,duration:50,meetingUrl:"",_edited:false,blocks:[blankBlock()]};
   const [form,setForm] = useState(()=>{
     if (!course) return blank;
-    return {...course, _edited:true, blocks:[{_bid:genId(), days:course.days||[0], start:course.start||"09:00"}]};
+    return {...course, _edited:true, blocks:blocksFromCourse(course)};
   });
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
   const handleTeacher = v => setForm(f=>({...f,teacherId:v,subject:f._edited?f.subject:autoSubject(f.studentId,v)}));
@@ -1889,11 +1934,20 @@ function CourseForm({ course, users, onSave, onCancel, lang }) {
   const totalSessionsPerWeek = form.blocks.reduce((sum,b)=>sum+(b.days?.length||0),0);
 
   const handleSave = () => {
-    const { _edited, blocks, ...shared } = form;
-    // One course record per block — this is what enables different days to
-    // have different start times while staying the same teacher/student/subject.
-    const records = blocks.map(b => ({ ...shared, days: b.days, start: b.start }));
-    onSave(records);
+    const { _edited, blocks, days, start, schedule, ...shared } = form;
+    // Flatten all blocks into one schedule[] on a SINGLE course record — this
+    // is what keeps the course (and its future enrollment) unified across
+    // however many day/time combinations it has.
+    const newSchedule = blocks.flatMap(b => (b.days||[]).map(d => ({ dayIndex: d, start: b.start })));
+    const record = {
+      ...shared,
+      schedule: newSchedule,
+      // Legacy fields kept in sync too, so any code path that hasn't been
+      // updated to read `schedule[]` still degrades gracefully.
+      days: getCourseDays({schedule:newSchedule}),
+      start: newSchedule[0]?.start,
+    };
+    onSave(record);
   };
 
   return (
@@ -1914,8 +1968,8 @@ function CourseForm({ course, users, onSave, onCancel, lang }) {
         ))}
       </div>
 
-      {/* ── Time slots — one block per group of days sharing a start time ── */}
-      <label style={lStyle}>{lang==="zh"?"上課時段（可新增多組，星期跟時間可各自不同）":"Time Slots (add more — days & times can differ per slot)"}</label>
+      {/* ── Time slots — one block per group of days sharing a start time; all blocks belong to ONE course ── */}
+      <label style={lStyle}>{lang==="zh"?"上課時段（可新增多組，星期跟時間可各自不同，仍屬同一堂課）":"Time Slots (add more — days & times can differ, still one course)"}</label>
       {form.blocks.map((b,idx)=>{
         const blockEnd = addMins(b.start, form.duration);
         return (
@@ -2193,21 +2247,9 @@ function CourseManager({ users, courses, setCourses, lang, setToast, materials, 
   const [onlyUnenrolled, setOnlyUnenrolled] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState(new Set());
   const getName = id=>users.find(u=>u.id===id)?.name||id;
-  const save = records => {
-    // records is an array of one-or-more course objects (one per time-slot block).
-    // Editing: the first record updates the existing course; any additional
-    // blocks become new course records. Adding: every record is newly created.
-    if (editing) {
-      const [first, ...rest] = records;
-      setCourses([
-        ...courses.map(c=>c.id===editing.id?{...first,id:editing.id}:c),
-        ...rest.map(r=>({...r,id:genId()})),
-      ]);
-      setToast(rest.length ? (lang==="zh"?`已更新，並新增 ${rest.length} 個時段`:`Updated, plus ${rest.length} new time slot(s)`) : t.courseUpdated);
-    } else {
-      setCourses([...courses, ...records.map(r=>({...r,id:genId()}))]);
-      setToast(records.length>1 ? (lang==="zh"?`已新增 ${records.length} 個時段的課程`:`Added course with ${records.length} time slots`) : t.courseAdded);
-    }
+  const save = record => {
+    if (editing) { setCourses(courses.map(c=>c.id===editing.id?{...record,id:editing.id}:c)); setToast(t.courseUpdated); }
+    else { setCourses([...courses,{...record,id:genId()}]); setToast(t.courseAdded); }
     setShowAdd(false); setEditing(null);
   };
   const del = id => { setConfirmDelCourseId(id); };
@@ -2304,7 +2346,7 @@ function CourseManager({ users, courses, setCourses, lang, setToast, materials, 
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:6}}>
                         <div>
                           <span style={{fontWeight:500,fontSize:14,color:"#172F39"}}>{c.subject}</span>
-                          <div style={{fontSize:12,color:"#546E7A",marginTop:2}}>{c.days?.map(d=>t.days[d]).join("、")} ({c.days?.length}{lang==="zh"?"堂/週":"x/wk"}) · {c.start}–{addMins(c.start,c.duration)} · {c.duration}min</div>
+                          <div style={{fontSize:12,color:"#546E7A",marginTop:2}}>{formatCourseScheduleSummary(c,lang)} ({getCourseDays(c).length}{lang==="zh"?"堂/週":"x/wk"}) · {c.duration}min</div>
                           <div style={{fontSize:12,color:"#546E7A"}}>{getName(c.teacherId)} → {getName(c.studentId)}</div>
                           {!hasEnrollment && (
                             <div style={{fontSize:11,color:"#E65100",marginTop:4,background:"#FFF3E0",borderRadius:4,padding:"2px 8px",display:"inline-block"}}>
@@ -2496,7 +2538,7 @@ function computeStats(courses, absences, allTime, dateFrom, dateTo, enrollments,
         return;
       }
       // Past session with no record = completed (only once the session has actually ended)
-      if (isSessionOver(s.date, c.start, c.duration)) completed++;
+      if (isSessionOver(s.date, getCourseStartForDay(c, s.dayIndex), c.duration)) completed++;
     });
   });
   return { total, studentAbsent, teacherAbsent, completed };
@@ -2552,7 +2594,7 @@ function TeacherStats({ users, courses, absences, attendance, enrollments, lang 
         return (
           <div key={c.id} style={{background:"#FFFFFF",border:"0.5px solid #E0E0E0",borderRadius:8,padding:"10px 14px",marginBottom:8}}>
             <div style={{fontWeight:500,fontSize:13,color:"#172F39"}}>{c.subject}</div>
-            <div style={{fontSize:12,color:"#546E7A",marginTop:2}}>{getName(c.studentId)} · {c.days?.map(d=>t.days[d]).join("、")} · {c.start} ({c.duration}min)</div>
+            <div style={{fontSize:12,color:"#546E7A",marginTop:2}}>{getName(c.studentId)} · {formatCourseScheduleSummary(c,lang)} ({c.duration}min)</div>
             <div style={{fontSize:12,marginTop:4,display:"flex",gap:12,flexWrap:"wrap"}}>
               <span style={{color:"#1565C0"}}>{lang==="zh"?"總排課":"Total"}: {totalSessions}</span>
               <span style={{color:"#880E4F"}}>{t.studentAbsent}: {sAbs}</span>
@@ -2656,7 +2698,7 @@ function StudentStats({ users, courses, absences, attendance, enrollments, lang 
         return (
           <div key={c.id} style={{background:"#FFFFFF",border:"0.5px solid #E0E0E0",borderRadius:8,padding:"10px 14px",marginBottom:8}}>
             <div style={{fontWeight:500,fontSize:13,color:"#172F39"}}>{c.subject}</div>
-            <div style={{fontSize:12,color:"#546E7A",marginTop:2}}>{getName(c.teacherId)} · {c.days?.map(d=>t.days[d]).join("、")} · {c.start} ({c.duration}min)</div>
+            <div style={{fontSize:12,color:"#546E7A",marginTop:2}}>{getName(c.teacherId)} · {formatCourseScheduleSummary(c,lang)} ({c.duration}min)</div>
             <div style={{fontSize:12,marginTop:4,display:"flex",gap:12,flexWrap:"wrap"}}>
               <span style={{color:"#1565C0"}}>{lang==="zh"?"總排課":"Total"}: {totalSessions}</span>
               <span style={{color:"#880E4F"}}>{t.studentAbsent}: {sAbs}</span>
@@ -2697,7 +2739,7 @@ function buildSchedule(course, startDateStr, totalSessions, excusedDates=[]) {
   const results = [];
   const excusedSet = new Set(excusedDates);
   const start = new Date(startDateStr + "T00:00:00");
-  const dow = course.days || []; // [0..6] Mon-based
+  const dow = getCourseDays(course); // [0..6] Mon-based — union of all schedule blocks' days
   if (!dow.length || !totalSessions) return results;
 
   // Sort days so we go Mon→Sun each week
@@ -2848,7 +2890,7 @@ function EnrollmentManager({ users, courses, enrollments, setEnrollments, attend
     const att = getAttendance(enr.id, s.date);
     if (att) return att.type; // "excused" | "teacher_leave" | "absent"
     const course = allCourses.find(c=>c.id===enr.courseId);
-    if (isSessionOver(s.date, course?.start, course?.duration)) return "completed"; // ended → completed
+    if (isSessionOver(s.date, getCourseStartForDay(course, s.dayIndex), course?.duration)) return "completed"; // ended → completed
     return "upcoming";
   };
 
@@ -2941,7 +2983,7 @@ function EnrollmentManager({ users, courses, enrollments, setEnrollments, attend
 
           {selectedCourse && (
             <div style={{marginTop:10,fontSize:12,color:"#546E7A",background:"#FFFFFF",borderRadius:6,padding:"8px 12px"}}>
-              {lang==="zh"?"每週":"Weekly"}: {selectedCourse.days?.map(d=>T[lang].days[d]).join("、")} · {selectedCourse.start} ({selectedCourse.duration}min)
+              {lang==="zh"?"每週":"Weekly"}: {formatCourseScheduleSummary(selectedCourse,lang)} ({selectedCourse.duration}min)
             </div>
           )}
 
@@ -4586,7 +4628,7 @@ function computeMissingFeedback(courses, enrollments, feedback, attendance) {
     const course = courses.find(c=>c.id===enr.courseId);
     if (!course) return;
     (enr.scheduledDates||[]).forEach(s => {
-      if (!isSessionOver(s.date, course.start, course.duration)) return;
+      if (!isSessionOver(s.date, getCourseStartForDay(course, s.dayIndex), course.duration)) return;
       const attRec = (attendance||[]).find(a=>a.enrollmentId===enr.id && a.date===s.date);
       if (attRec && attRec.type!=="other") return; // absent/excused/teacher_leave — feedback not expected
       const hasFeedback = (feedback||[]).some(f=>f.enrollmentId===enr.id && f.date===s.date);
@@ -5022,7 +5064,7 @@ function FeedbackCenter({ users, courses, enrollments, attendance, feedback, set
                         <div>
                           <div style={{fontSize:12,fontWeight:600,color:"#172F39"}}>{r.course.subject}</div>
                           <div style={{fontSize:11,color:"#9E9E9E",marginTop:2}}>
-                            {r.date} ({T[lang].days[r.dayIndex]}) · #{r.sessionNo} · {r.course.start}
+                            {r.date} ({T[lang].days[r.dayIndex]}) · #{r.sessionNo} · {getCourseStartForDay(r.course, r.dayIndex)}
                           </div>
                           <div style={{fontSize:11,color:"#546E7A",marginTop:2}}>
                             {overviewStudents.size>1 && <>{student?.name||"—"} · </>}{teacher?.name||"—"}
@@ -5323,7 +5365,7 @@ function calcStudentSessions(studentId, enrollments, attendance, courses, confir
     const sessVal = course.duration===25 ? 1 : 2; // 25min=1, 50min=2
     (enr.scheduledDates||[]).forEach(s=>{
       // Only count sessions whose actual end time has passed (not just "today or earlier")
-      if (!isSessionOver(s.date, course.start, course.duration)) return;
+      if (!isSessionOver(s.date, getCourseStartForDay(course, s.dayIndex), course.duration)) return;
       const att = attendance.find(a=>a.enrollmentId===enr.id&&a.date===s.date);
       if (att?.type==="absent") return; // deducted
       count += sessVal;
@@ -5550,7 +5592,7 @@ function TeacherStudentsPanel({ currentUser, users, courses, enrollments, attend
                 {/* Courses */}
                 {stuCourses.map(c=>(
                   <div key={c.id} style={{marginTop:8,background:"#F0F4FF",borderRadius:6,padding:"6px 8px",fontSize:11,color:"#1A6B8A"}}>
-                    {c.subject} · {c.days?.map(d=>T[lang].days[d]).join("、")} · {c.start}
+                    {c.subject} · {formatCourseScheduleSummary(c,lang)}
                   </div>
                 ))}
               </div>
@@ -5591,7 +5633,7 @@ function StudentClassHistory({ currentUser, enrollments, attendance, courses, us
       const attRec = attendance.find(a=>a.enrollmentId===enr.id&&a.date===s.date);
       const status = attRec
         ? attRec.type   // "absent" | "excused" | "teacher_leave"
-        : isSessionOver(s.date, course.start, course.duration) ? "completed" : "upcoming";
+        : isSessionOver(s.date, getCourseStartForDay(course, s.dayIndex), course.duration) ? "completed" : "upcoming";
       sessions.push({
         date: s.date,
         dayIndex: s.dayIndex,
@@ -5678,7 +5720,7 @@ function StudentClassHistory({ currentUser, enrollments, attendance, courses, us
                 <span style={{fontSize:12,fontWeight:600,color:"#172F39",minWidth:70}}>{s.date}</span>
                 <span style={{fontSize:11,color:"#9E9E9E",minWidth:28}}>{dayLabel(s.dayIndex)}</span>
                 <span style={{fontSize:11,color:"#546E7A",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.course.subject}</span>
-                <span style={{fontSize:11,color:"#9E9E9E"}}>{s.course.start}</span>
+                <span style={{fontSize:11,color:"#9E9E9E"}}>{getCourseStartForDay(s.course, s.dayIndex)}</span>
                 <span style={{fontSize:10,background:"rgba(26,107,138,0.1)",color:"#1A6B8A",borderRadius:4,padding:"1px 6px"}}>{s.sessVal===2?"50m":"25m"}</span>
               </div>
             ))}
@@ -5726,7 +5768,7 @@ function StudentClassHistory({ currentUser, enrollments, attendance, courses, us
                       {/* Date */}
                       <div style={{minWidth:80}}>
                         <div style={{fontSize:12,fontWeight:600,color:"#172F39"}}>{s.date}</div>
-                        <div style={{fontSize:10,color:"#9E9E9E"}}>{dayLabel(s.dayIndex)} {s.course.start}–{s.course.start?(()=>{const [h,m]=s.course.start.split(":").map(Number);const end=h*60+m+s.course.duration;return `${String(Math.floor(end/60)).padStart(2,"0")}:${String(end%60).padStart(2,"0")}`;})():""}</div>
+                        <div style={{fontSize:10,color:"#9E9E9E"}}>{dayLabel(s.dayIndex)} {getCourseStartForDay(s.course,s.dayIndex)}–{addMins(getCourseStartForDay(s.course,s.dayIndex),s.course.duration)}</div>
                       </div>
                       {/* Course */}
                       <div style={{flex:1,minWidth:0}}>
@@ -5809,8 +5851,9 @@ function findFixedCourseForSlot(teacherId, courses, dayIndex, time) {
   const slotEnd = slotStart + 30;
   return courses.find(c => {
     if (c.teacherId !== teacherId) return false;
-    if (!c.days?.includes(dayIndex)) return false;
-    const cStart = timeToMinutes(c.start);
+    if (!getCourseDays(c).includes(dayIndex)) return false;
+    const cStartTime = getCourseStartForDay(c, dayIndex);
+    const cStart = timeToMinutes(cStartTime);
     const cEnd = cStart + (c.duration||50);
     return slotStart < cEnd && cStart < slotEnd; // overlap
   }) || null;
@@ -5839,7 +5882,8 @@ function ForceOpenModal({ course, date, dayIndex, users, lang, absences, attenda
   const t = T[lang];
   const teacher = users.find(u=>u.id===course.teacherId);
   const student = users.find(u=>u.id===course.studentId);
-  const endTime = addMins(course.start, course.duration);
+  const startTime = getCourseStartForDay(course, dayIndex);
+  const endTime = addMins(startTime, course.duration);
   const [reason, setReason] = useState("");
 
   const scanResults = scanLeaveForCourseDate(course, date, absences, attendance, enrollments);
@@ -5864,7 +5908,7 @@ function ForceOpenModal({ course, date, dayIndex, users, lang, absences, attenda
           {/* Course info */}
           <div style={{background:"#F5F5F5",borderRadius:8,padding:"10px 13px",marginBottom:12,fontSize:12,color:"#546E7A",lineHeight:1.7}}>
             <div style={{fontWeight:600,color:"#172F39",fontSize:13}}>{course.subject}</div>
-            <div>{date} ({T[lang].days[dayIndex]}) · {course.start}–{endTime}</div>
+            <div>{date} ({T[lang].days[dayIndex]}) · {startTime}–{endTime}</div>
             <div>{lang==="zh"?"老師":"Teacher"}: {teacher?.name||"—"} · {lang==="zh"?"學生":"Student"}: {student?.name||"—"}</div>
           </div>
 
@@ -6075,6 +6119,7 @@ function TeacherAvailabilityGrid({ teacherId, availability, setAvailability, cou
                   const displayOpen = pendingAction ? pendingAction==="open" : committedOpen;
                   const locked = committedOpen && !pendingAction && !isAdmin && hrs<12;
 
+                  const fixedCourseStart = fixedCourse ? getCourseStartForDay(fixedCourse, dayIndex) : null;
                   // Fixed courses take absolute visual + interaction priority — not
                   // selectable regardless of past/lock/pending state, EXCEPT admin
                   // can click to open the force-open flow (e.g. student took leave).
@@ -6085,8 +6130,8 @@ function TeacherAvailabilityGrid({ teacherId, availability, setAvailability, cou
                         disabled={!isAdmin}
                         onClick={isAdmin ? ()=>setForceOpenTarget({course:fixedCourse, date, dayIndex}) : undefined}
                         title={isAdmin
-                          ? `${fixedCourse.subject} (${fixedCourse.start}–${addMins(fixedCourse.start,fixedCourse.duration)}) — ${lang==="zh"?"點擊強制開放":"click to force-open"}`
-                          : `${fixedCourse.subject} (${fixedCourse.start}–${addMins(fixedCourse.start,fixedCourse.duration)})`}
+                          ? `${fixedCourse.subject} (${fixedCourseStart}–${addMins(fixedCourseStart,fixedCourse.duration)}) — ${lang==="zh"?"點擊強制開放":"click to force-open"}`
+                          : `${fixedCourse.subject} (${fixedCourseStart}–${addMins(fixedCourseStart,fixedCourse.duration)})`}
                         style={{
                           height:20, borderRadius:3, border:"1px solid #1A6B8A",
                           background:"#1A6B8A", cursor:isAdmin?"pointer":"not-allowed",
@@ -6606,7 +6651,7 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, lang, abs
                 (e.scheduledDates||[]).forEach(s=>{
                   const attRec=attendance.find(a=>a.enrollmentId===e.id&&a.date===s.date);
                   if(attRec?.type==="absent"){ usedCount++; return; }
-                  if(!attRec && isSessionOver(s.date,c.start,c.duration)){ usedCount++; }
+                  if(!attRec && isSessionOver(s.date,getCourseStartForDay(c,s.dayIndex),c.duration)){ usedCount++; }
                 });
               });
               const remaining=Math.max(0, totalPurchased - usedCount);
