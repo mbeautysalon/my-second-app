@@ -211,6 +211,12 @@ const T = {
     settingsSavedInstant:"已更新，立即生效",
     settingsNameReviewNote:"名字變更需經管理員審核合併，其餘欄位儲存後立即生效",
     settingsNoneValue:"無", settingsCurrentInfo:"目前資料",
+    scheduleShareBtn:"課表共享", scheduleShareTitle:"課表共享設定",
+    scheduleShareDesc:"勾選的學生帳號，登入後可以在側邊欄看到這位學生的課表", 
+    scheduleShareNoOthers:"目前系統裡沒有其他學生帳號",
+    scheduleShareHint:"已選 {n} 位帳號，儲存後對方登入即可在側邊欄看到課表",
+    scheduleShareSaved:"課表共享設定已儲存",
+    sharedScheduleMenu:"{name}的課表",
     settingsChangePwd:"更改密碼", settingsCurrentPwd:"目前密碼", settingsNewPwd:"新密碼",
     settingsConfirmPwd:"確認新密碼", settingsPwdMismatch:"兩次輸入的新密碼不一致",
     settingsCurrentPwdWrong:"目前密碼不正確", settingsPwdUpdated:"密碼已更新",
@@ -409,6 +415,12 @@ const T = {
     settingsSavedInstant:"Updated — effective immediately",
     settingsNameReviewNote:"Name changes require admin review before taking effect; all other fields save instantly",
     settingsNoneValue:"None", settingsCurrentInfo:"Current Info",
+    scheduleShareBtn:"Schedule Sharing", scheduleShareTitle:"Schedule Sharing Settings",
+    scheduleShareDesc:"Checked student accounts will see this student's schedule in their own sidebar",
+    scheduleShareNoOthers:"No other student accounts in the system yet",
+    scheduleShareHint:"{n} account(s) selected — once saved, they'll see the schedule in their sidebar",
+    scheduleShareSaved:"Schedule sharing settings saved",
+    sharedScheduleMenu:"{name}'s Schedule",
     settingsChangePwd:"Change Password", settingsCurrentPwd:"Current Password", settingsNewPwd:"New Password",
     settingsConfirmPwd:"Confirm New Password", settingsPwdMismatch:"New passwords don't match",
     settingsCurrentPwdWrong:"Current password is incorrect", settingsPwdUpdated:"Password updated",
@@ -1177,7 +1189,7 @@ function CourseDetailModal({ course, dayIndex, date, users, lang, materials, onC
 
 // ─── Slot-based List View ─────────────────────────────────────────────────────
 // Receives `slots` from enrollment scheduledDates — enrollment is the source of truth
-function SlotListView({ slots, users, lang, currentUser, absences, materials, setMaterials, onAbsent, setToast, weekDates, weekOffset, attendance, setAttendance, enrollments, setEnrollments, courses, feedback, setFeedback }) {
+function SlotListView({ slots, users, lang, currentUser, absences, materials, setMaterials, onAbsent, setToast, weekDates, weekOffset, attendance, setAttendance, enrollments, setEnrollments, courses, feedback, setFeedback, sharedView }) {
   const t = T[lang];
   const todayDow = (new Date().getDay()+6)%7;
   const isThisWeek = weekOffset===0;
@@ -1215,7 +1227,7 @@ function SlotListView({ slots, users, lang, currentUser, absences, materials, se
             </div>
             {daySlotsRaw.map((sl,si)=>{
               const colorIdx = (sl.course.id.charCodeAt(0)||0) % COLORS.length;
-              return <SlotCourseCard key={sl.course.id+sl.date+sl.sessionNo} slot={sl} colorIdx={colorIdx} users={users} lang={lang} currentUser={currentUser} absences={absences} materials={materials} setMaterials={setMaterials} onAbsent={onAbsent} setToast={setToast} weekDates={weekDates} weekOffset={weekOffset} attendance={attendance} setAttendance={setAttendance} enrollments={enrollments} setEnrollments={setEnrollments} courses={courses} feedback={feedback} setFeedback={setFeedback}/>;
+              return <SlotCourseCard key={sl.course.id+sl.date+sl.sessionNo} slot={sl} colorIdx={colorIdx} users={users} lang={lang} currentUser={currentUser} absences={absences} materials={materials} setMaterials={setMaterials} onAbsent={onAbsent} setToast={setToast} weekDates={weekDates} weekOffset={weekOffset} attendance={attendance} setAttendance={setAttendance} enrollments={enrollments} setEnrollments={setEnrollments} courses={courses} feedback={feedback} setFeedback={setFeedback} sharedView={sharedView}/>;
             })}
           </div>
         );
@@ -1225,7 +1237,7 @@ function SlotListView({ slots, users, lang, currentUser, absences, materials, se
 }
 
 // ─── Slot-based Calendar View ─────────────────────────────────────────────────
-function SlotCalendarView({ slots, users, lang, currentUser, absences, materials, setMaterials, onAbsent, setToast, weekDates, weekOffset, attendance, setAttendance, enrollments, setEnrollments, courses, feedback, setFeedback }) {
+function SlotCalendarView({ slots, users, lang, currentUser, absences, materials, setMaterials, onAbsent, setToast, weekDates, weekOffset, attendance, setAttendance, enrollments, setEnrollments, courses, feedback, setFeedback, sharedView }) {
   const t = T[lang];
   const todayDow = (new Date().getDay()+6)%7;
   const isThisWeek = weekOffset===0;
@@ -1275,7 +1287,7 @@ function SlotCalendarView({ slots, users, lang, currentUser, absences, materials
                   const isPast=status==="past";
                   const isOngoing=status==="ongoing";
                   const leaveOk=canRequestLeaveForWeek(weekDates,sl.dayIndex,sl.start,sl.course.duration);
-                  const canAbsent=currentUser.role==="student"||currentUser.role==="teacher";
+                  const canAbsent=!sharedView&&(currentUser.role==="student"||currentUser.role==="teacher");
                   const endTime=addMins(sl.start,sl.course.duration);
                   const teacher=users.find(u=>u.id===sl.course.teacherId);
                   const student=users.find(u=>u.id===sl.course.studentId);
@@ -1578,7 +1590,7 @@ function FeedbackModal({ slot, currentUser, users, lang, feedback, setFeedback, 
 }
 
 // ─── Slot course card (for list view) ────────────────────────────────────────
-function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, materials, setMaterials, onAbsent, setToast, weekDates, weekOffset, attendance, setAttendance, enrollments, setEnrollments, courses, feedback, setFeedback }) {
+function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, materials, setMaterials, onAbsent, setToast, weekDates, weekOffset, attendance, setAttendance, enrollments, setEnrollments, courses, feedback, setFeedback, sharedView }) {
   const t = T[lang];
   const {course, dayIndex, date, enrollment, sessionNo, start} = slot;
   const teacher = users.find(u=>u.id===course.teacherId);
@@ -1586,7 +1598,7 @@ function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, ma
   const col = COLORS[colorIdx%COLORS.length];
   const endTime = addMins(start, course.duration);
   const isAbsent = absences.some(a=>a.courseId===course.id&&a.dateStr===date);
-  const canAbsent = currentUser.role==="student"||currentUser.role==="teacher";
+  const canAbsent = !sharedView && (currentUser.role==="student"||currentUser.role==="teacher");
   const isAdmin = currentUser.role==="admin";
   const isTeacher = currentUser.role==="teacher";
   const isStudent = currentUser.role==="student";
@@ -1710,7 +1722,7 @@ function getWeekSlots(courses, enrollments, weekDates) {
   return slots;
 }
 
-function ScheduleView({ currentUser, users, courses, lang, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, setToast, feedback, setFeedback }) {
+function ScheduleView({ currentUser, users, courses, lang, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, setToast, feedback, setFeedback, viewAsStudentId, sharedView }) {
   const t = T[lang];
   const [viewMode, setViewMode] = useState("calendar");
   const [weekOffset, setWeekOffset] = useState(0);
@@ -1735,6 +1747,7 @@ function ScheduleView({ currentUser, users, courses, lang, absences, setAbsences
   const myEnrollments = enrollments.filter(enr => {
     const course = courses.find(c=>c.id===enr.courseId);
     if (!course) return false;
+    if (viewAsStudentId) return enr.studentId===viewAsStudentId; // shared/guardian view — always a specific student's schedule
     if (!isAdmin) return currentUser.role==="teacher" ? course.teacherId===currentUser.id : enr.studentId===currentUser.id;
     // Admin filters
     if (adminFilterType==="teacher" && adminFilterId!=="all") return course.teacherId===adminFilterId;
@@ -1883,8 +1896,8 @@ function ScheduleView({ currentUser, users, courses, lang, absences, setAbsences
         </div>
       ) : (
         viewMode==="list"
-          ?<SlotListView slots={weekSlots} users={users} lang={lang} currentUser={currentUser} absences={absences} materials={materials} setMaterials={setMaterials} onAbsent={handleAbsent} setToast={setToast} weekDates={weekDates} weekOffset={weekOffset} attendance={attendance} setAttendance={setAttendance} setEnrollments={setEnrollments} enrollments={enrollments} courses={courses} feedback={feedback} setFeedback={setFeedback}/>
-          :<SlotCalendarView slots={weekSlots} users={users} lang={lang} currentUser={currentUser} absences={absences} materials={materials} setMaterials={setMaterials} onAbsent={handleAbsent} setToast={setToast} weekDates={weekDates} weekOffset={weekOffset} attendance={attendance} setAttendance={setAttendance} setEnrollments={setEnrollments} enrollments={enrollments} courses={courses} feedback={feedback} setFeedback={setFeedback}/>
+          ?<SlotListView slots={weekSlots} users={users} lang={lang} currentUser={currentUser} absences={absences} materials={materials} setMaterials={setMaterials} onAbsent={handleAbsent} setToast={setToast} weekDates={weekDates} weekOffset={weekOffset} attendance={attendance} setAttendance={setAttendance} setEnrollments={setEnrollments} enrollments={enrollments} courses={courses} feedback={feedback} setFeedback={setFeedback} sharedView={sharedView}/>
+          :<SlotCalendarView slots={weekSlots} users={users} lang={lang} currentUser={currentUser} absences={absences} materials={materials} setMaterials={setMaterials} onAbsent={handleAbsent} setToast={setToast} weekDates={weekDates} weekOffset={weekOffset} attendance={attendance} setAttendance={setAttendance} setEnrollments={setEnrollments} enrollments={enrollments} courses={courses} feedback={feedback} setFeedback={setFeedback} sharedView={sharedView}/>
       )}
     </div>
   );
@@ -3523,6 +3536,74 @@ function fmtAge(joinAge, regYear, lang) {
   return `${currentAge}（${regYear}：${joinAge}${lang==="zh"?"加入":"joined"}）`;
 }
 
+// ─── Schedule Share Modal ──────────────────────────────────────────────────────
+// Lets admin pick which OTHER student accounts (e.g. a parent/guardian logged
+// in as a "student" role, or a sibling) can view this student's schedule —
+// useful for young children whose family manages their account.
+function ScheduleShareModal({ ownerEntry, users, dirEntries, saveDirEntries, lang, setToast, onClose }) {
+  const t = T[lang];
+  const ownerUser = users.find(u=>u.id===ownerEntry.linkedUserId);
+  const otherStudents = users.filter(u=>u.role==="student" && u.id!==ownerEntry.linkedUserId);
+  const [selected, setSelected] = useState(new Set(ownerEntry.sharedWith||[]));
+
+  const toggle = (id) => setSelected(prev=>{const n=new Set(prev); n.has(id)?n.delete(id):n.add(id); return n;});
+
+  const save = () => {
+    const entryId = ownerEntry.id;
+    const exists = dirEntries.some(d=>d.id===entryId);
+    const next = exists
+      ? dirEntries.map(d=>d.id===entryId ? {...d, sharedWith:[...selected]} : d)
+      : [...dirEntries, {...ownerEntry, sharedWith:[...selected]}];
+    saveDirEntries(next);
+    setToast(t.scheduleShareSaved);
+    onClose();
+  };
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9300,padding:"1rem"}}>
+      <div style={{background:"#FFFFFF",borderRadius:16,width:"100%",maxWidth:400,boxSizing:"border-box",boxShadow:"0 8px 36px rgba(23,47,57,0.2)",overflow:"hidden",maxHeight:"85vh",display:"flex",flexDirection:"column"}}>
+        <div style={{background:"#172F39",padding:"13px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+          <span style={{fontSize:14,fontWeight:600,color:"#fff"}}>🔗 {t.scheduleShareTitle}</span>
+          <button onClick={onClose} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",color:"#fff",fontSize:16}}>×</button>
+        </div>
+        <div style={{padding:"16px 18px",overflowY:"auto"}}>
+          <div style={{fontSize:12,color:"#546E7A",marginBottom:2}}>{t.scheduleShareDesc}</div>
+          <div style={{fontSize:13,fontWeight:600,color:"#172F39",marginBottom:12}}>{ownerEntry.nameEn||ownerUser?.name||"—"}</div>
+
+          {otherStudents.length===0 ? (
+            <p style={{color:"#9E9E9E",fontSize:13,textAlign:"center",padding:"1.5rem 0"}}>{t.scheduleShareNoOthers}</p>
+          ) : (
+            <div style={{display:"flex",flexDirection:"column",gap:2,maxHeight:320,overflowY:"auto"}}>
+              {otherStudents.map(s=>(
+                <label key={s.id} style={{display:"flex",alignItems:"center",gap:9,padding:"8px 10px",borderRadius:7,cursor:"pointer",background:selected.has(s.id)?"#EEF6FB":"transparent"}}>
+                  <input type="checkbox" checked={selected.has(s.id)} onChange={()=>toggle(s.id)} style={{cursor:"pointer"}}/>
+                  <span style={{fontSize:13,color:"#172F39"}}>{s.name}</span>
+                  <span style={{fontSize:11,color:"#9E9E9E"}}>@{s.username}</span>
+                </label>
+              ))}
+            </div>
+          )}
+
+          {selected.size>0 && (
+            <div style={{fontSize:11,color:"#1A6B8A",background:"#EEF6FB",borderRadius:6,padding:"8px 10px",marginTop:12}}>
+              ℹ️ {t.scheduleShareHint.replace("{n}", selected.size)}
+            </div>
+          )}
+
+          <div style={{display:"flex",gap:8,marginTop:16}}>
+            <button onClick={save} style={{flex:1,padding:"10px",borderRadius:7,background:"#1A6B8A",border:"none",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+              ✓ {t.save}
+            </button>
+            <button onClick={onClose} style={{padding:"10px 16px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>
+              {t.cancel}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attendance, courses }) {
   const t = T[lang];
   const students = users.filter(u=>u.role==="student");
@@ -3565,6 +3646,7 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
   const [showAddForm, setShowAddForm] = useState(false);
   const [addForm, setAddForm] = useState({nameEn:"",nameCn:"",age:"",regYear:String(new Date().getFullYear()),regDate:"",startDate:"",duration:"",manualSessions:"",linkedUserId:""});
   const [confirmDelDirId, setConfirmDelDirId] = useState(null);
+  const [shareTarget, setShareTarget] = useState(null); // dir entry whose schedule-sharing is being edited
 
   useEffect(()=>{
     (async()=>{
@@ -3678,6 +3760,7 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
   return (
     <div>
       {confirmDelDirId && <ConfirmModal title={lang==="zh"?"刪除學生資料":"Delete Student"} message={lang==="zh"?"確認刪除此學生的資料？":"Delete this student record?"} confirmLabel={lang==="zh"?"確認刪除":"Delete"} onConfirm={doDelDir} onCancel={()=>setConfirmDelDirId(null)} danger/>}
+      {shareTarget && <ScheduleShareModal ownerEntry={shareTarget} users={users} dirEntries={dirEntries} saveDirEntries={saveDirEntries} lang={lang} setToast={setToast} onClose={()=>setShareTarget(null)}/>}
 
       {/* Header */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"0.6rem",flexWrap:"wrap",gap:8}}>
@@ -3952,8 +4035,13 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
                         : <span style={{fontSize:11,background:"#FFF3E0",color:"#E65100",borderRadius:4,padding:"2px 7px"}}>{t.dirNoAccount}</span>}
                     </td>
                     <td style={tdStyle}>
-                      <div style={{display:"flex",gap:4}}>
+                      <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
                         <button onClick={()=>startEdit(d)} style={{padding:"4px 9px",borderRadius:4,border:"0.5px solid #CFD8DC",background:"transparent",color:"#1A6B8A",fontSize:11,cursor:"pointer"}}>{t.dirEdit}</button>
+                        {linkedUser && (
+                          <button onClick={()=>setShareTarget(d)} title={t.scheduleShareBtn} style={{padding:"4px 9px",borderRadius:4,border:`0.5px solid ${(d.sharedWith||[]).length?"#1A6B8A":"#CFD8DC"}`,background:(d.sharedWith||[]).length?"#EEF6FB":"transparent",color:"#1A6B8A",fontSize:11,cursor:"pointer"}}>
+                            🔗{(d.sharedWith||[]).length>0?` ${(d.sharedWith||[]).length}`:""}
+                          </button>
+                        )}
                         {d._fromDir && <button onClick={()=>setConfirmDelDirId(entryId)} style={{padding:"4px 9px",borderRadius:4,border:"0.5px solid #FFCDD2",background:"transparent",color:"#D32F2F",fontSize:11,cursor:"pointer"}}>✕</button>}
                       </div>
                     </td>
@@ -6608,6 +6696,14 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, lang, abs
   // Student: "progress" | "schedule_side" — Teacher: "students" | "schedule_side"
   const [sideTab, setSideTab] = useState("schedule_side");
 
+  // Schedules other students have shared with this student (e.g. a guardian
+  // account for a young child) — each becomes its own read-only sidebar item.
+  const sharedSchedules = isStudent
+    ? dirEntries
+        .filter(d => (d.sharedWith||[]).includes(currentUser.id) && d.linkedUserId && d.linkedUserId!==currentUser.id)
+        .map(d => ({ studentId: d.linkedUserId, name: d.nameEn || users.find(u=>u.id===d.linkedUserId)?.name || "—" }))
+    : [];
+
   const menuItems = isStudent
     ? [
         { key:"progress",      icon:"🏆", zh:"獎牌進度", en:"My Progress" },
@@ -6615,6 +6711,11 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, lang, abs
         { key:"teacherIntro",  icon:"🎓", zh:"老師介紹", en:"My Teachers" },
         { key:"settings",      icon:"⚙️", zh:"基本資訊與設定", en:"Basic Info & Settings" },
         { key:"schedule_side", icon:"📅", zh:"課表",     en:"Schedule"   },
+        ...sharedSchedules.map(s => ({
+          key:`shared_${s.studentId}`, icon:"👪",
+          zh:t.sharedScheduleMenu.replace("{name}", s.name),
+          en:t.sharedScheduleMenu.replace("{name}", s.name),
+        })),
       ]
     : [
         { key:"students",      icon:"👥", zh:"任教學生", en:"My Students" },
@@ -6726,6 +6827,13 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, lang, abs
               ? <TeacherStudentsPanel currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} attendance={attendance} lang={lang} dirEntries={dirEntries}/>
             : isTeacher && sideTab==="availability"
               ? <TeacherAvailabilityPanel currentUser={currentUser} users={users} availability={teacherAvailability} setAvailability={setTeacherAvailability} overrides={availabilityOverrides} setOverrides={setAvailabilityOverrides} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang} setToast={setToast}/>
+            : isStudent && sideTab.startsWith("shared_")
+              ? <div style={{padding:"1.5rem"}}>
+                  <div style={{background:"#F3E5F5",border:"0.5px solid #E1BEE7",borderRadius:8,padding:"9px 13px",marginBottom:14,fontSize:12,color:"#7B1FA2"}}>
+                    👪 {t.sharedScheduleMenu.replace("{name}", sharedSchedules.find(s=>`shared_${s.studentId}`===sideTab)?.name||"")} — {lang==="zh"?"僅供檢視，無法請假或編輯":"View only — leave requests and edits are disabled"}
+                  </div>
+                  <ScheduleView currentUser={currentUser} users={users} courses={courses} lang={lang} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} setToast={setToast} feedback={feedback} setFeedback={setFeedback} viewAsStudentId={sideTab.replace("shared_","")} sharedView={true}/>
+                </div>
               : <div style={{padding:"1.5rem"}}>
                   <ScheduleView currentUser={currentUser} users={users} courses={courses} lang={lang} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} setToast={setToast} feedback={feedback} setFeedback={setFeedback}/>
                 </div>
