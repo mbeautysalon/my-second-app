@@ -49,6 +49,12 @@ const T = {
     role_student:"學生", role_teacher:"老師", role_admin:"管理員",
     weekSchedule:"本週課表", teacher:"老師", student:"學生", time:"時間",
     join:"加入會議", material:"教材", noClass:"本週無課程",
+    addToGCal:"新增到 Google 日曆", addToGCalShort:"加到日曆",
+    weekExportBtn:"本週加入日曆", weekExportTitle:"匯出本週課表",
+    weekExportDesc:"勾選要加入日曆的課堂，下載成一個日曆檔案（.ics），拿去 Google 日曆匯入，就能一次把整週的課都加進去。",
+    weekExportNone:"本週沒有可匯出的課堂", weekExportSelectAll:"全選",
+    weekExportHowTo:"下載後：開啟 Google 日曆網頁版 → 右上角齒輪「設定」→「匯入及匯出」→「匯入」，選擇剛下載的檔案即可。",
+    weekExportDownload:"下載日曆檔案", weekExportDone:"已下載，包含 {n} 堂課",
     days:["週一","週二","週三","週四","週五","週六","週日"],
     daysShort:["一","二","三","四","五","六","日"],
     subject:"科目", adminPanel:"管理後台",
@@ -258,6 +264,12 @@ const T = {
     role_student:"Student", role_teacher:"Teacher", role_admin:"Admin",
     weekSchedule:"This Week's Schedule", teacher:"Teacher", student:"Student", time:"Time",
     join:"Join", material:"Materials", noClass:"No classes this week",
+    addToGCal:"Add to Google Calendar", addToGCalShort:"Add to Calendar",
+    weekExportBtn:"Add Week to Calendar", weekExportTitle:"Export This Week's Schedule",
+    weekExportDesc:"Check the sessions you want, and download a single calendar file (.ics) — import it into Google Calendar to add the whole week at once.",
+    weekExportNone:"No sessions to export this week", weekExportSelectAll:"Select All",
+    weekExportHowTo:"After downloading: open Google Calendar on the web → gear icon \"Settings\" → \"Import & export\" → \"Import\", then choose the file you just downloaded.",
+    weekExportDownload:"Download Calendar File", weekExportDone:"Downloaded — {n} session(s) included",
     days:["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],
     daysShort:["M","T","W","T","F","S","S"],
     subject:"Subject", adminPanel:"Admin Panel",
@@ -562,6 +574,82 @@ function addMins(timeStr, mins) {
   const [h,m] = timeStr.split(":").map(Number);
   const t = h*60+m+mins;
   return `${String(Math.floor(t/60)).padStart(2,"0")}:${String(t%60).padStart(2,"0")}`;
+}
+
+// ─── Google Calendar "quick add" link ──────────────────────────────────────
+// Builds a URL that opens Google Calendar with a pre-filled event — no API
+// key, no OAuth login, works for anyone with a Google account. Dates are sent
+// WITHOUT a timezone suffix (floating/local time) so the event lands on the
+// person's calendar at the same wall-clock time shown in the app (e.g. "9:00"
+// shows up as 9:00 for them), rather than being converted across timezones.
+function buildGoogleCalendarUrl({ title, dateStr, startTime, durationMins, details, location }) {
+  const [y, mo, d] = dateStr.split("-");
+  const [sh, sm] = startTime.split(":").map(Number);
+  const startTotalMin = sh * 60 + sm;
+  const endTotalMin = startTotalMin + durationMins;
+  const fmtStamp = (totalMin) => {
+    const hh = String(Math.floor(totalMin / 60) % 24).padStart(2, "0");
+    const mm = String(totalMin % 60).padStart(2, "0");
+    return `${y}${mo}${d}T${hh}${mm}00`;
+  };
+  const params = new URLSearchParams({
+    action: "TEMPLATE",
+    text: title || "",
+    dates: `${fmtStamp(startTotalMin)}/${fmtStamp(endTotalMin)}`,
+    details: details || "",
+    location: location || "",
+  });
+  return `https://calendar.google.com/calendar/render?${params.toString()}`;
+}
+
+// ─── Batch .ics calendar export ────────────────────────────────────────────
+// Google's quick-add link only supports one event at a time, and browsers
+// block opening many tabs at once from a single click — so for "add my whole
+// week in one go" we generate a single standard .ics file containing every
+// selected session as its own VEVENT. The person downloads it once, then uses
+// their calendar app's own "Import" feature (Google/Apple/Outlook all support
+// this) to bring every event in together in one step.
+function icsEscape(str) {
+  return String(str||"").replace(/\\/g,"\\\\").replace(/;/g,"\\;").replace(/,/g,"\\,").replace(/\n/g,"\\n");
+}
+function buildICSCalendar(events) {
+  const fmtStamp = (dateStr, timeStr) => {
+    const [y,mo,d] = dateStr.split("-");
+    const [h,m] = timeStr.split(":").map(Number);
+    return `${y}${mo}${d}T${String(h).padStart(2,"0")}${String(m).padStart(2,"0")}00`;
+  };
+  const nowStamp = new Date().toISOString().replace(/[-:]/g,"").split(".")[0]+"Z";
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//ES Course Platform//Schedule Export//EN",
+    "CALSCALE:GREGORIAN",
+  ];
+  events.forEach(ev => {
+    const endTime = addMins(ev.startTime, ev.durationMins);
+    lines.push(
+      "BEGIN:VEVENT",
+      `UID:${ev.uid||genId()}@es-course-platform`,
+      `DTSTAMP:${nowStamp}`,
+      `DTSTART:${fmtStamp(ev.dateStr, ev.startTime)}`,
+      `DTEND:${fmtStamp(ev.dateStr, endTime)}`,
+      `SUMMARY:${icsEscape(ev.title)}`,
+      `DESCRIPTION:${icsEscape(ev.details)}`,
+      `LOCATION:${icsEscape(ev.location)}`,
+      "END:VEVENT",
+    );
+  });
+  lines.push("END:VCALENDAR");
+  return lines.join("\r\n");
+}
+function downloadICS(events, filename) {
+  const content = buildICSCalendar(events);
+  const blob = new Blob([content], {type:"text/calendar;charset=utf-8"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename || "schedule.ics";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // ─── Course schedule helpers ────────────────────────────────────────────────
@@ -1393,6 +1481,20 @@ function SlotCalendarView({ slots, users, lang, currentUser, absences, materials
                       {attRec&&<div style={{fontSize:8,color:attRec.type==="absent"?"#D32F2F":attRec.type==="excused"?"#1A6B8A":attRec.type==="teacher_leave"?"#FF9800":"#9E9E9E",fontWeight:600}}>{attRec.type==="absent"?(lang==="zh"?"缺勤":"Absent"):attRec.type==="excused"?(lang==="zh"?"請假":"Leave"):attRec.type==="teacher_leave"?(lang==="zh"?"師假":"T.Leave"):(lang==="zh"?"備註":"Note")}</div>}
                       <div style={{display:"flex",flexWrap:"wrap",gap:2,marginTop:3,alignItems:"center"}}>
                         {!isAbsent&&!isPast&&sl.course.meetingUrl&&<a href={sl.course.meetingUrl} target="_blank" rel="noreferrer" style={{fontSize:9,fontWeight:500,background:col.border,color:"#fff",borderRadius:3,padding:"2px 5px",textDecoration:"none"}}>{t.join}</a>}
+                        {!isAbsent&&(
+                          <a
+                            href={buildGoogleCalendarUrl({
+                              title: sl.course.subject,
+                              dateStr: sl.date,
+                              startTime: sl.start,
+                              durationMins: sl.course.duration,
+                              details: `${lang==="zh"?"老師":"Teacher"}: ${teacher?.name||"—"}\n${lang==="zh"?"學生":"Student"}: ${student?.name||"—"}${sl.course.meetingUrl?`\n${lang==="zh"?"上課連結":"Meeting link"}: ${sl.course.meetingUrl}`:""}`,
+                              location: sl.course.meetingUrl||"",
+                            })}
+                            target="_blank" rel="noreferrer" title={t.addToGCal}
+                            style={{fontSize:9,background:"transparent",border:`1px solid ${dimBorder}`,color:dimText,borderRadius:3,padding:"2px 5px",textDecoration:"none"}}
+                          >📅</a>
+                        )}
                         <button onClick={()=>setMatTarget({course:sl.course,date:sl.date})} style={{fontSize:9,background:"transparent",border:`1px solid ${dimBorder}`,color:dimText,borderRadius:3,padding:"2px 5px",cursor:"pointer"}}>📄{dayMatCount>0?` ${dayMatCount}`:""}</button>
                         {canAbsent&&!isAbsent&&!isPast&&!attRec&&<button onClick={()=>{if(leaveOk)onAbsent(sl.course,sl.dayIndex);else setToast(t.absentTooLate);}} style={{fontSize:8,background:"transparent",border:`1px solid ${leaveOk?"#9E9E9E":"#E0E0E0"}`,color:leaveOk?"#9E9E9E":"#CFD8DC",borderRadius:3,padding:"2px 4px",cursor:leaveOk?"pointer":"not-allowed",opacity:leaveOk?0.6:0.25,marginLeft:"auto"}} title={leaveOk?t.absent:t.absentTooLate}>{lang==="zh"?"假":"Lv"}</button>}
                         {/* Teacher: write/edit feedback */}
@@ -1751,6 +1853,23 @@ function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, ma
         )}
         <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap",alignItems:"center"}}>
           {!isAbsent&&!isPast&&course.meetingUrl&&<a href={course.meetingUrl} target="_blank" rel="noreferrer" style={{fontSize:13,fontWeight:500,background:col.border,color:"#fff",borderRadius:6,padding:"5px 14px",textDecoration:"none"}}>{t.join}</a>}
+          {!isAbsent&&(
+            <a
+              href={buildGoogleCalendarUrl({
+                title: course.subject,
+                dateStr: date,
+                startTime: start,
+                durationMins: course.duration,
+                details: `${lang==="zh"?"老師":"Teacher"}: ${teacher?.name||"—"}\n${lang==="zh"?"學生":"Student"}: ${student?.name||"—"}${course.meetingUrl?`\n${lang==="zh"?"上課連結":"Meeting link"}: ${course.meetingUrl}`:""}`,
+                location: course.meetingUrl||"",
+              })}
+              target="_blank" rel="noreferrer"
+              title={t.addToGCal}
+              style={{fontSize:13,fontWeight:500,background:"transparent",border:`1.5px solid ${isPast?"#CFD8DC":col.border}`,color:textCol,borderRadius:6,padding:"5px 14px",textDecoration:"none",display:"inline-flex",alignItems:"center",gap:4}}
+            >
+              📅 {t.addToGCalShort}
+            </a>
+          )}
           <button onClick={()=>openMat(date)} style={{fontSize:13,fontWeight:500,background:"transparent",border:`1.5px solid ${isAbsent||isPast?"#CFD8DC":col.border}`,color:textCol,borderRadius:6,padding:"5px 14px",cursor:"pointer"}}>
             📄 {t.matForDay}{dayMatCount>0?` (${dayMatCount})`:""}
           </button>
@@ -1801,11 +1920,90 @@ function getWeekSlots(courses, enrollments, weekDates) {
   return slots;
 }
 
+// ─── Week export modal — pick sessions, download as one .ics file ───────────
+function WeekExportModal({ weekSlots, absences, lang, setToast, onClose }) {
+  const t = T[lang];
+  const notAbsent = (sl) => !absences.some(a=>a.courseId===sl.course.id&&a.dateStr===sl.date);
+  const exportable = weekSlots.filter(notAbsent);
+  const [selected, setSelected] = useState(new Set(exportable.map((_,i)=>i)));
+
+  const toggle = (i) => setSelected(prev=>{const n=new Set(prev); n.has(i)?n.delete(i):n.add(i); return n;});
+  const allSelected = exportable.length>0 && exportable.every((_,i)=>selected.has(i));
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(exportable.map((_,i)=>i)));
+
+  const doExport = () => {
+    const picked = exportable.filter((_,i)=>selected.has(i));
+    if (!picked.length) return;
+    const events = picked.map(sl => ({
+      title: sl.course.subject,
+      dateStr: sl.date,
+      startTime: sl.start,
+      durationMins: sl.course.duration,
+      details: sl.course.meetingUrl ? `${lang==="zh"?"上課連結":"Meeting link"}: ${sl.course.meetingUrl}` : "",
+      location: sl.course.meetingUrl || "",
+      uid: `${sl.course.id}-${sl.date}-${sl.sessionNo}`,
+    }));
+    downloadICS(events, `schedule_${weekSlots[0]?.date||""}.ics`);
+    setToast(t.weekExportDone.replace("{n}", picked.length));
+    onClose();
+  };
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9300,padding:"1rem"}}>
+      <div style={{background:"#FFFFFF",borderRadius:16,width:"100%",maxWidth:440,boxSizing:"border-box",boxShadow:"0 8px 36px rgba(23,47,57,0.2)",overflow:"hidden",maxHeight:"85vh",display:"flex",flexDirection:"column"}}>
+        <div style={{background:"#172F39",padding:"13px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+          <span style={{fontSize:14,fontWeight:600,color:"#fff"}}>📅 {t.weekExportTitle}</span>
+          <button onClick={onClose} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",color:"#fff",fontSize:16}}>×</button>
+        </div>
+        <div style={{padding:"16px 18px",overflowY:"auto"}}>
+          <p style={{fontSize:12,color:"#546E7A",margin:"0 0 12px",lineHeight:1.6}}>{t.weekExportDesc}</p>
+
+          {exportable.length===0 ? (
+            <p style={{color:"#9E9E9E",fontSize:13,textAlign:"center",padding:"1.5rem 0"}}>{t.weekExportNone}</p>
+          ) : (
+            <>
+              <label style={{display:"flex",alignItems:"center",gap:8,padding:"6px 4px",fontSize:12,color:"#546E7A",cursor:"pointer",borderBottom:"0.5px solid #F0F0F0",marginBottom:4,fontWeight:500}}>
+                <input type="checkbox" checked={allSelected} onChange={toggleAll} style={{cursor:"pointer"}}/>
+                {t.weekExportSelectAll} ({exportable.length})
+              </label>
+              <div style={{display:"flex",flexDirection:"column",gap:2,maxHeight:280,overflowY:"auto"}}>
+                {exportable.map((sl,i)=>(
+                  <label key={i} style={{display:"flex",alignItems:"center",gap:9,padding:"7px 6px",borderRadius:6,cursor:"pointer",background:selected.has(i)?"#EEF6FB":"transparent"}}>
+                    <input type="checkbox" checked={selected.has(i)} onChange={()=>toggle(i)} style={{cursor:"pointer"}}/>
+                    <div style={{minWidth:0}}>
+                      <div style={{fontSize:12,fontWeight:600,color:"#172F39",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sl.course.subject}</div>
+                      <div style={{fontSize:11,color:"#9E9E9E"}}>{sl.date} ({T[lang].days[sl.dayIndex]}) · {sl.start}</div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </>
+          )}
+
+          <div style={{fontSize:11,color:"#1A6B8A",background:"#EEF6FB",borderRadius:6,padding:"9px 11px",marginTop:14,lineHeight:1.6}}>
+            ℹ️ {t.weekExportHowTo}
+          </div>
+
+          <div style={{display:"flex",gap:8,marginTop:14}}>
+            <button onClick={doExport} disabled={selected.size===0} style={{flex:1,padding:"10px",borderRadius:7,background:selected.size>0?"#1A6B8A":"#E0E0E0",border:"none",color:selected.size>0?"#fff":"#9E9E9E",fontSize:13,fontWeight:600,cursor:selected.size>0?"pointer":"not-allowed"}}>
+              ⬇ {t.weekExportDownload} ({selected.size})
+            </button>
+            <button onClick={onClose} style={{padding:"10px 16px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>
+              {t.cancel}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ScheduleView({ currentUser, users, courses, lang, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, setToast, feedback, setFeedback, viewAsStudentId, sharedView }) {
   const t = T[lang];
   const [viewMode, setViewMode] = useState("calendar");
   const [weekOffset, setWeekOffset] = useState(0);
   const [absentTarget, setAbsentTarget] = useState(null);
+  const [showWeekExport, setShowWeekExport] = useState(false);
   const isAdmin = currentUser.role==="admin";
 
   // Admin filter state
@@ -1877,6 +2075,7 @@ function ScheduleView({ currentUser, users, courses, lang, absences, setAbsences
   return (
     <div>
       {absentTarget&&<AbsenceModal course={absentTarget.course} dayIndex={absentTarget.dayIndex} users={users} lang={lang} currentUser={currentUser} onConfirm={confirmAbsent} onClose={()=>setAbsentTarget(null)}/>}
+      {showWeekExport&&<WeekExportModal weekSlots={weekSlots} absences={absences} lang={lang} setToast={setToast} onClose={()=>setShowWeekExport(false)}/>}
 
       {/* ── Top bar ── */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"0.75rem",flexWrap:"wrap",gap:8}}>
@@ -1889,6 +2088,11 @@ function ScheduleView({ currentUser, users, courses, lang, absences, setAbsences
           </div>
         </div>
         <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+          {weekSlots.length>0 && (
+            <button onClick={()=>setShowWeekExport(true)} style={{...btnStyle(false),display:"flex",alignItems:"center",gap:5}}>
+              📅 {t.weekExportBtn}
+            </button>
+          )}
           {["calendar","list"].map(m=>(
             <button key={m} onClick={()=>setViewMode(m)} style={btnStyle(viewMode===m)}>
               {m==="calendar"?t.calendarView:t.listView}
@@ -3688,25 +3892,26 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
   const students = users.filter(u=>u.role==="student");
 
   // Compute real sessions for a student (from enrollments+attendance) + manual supplement
-  // Compute sessions with full breakdown
-  // confirmedSessions (if set) = admin-confirmed official count → used for medal
-  // otherwise: system (from enrollments) + manual supplement
+  // "confirmed" is a one-time, admin-entered baseline (e.g. prior history from
+  // before this platform) — it's ADDED to the live system count, not a freeze/
+  // override. The old override behavior was the bug: once confirmed, the
+  // system's ongoing session growth silently stopped counting.
   const getSessions = (linkedUserId, manualSessions, confirmedSessions) => {
     const manual = parseInt(manualSessions||0)||0;
     const confirmed = confirmedSessions!==undefined && confirmedSessions!==""
       ? (parseInt(confirmedSessions)||0)
-      : null;
+      : 0;
     const system = linkedUserId
       ? calcStudentSessions(linkedUserId, enrollments||[], attendance||[], courses||[]).full
       : 0;
-    const unofficial = system + manual;
+    const total = system + manual + confirmed;
     return {
       system,
       manual,
-      unofficial,           // system + manual, before confirmation
-      confirmed,            // null if not yet confirmed
-      total: confirmed !== null ? confirmed : unofficial,  // what medal uses
-      isConfirmed: confirmed !== null,
+      confirmed,             // one-time baseline, always added — 0 if never set
+      unofficial: system + manual, // kept for any legacy display that wants the pre-baseline figure
+      total,                  // what medal uses — always live, always growing
+      hasBaseline: confirmed > 0,
     };
   };
 
@@ -4035,54 +4240,43 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
                     <td style={tdStyle}>{d.regDate||"—"}</td>
                     <td style={tdStyle}>{d.startDate||"—"}</td>
                     <td style={tdStyle}>{d.duration?(d.duration+" min"):"—"}</td>
-                    {/* Sessions column — with confirmation flow */}
+                    {/* Sessions column — total is always live (system + manual + baseline) */}
                     <td style={tdStyle}>
                       {d.linkedUserId ? (
                         <div>
-                          {/* Official count badge (if confirmed) */}
-                          {sess.isConfirmed ? (
-                            <div>
-                              <div style={{display:"flex",alignItems:"baseline",gap:4,marginBottom:2}}>
-                                <span style={{fontSize:15,fontWeight:800,color:medal?medal.color:"#2E7D32"}}>{sess.confirmed}</span>
-                                <span style={{fontSize:10,color:"#9E9E9E"}}>{lang==="zh"?"點":"pt"}</span>
-                                <span style={{fontSize:10,background:"#E8F5E9",color:"#2E7D32",borderRadius:3,padding:"1px 5px",fontWeight:600}}>✓ {lang==="zh"?"已確認":"Confirmed"}</span>
-                              </div>
-                              {medal&&<div style={{fontSize:10,color:medal.color,fontWeight:500}}>{lang==="zh"?medal.zh:medal.en}</div>}
-                              <div style={{fontSize:10,color:"#9E9E9E",marginTop:2}}>
-                                {lang==="zh"?"(系統":"(Sys"}: {sess.system} + {lang==="zh"?"手動":"M"}: {sess.manual})
-                              </div>
-                            </div>
-                          ) : (
-                            <div>
-                              {/* Unconfirmed: show total prominently with confirm CTA */}
-                              <div style={{display:"flex",alignItems:"baseline",gap:4,marginBottom:2}}>
-                                <span style={{fontSize:14,fontWeight:700,color:"#546E7A"}}>{sess.unofficial}</span>
-                                <span style={{fontSize:10,color:"#9E9E9E"}}>{lang==="zh"?"點":"pt"}</span>
-                                <span style={{fontSize:10,background:"#FFF3E0",color:"#E65100",borderRadius:3,padding:"1px 5px"}}>{lang==="zh"?"未確認":"Pending"}</span>
-                              </div>
-                              <div style={{fontSize:10,color:"#9E9E9E",marginBottom:4}}>
-                                {lang==="zh"?"系統":"Sys"}: {sess.system}
-                                {sess.manual>0&&<span style={{color:"#1A6B8A"}}> + {lang==="zh"?"手動":"M"}: {sess.manual}</span>}
-                              </div>
-                              {/* Confirm button */}
-                              <button
-                                onClick={()=>{
-                                  const next = dirEntries.map(x=>
-                                    (x.id===entryId||x.linkedUserId===entryId)
-                                      ? {...x, confirmedSessions: sess.unofficial, confirmedAt: new Date().toISOString()}
-                                      : x
-                                  );
-                                  saveDirEntries(next);
-                                  setToast(lang==="zh"?`已確認 ${sess.unofficial} 堂為正式完課數`:`${sess.unofficial} sessions confirmed`);
-                                }}
-                                style={{fontSize:11,padding:"3px 10px",borderRadius:5,background:"#1A6B8A",border:"none",color:"#fff",cursor:"pointer",fontWeight:500}}
-                              >
-                                ✓ {lang==="zh"?"確認為正式":"Confirm"}
-                              </button>
-                            </div>
+                          <div style={{display:"flex",alignItems:"baseline",gap:4,marginBottom:2}}>
+                            <span style={{fontSize:15,fontWeight:800,color:medal?medal.color:"#2E7D32"}}>{sess.total}</span>
+                            <span style={{fontSize:10,color:"#9E9E9E"}}>{lang==="zh"?"點":"pt"}</span>
+                          </div>
+                          {medal&&<div style={{fontSize:10,color:medal.color,fontWeight:500}}>{lang==="zh"?medal.zh:medal.en}</div>}
+                          <div style={{fontSize:10,color:"#9E9E9E",marginTop:2}}>
+                            {lang==="zh"?"系統":"Sys"}: {sess.system}
+                            {sess.manual>0&&<span style={{color:"#1A6B8A"}}> + {lang==="zh"?"手動":"M"}: {sess.manual}</span>}
+                            {sess.hasBaseline&&<span style={{color:"#2E7D32"}}> + {lang==="zh"?"已確認基準":"Baseline"}: {sess.confirmed}</span>}
+                          </div>
+                          {/* Merge manual into the permanent baseline — a one-time save that the
+                              system then keeps adding to automatically going forward */}
+                          {sess.manual>0 && (
+                            <button
+                              onClick={()=>{
+                                const prevConfirmed = parseInt(d.confirmedSessions||0)||0;
+                                const prevManual = parseInt(d.manualSessions||0)||0;
+                                const merged = prevConfirmed + prevManual;
+                                const next = dirEntries.map(x=>
+                                  (x.id===entryId||x.linkedUserId===entryId)
+                                    ? {...x, confirmedSessions: merged, manualSessions: 0, confirmedAt: new Date().toISOString()}
+                                    : x
+                                );
+                                saveDirEntries(next);
+                                setToast(lang==="zh"?`已併入基準，總計 ${merged} 點，後續系統會自動累計新完課點數`:`Merged into baseline (${merged} pts) — the system will keep adding new sessions automatically`);
+                              }}
+                              style={{fontSize:11,padding:"3px 10px",borderRadius:5,background:"#1A6B8A",border:"none",color:"#fff",cursor:"pointer",fontWeight:500,marginTop:4}}
+                            >
+                              ✓ {lang==="zh"?"併入正式基準":"Merge to Baseline"}
+                            </button>
                           )}
-                          {/* Reset confirmed (allow re-editing) */}
-                          {sess.isConfirmed && (
+                          {/* Reset the permanent baseline back to 0, e.g. to fix a mistaken entry */}
+                          {sess.hasBaseline && (
                             <button
                               onClick={()=>{
                                 const next = dirEntries.map(x=>
@@ -4091,11 +4285,11 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
                                     : x
                                 );
                                 saveDirEntries(next);
-                                setToast(lang==="zh"?"已取消確認，可重新編輯":"Confirmation reset");
+                                setToast(lang==="zh"?"已清除確認基準":"Baseline cleared");
                               }}
                               style={{fontSize:10,padding:"2px 7px",borderRadius:4,background:"transparent",border:"0.5px solid #CFD8DC",color:"#9E9E9E",cursor:"pointer",marginTop:4,display:"block"}}
                             >
-                              {lang==="zh"?"取消確認":"Unconfirm"}
+                              {lang==="zh"?"清除基準":"Clear Baseline"}
                             </button>
                           )}
                         </div>
@@ -5534,12 +5728,13 @@ const MEDALS = [
 ];
 
 // 25-min class = 1 session, 50-min class = 2 sessions (no fractions)
-// confirmedOverride: if set by admin, use this as the total instead of calculating
+// `confirmedOverride` used to REPLACE the live calculation entirely, which was
+// the bug: once admin confirmed a total, the system's ongoing session count
+// never got added on top of it again. It's now treated as a one-time baseline
+// that's ADDED to the live, ever-growing system count — admin enters prior
+// history once, and everything the platform tracks afterward keeps
+// accumulating on top of it automatically.
 function calcStudentSessions(studentId, enrollments, attendance, courses, confirmedOverride) {
-  if (confirmedOverride !== undefined && confirmedOverride !== null && confirmedOverride !== "") {
-    const c = parseInt(confirmedOverride)||0;
-    return { full: c, half: 0, total: c };
-  }
   const today = new Date().toISOString().slice(0,10);
   let count = 0;
   enrollments.filter(e=>e.studentId===studentId).forEach(enr=>{
@@ -5554,8 +5749,11 @@ function calcStudentSessions(studentId, enrollments, attendance, courses, confir
       count += sessVal;
     });
   });
-  // full = total count, half = 0 (kept for API compat), total = count
-  return { full: count, half: 0, total: count };
+  const baseline = (confirmedOverride !== undefined && confirmedOverride !== null && confirmedOverride !== "")
+    ? (parseInt(confirmedOverride)||0) : 0;
+  const total = count + baseline;
+  // full/total = live system count + one-time baseline (half kept at 0 for API compat)
+  return { full: total, half: 0, total: total, systemOnly: count, baseline };
 }
 
 function getMedalInfo(totalFloat) {
