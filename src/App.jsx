@@ -82,6 +82,11 @@ const T = {
     // Materials
     materials:"教材管理", addMaterial:"新增教材", materialTitle:"教材名稱", materialUrl:"教材網址",
     materialDate:"上課日期", materialDesc:"備註（選填）", materialSaved:"教材已儲存",
+    matContinueBtn:"延續到下一堂", matContinueHint:"此教材上一堂課沒有上完？一鍵複製到下一堂課",
+    matContinueTitle:"確認延續教材", matContinueDesc:"將這份教材複製一份到課程的下一堂課，原本這一堂的教材不會被刪除或修改。",
+    matContinueFrom:"目前教材", matContinueTo:"將新增至",
+    matContinueWarnExisting:"該堂課已有 {n} 份教材，仍會另外新增這一份",
+    matContinueConfirm:"確認新增", matContinuedToast:"已複製到下一堂課",
     materialDeleted:"教材已刪除", confirmDeleteMaterial:"確認刪除此教材？",
     noMaterials:"尚無教材紀錄", openMaterial:"開啟",
     editMaterial:"編輯", manageMaterials:"管理教材",
@@ -286,6 +291,11 @@ const T = {
     // Materials
     materials:"Materials", addMaterial:"Add Material", materialTitle:"Title", materialUrl:"URL",
     materialDate:"Class Date", materialDesc:"Notes (optional)", materialSaved:"Material saved",
+    matContinueBtn:"Carry to Next Class", matContinueHint:"Didn't finish this material last class? Copy it to the next class in one click",
+    matContinueTitle:"Confirm Carry Forward", matContinueDesc:"This copies the material onto the course's next class — the original stays as-is.",
+    matContinueFrom:"Current Material", matContinueTo:"Will Be Added To",
+    matContinueWarnExisting:"That class already has {n} material(s) — this will be added alongside them",
+    matContinueConfirm:"Confirm Add", matContinuedToast:"Copied to next class",
     materialDeleted:"Material deleted", confirmDeleteMaterial:"Delete this material?",
     noMaterials:"No materials yet", openMaterial:"Open",
     editMaterial:"Edit", manageMaterials:"Manage Materials",
@@ -883,6 +893,26 @@ function MaterialPanel({ course, initialDate, users, lang, currentUser, material
     setConfirmDelId(null);
   };
 
+  // "延續到下一堂課" — copies a material forward to the course's NEXT real
+  // scheduled date (not next week/same day-of-week — the actual next session,
+  // which could be sooner if the course meets multiple times a week). Kept
+  // generic under `canEdit` (admin OR teacher) so a teacher can use this too
+  // once they're given access to manage their own course's materials.
+  const [continueTarget, setContinueTarget] = useState(null); // material being continued
+  const getNextValidDate = (fromDate) => validDates.find(d => d > fromDate) || null;
+  const confirmContinue = () => {
+    if (!continueTarget) return;
+    const nextDate = getNextValidDate(continueTarget.date);
+    if (!nextDate) return;
+    setMaterials(ms => [...ms, {
+      id: genId(), courseId: course.id, date: nextDate, dayIndex: dateDayIndex(nextDate),
+      title: continueTarget.title, url: continueTarget.url, desc: continueTarget.desc,
+      addedBy: currentUser.id, addedAt: new Date().toISOString(),
+    }]);
+    setToast(t.matContinuedToast);
+    setContinueTarget(null);
+  };
+
   const startEdit = (m) => {
     setEditing(m);
     setForm({title: m.title, url: m.url, date: m.date || "", desc: m.desc || "", dayIndex: m.dayIndex ?? 0});
@@ -908,6 +938,50 @@ function MaterialPanel({ course, initialDate, users, lang, currentUser, material
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:8900}}>
       {confirmDelId && <ConfirmModal title={lang==="zh"?"刪除教材":"Delete Material"} message={lang==="zh"?"確認刪除此教材？此操作無法復原。":"Delete this material? This cannot be undone."} confirmLabel={lang==="zh"?"確認刪除":"Delete"} onConfirm={doDelMaterial} onCancel={()=>setConfirmDelId(null)} danger/>}
+      {continueTarget && (() => {
+        const nextDate = getNextValidDate(continueTarget.date);
+        const nextDayLabel = nextDate ? `${nextDate} (${T[lang].days[dateDayIndex(nextDate)]})` : "";
+        const nextDateAlreadyHas = materials.filter(m=>m.courseId===course.id && m.date===nextDate).length;
+        return (
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9400,padding:"1rem"}}>
+            <div style={{background:"#FFFFFF",borderRadius:16,width:"100%",maxWidth:400,boxSizing:"border-box",boxShadow:"0 8px 36px rgba(23,47,57,0.2)",overflow:"hidden"}}>
+              <div style={{background:"#172F39",padding:"13px 18px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:14,fontWeight:600,color:"#fff"}}>➡️ {t.matContinueTitle}</span>
+                <button onClick={()=>setContinueTarget(null)} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",color:"#fff",fontSize:16}}>×</button>
+              </div>
+              <div style={{padding:"16px 18px"}}>
+                <p style={{fontSize:12,color:"#546E7A",margin:"0 0 12px",lineHeight:1.6}}>{t.matContinueDesc}</p>
+
+                <div style={{background:"#F5F5F5",borderRadius:8,padding:"10px 13px",marginBottom:10}}>
+                  <div style={{fontSize:11,color:"#9E9E9E",marginBottom:2}}>{t.matContinueFrom}</div>
+                  <div style={{fontSize:13,fontWeight:600,color:"#172F39"}}>{continueTarget.title}</div>
+                  <div style={{fontSize:11,color:"#546E7A",marginTop:2}}>{continueTarget.date} ({T[lang].days[continueTarget.dayIndex]})</div>
+                  <div style={{fontSize:11,color:"#1A6B8A",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:4}}>{continueTarget.url}</div>
+                </div>
+
+                <div style={{textAlign:"center",fontSize:16,color:"#9E9E9E",marginBottom:10}}>↓</div>
+
+                <div style={{background:"#EEF6FB",border:"1px solid #CFE3EF",borderRadius:8,padding:"10px 13px",marginBottom:12}}>
+                  <div style={{fontSize:11,color:"#1A6B8A",marginBottom:2}}>{t.matContinueTo}</div>
+                  <div style={{fontSize:13,fontWeight:600,color:"#172F39"}}>{nextDayLabel}</div>
+                  {nextDateAlreadyHas>0 && (
+                    <div style={{fontSize:11,color:"#E65100",marginTop:6}}>⚠️ {t.matContinueWarnExisting.replace("{n}", nextDateAlreadyHas)}</div>
+                  )}
+                </div>
+
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={confirmContinue} style={{flex:1,padding:"9px",borderRadius:7,background:"#1A6B8A",border:"none",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                    ✓ {t.matContinueConfirm}
+                  </button>
+                  <button onClick={()=>setContinueTarget(null)} style={{padding:"9px 16px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>
+                    {t.cancel}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       <div style={{background:"#FFFFFF",borderRadius:"18px 18px 0 0",width:"100%",maxWidth:560,maxHeight:"90vh",display:"flex",flexDirection:"column",boxSizing:"border-box"}}>
 
         {/* ── Header ── */}
@@ -1048,6 +1122,11 @@ function MaterialPanel({ course, initialDate, users, lang, currentUser, material
                     {canEdit && (
                       <>
                         <button onClick={()=>startEdit(m)} style={{fontSize:11,background:"transparent",border:"0.5px solid #CFD8DC",borderRadius:5,color:"#546E7A",padding:"3px 9px",cursor:"pointer"}}>{t.editMaterial}</button>
+                        {getNextValidDate(m.date) && (
+                          <button onClick={()=>setContinueTarget(m)} title={t.matContinueHint} style={{fontSize:11,background:"transparent",border:"0.5px solid #1A6B8A",borderRadius:5,color:"#1A6B8A",padding:"3px 9px",cursor:"pointer"}}>
+                            ➡️ {t.matContinueBtn}
+                          </button>
+                        )}
                         <button onClick={()=>del(m.id)} style={{fontSize:11,background:"transparent",border:"0.5px solid #C0392B",borderRadius:5,color:"#D32F2F",padding:"3px 9px",cursor:"pointer"}}>{t.deleteCourse}</button>
                       </>
                     )}
