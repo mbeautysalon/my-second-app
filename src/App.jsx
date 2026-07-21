@@ -1529,16 +1529,38 @@ function AdminSessionModal({ slot, users, lang, attendance, setAttendance, enrol
   const existing = attendance.find(a=>a.enrollmentId===enrollment.id&&a.date===date);
   const [type, setType] = useState(existing?.type||"normal");
   const [note, setNote] = useState(existing?.note||"");
+  // "更換時間補課" — moves THIS ONE session to an admin-chosen date/time,
+  // rather than creating an absence-style attendance record. Doesn't touch
+  // totalSessions or any other session — it's a direct, single-session move.
+  const [rsDate, setRsDate] = useState(date);
+  const [rsTime, setRsTime] = useState(startTime);
 
   const OPTS = [
     {k:"normal",         icon:"✅", zh:"正常上課",          en:"Normal (attended)",        color:"#2E7D32", hint:lang==="zh"?"清除異常狀態":"Marks as attended"},
     {k:"excused",        icon:"📘", zh:"學生請假（順延）",   en:"Student Leave (deferred)", color:"#1A6B8A", hint:lang==="zh"?"不扣課，自動順延至下一堂":"Not deducted, auto-deferred"},
     {k:"teacher_leave",  icon:"👨‍🏫",zh:"老師請假（順延）",   en:"Teacher Leave (deferred)", color:"#FF9800", hint:lang==="zh"?"老師假，學生不扣課":"Teacher absent, not deducted"},
     {k:"absent",         icon:"❌", zh:"學生缺勤（扣課）",   en:"Absent (deducted)",        color:"#D32F2F", hint:lang==="zh"?"此堂扣課，不順延":"Session deducted"},
+    {k:"reschedule",     icon:"🔄", zh:"更換時間補課",       en:"Reschedule / Make-up",     color:"#7B1FA2", hint:lang==="zh"?"只改這一堂到指定日期時段，不影響其他堂":"Moves only this session to a chosen date/time"},
     {k:"other",          icon:"📝", zh:"其他備註",           en:"Other / Note only",        color:"#9E9E9E", hint:lang==="zh"?"僅記錄備註，不影響計算":"Note only, no effect"},
   ];
 
+  const doReschedule = () => {
+    if (!rsDate || !rsTime) { setToast(lang==="zh"?"請選擇日期與時間":"Please pick a date and time"); return; }
+    const newDayIndex = (new Date(rsDate+"T00:00:00").getDay()+6)%7;
+    const newSched = (enrollment.scheduledDates||[]).map(s =>
+      (s.date===date && s.sessionNo===sessionNo)
+        ? { ...s, date: rsDate, dayIndex: newDayIndex, customStart: rsTime, rescheduledFrom: s.rescheduledFrom || date }
+        : s
+    );
+    setEnrollments(es=>es.map(e=>e.id===enrollment.id?{...e,scheduledDates:newSched}:e));
+    // Clear any attendance exception that was on the OLD date for this session (e.g. a stale leave record)
+    setAttendance(prev=>prev.filter(a=>!(a.enrollmentId===enrollment.id&&a.date===date)));
+    setToast(lang==="zh"?`已將此堂課改到 ${rsDate} ${rsTime}`:`This session moved to ${rsDate} ${rsTime}`);
+    onClose();
+  };
+
   const save = () => {
+    if (type==="reschedule") { doReschedule(); return; }
     if (type==="normal") {
       // Remove any existing record — session is simply normal
       setAttendance(prev=>prev.filter(a=>!(a.enrollmentId===enrollment.id&&a.date===date)));
@@ -1621,8 +1643,26 @@ function AdminSessionModal({ slot, users, lang, attendance, setAttendance, enrol
             ))}
           </div>
 
-          {/* Note — hide for "normal" */}
-          {type!=="normal" && (
+          {/* Reschedule date/time picker */}
+          {type==="reschedule" && (
+            <div style={{marginBottom:14,background:"#F3E5F5",borderRadius:8,padding:"12px 13px"}}>
+              <div style={{fontSize:11,color:"#7B1FA2",marginBottom:8}}>{lang==="zh"?"這堂課原本在":"This session was originally on"} {date} ({T[lang].days[dayIndex]}) {startTime}</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <div>
+                  <label style={{fontSize:11,color:"#546E7A",display:"block",marginBottom:4}}>{lang==="zh"?"新日期":"New Date"}</label>
+                  <input type="date" style={{width:"100%",boxSizing:"border-box",padding:"7px 9px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13}} value={rsDate} onChange={e=>setRsDate(e.target.value)}/>
+                </div>
+                <div>
+                  <label style={{fontSize:11,color:"#546E7A",display:"block",marginBottom:4}}>{lang==="zh"?"新時間":"New Time"}</label>
+                  <input type="time" style={{width:"100%",boxSizing:"border-box",padding:"7px 9px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13}} value={rsTime} onChange={e=>setRsTime(e.target.value)}/>
+                </div>
+              </div>
+              {rsDate && <div style={{fontSize:11,color:"#7B1FA2",marginTop:8}}>→ {rsDate} ({T[lang].days[(new Date(rsDate+"T00:00:00").getDay()+6)%7]}) {rsTime}</div>}
+            </div>
+          )}
+
+          {/* Note — hide for "normal" and "reschedule" (reschedule has its own date/time fields above) */}
+          {type!=="normal" && type!=="reschedule" && (
             <div style={{marginBottom:14}}>
               <label style={{fontSize:12,color:"#546E7A",display:"block",marginBottom:4}}>{t.sessionNote}</label>
               <input
@@ -1773,7 +1813,7 @@ function FeedbackModal({ slot, currentUser, users, lang, feedback, setFeedback, 
 // ─── Slot course card (for list view) ────────────────────────────────────────
 function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, materials, setMaterials, onAbsent, setToast, weekDates, weekOffset, attendance, setAttendance, enrollments, setEnrollments, courses, feedback, setFeedback, sharedView }) {
   const t = T[lang];
-  const {course, dayIndex, date, enrollment, sessionNo, start} = slot;
+  const {course, dayIndex, date, enrollment, sessionNo, start, rescheduledFrom} = slot;
   const teacher = users.find(u=>u.id===course.teacherId);
   const student  = users.find(u=>u.id===course.studentId);
   const col = COLORS[colorIdx%COLORS.length];
@@ -1847,6 +1887,7 @@ function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, ma
         {isAdmin&&<div style={{fontSize:11,color:"#9E9E9E",marginTop:1}}>{lang==="zh"?"付費排課":"Enrollment"}: {enrollment.payDate} · {enrollment.totalSessions}{lang==="zh"?"堂":"sess."}</div>}
         {isAbsent&&<div style={{fontSize:11,color:"#D32F2F",marginTop:3,fontWeight:500}}>● {t.absentAlready}</div>}
         {attBadge&&<div style={{fontSize:11,color:attBadge.color,background:attBadge.bg,borderRadius:4,padding:"2px 8px",marginTop:4,display:"inline-block",fontWeight:500}}>● {attBadge.label}{attRec?.note?` — ${attRec.note}`:""}</div>}
+        {rescheduledFrom&&<div style={{fontSize:11,color:"#7B1FA2",background:"rgba(123,31,162,0.1)",borderRadius:4,padding:"2px 8px",marginTop:4,display:"inline-block",fontWeight:500}}>🔄 {lang==="zh"?`補課（原定 ${rescheduledFrom}）`:`Rescheduled (was ${rescheduledFrom})`}</div>}
         {/* Feedback status badge — visible to teacher (their own submission) and admin */}
         {fbRec && (isTeacher||isAdmin) && (
           <div style={{fontSize:11,color:FB_STATUS[fbRec.status].color,marginTop:4,fontWeight:500}}>💬 {t.feedbackShort}: {FB_STATUS[fbRec.status].label}</div>
@@ -1909,9 +1950,10 @@ function getWeekSlots(courses, enrollments, weekDates) {
       if (idx !== -1) {
         // Resolve THIS day's actual start time — a course can have different
         // times on different days (e.g. Sat 9:00, Sun 8:00), so we can't just
-        // assume course.start applies uniformly.
-        const start = getCourseStartForDay(course, s.dayIndex);
-        slots.push({ course, dayIndex: s.dayIndex, date: s.date, enrollment: enr, sessionNo: s.sessionNo, start });
+        // assume course.start applies uniformly. A one-off reschedule/make-up
+        // (customStart) always wins over the course's regular pattern.
+        const start = s.customStart || getCourseStartForDay(course, s.dayIndex);
+        slots.push({ course, dayIndex: s.dayIndex, date: s.date, enrollment: enr, sessionNo: s.sessionNo, start, rescheduledFrom: s.rescheduledFrom||null });
       }
     });
   });
@@ -3491,7 +3533,7 @@ function AttendanceModal({ enrollment, sessionEntry, existing, users, lang, onSa
 }
 
 // ─── Leave Review ─────────────────────────────────────────────────────────────
-function LeaveReview({ users, courses, absences, setAbsences, attendance, setAttendance, enrollments, lang }) {
+function LeaveReview({ users, courses, absences, setAbsences, attendance, setAttendance, enrollments, setEnrollments, lang }) {
   const t = T[lang];
   const today = new Date().toISOString().slice(0,10);
   const [filterRole, setFilterRole] = useState("all");
@@ -3504,15 +3546,53 @@ function LeaveReview({ users, courses, absences, setAbsences, attendance, setAtt
   const [editTarget, setEditTarget] = useState(null); // the merged record r
   const [editType, setEditType] = useState("");
   const [editNote, setEditNote] = useState("");
+  // "更換時間補課" — same capability as the schedule's 📝 button: moves just
+  // THIS ONE session to an admin-chosen date/time instead of marking it as leave.
+  const [rsDate, setRsDate] = useState("");
+  const [rsTime, setRsTime] = useState("");
+
+  const findEnrollmentAndSession = (courseId, date) => {
+    for (const enr of enrollments.filter(e=>e.courseId===courseId)) {
+      const s = (enr.scheduledDates||[]).find(sd=>sd.date===date);
+      if (s) return {enrollment: enr, session: s};
+    }
+    return null;
+  };
 
   const openEdit = (r) => {
     setEditTarget(r);
     setEditType(r.type);
     setEditNote(r.note||"");
+    const match = findEnrollmentAndSession(r.courseId, r.date);
+    setRsDate(r.date);
+    setRsTime(match?.session?.customStart || (match ? getCourseStartForDay(courses.find(c=>c.id===r.courseId), match.session.dayIndex) : ""));
+  };
+
+  const doRescheduleFromReview = () => {
+    if (!editTarget) return;
+    const match = findEnrollmentAndSession(editTarget.courseId, editTarget.date);
+    if (!match) { return; }
+    if (!rsDate || !rsTime) { return; }
+    const { enrollment, session } = match;
+    const newDayIndex = (new Date(rsDate+"T00:00:00").getDay()+6)%7;
+    const newSched = (enrollment.scheduledDates||[]).map(s =>
+      (s.date===session.date && s.sessionNo===session.sessionNo)
+        ? { ...s, date: rsDate, dayIndex: newDayIndex, customStart: rsTime, rescheduledFrom: s.rescheduledFrom || session.date }
+        : s
+    );
+    setEnrollments(es=>es.map(e=>e.id===enrollment.id?{...e,scheduledDates:newSched}:e));
+    // The original leave record is superseded by the move — remove it
+    if (editTarget.source==="self") {
+      setAbsences(prev=>prev.filter(a=>a.id!==editTarget._id));
+    } else {
+      setAttendance(prev=>prev.filter(a=>a.id!==editTarget._id));
+    }
+    setEditTarget(null); setEditType(""); setEditNote("");
   };
 
   const saveEdit = () => {
     if (!editTarget) return;
+    if (editType === "reschedule") { doRescheduleFromReview(); return; }
     if (editTarget.source==="self") {
       // Update absences array
       setAbsences(prev => prev.map(a => {
@@ -3728,6 +3808,7 @@ function LeaveReview({ users, courses, absences, setAbsences, attendance, setAtt
                   {k:"absent",        icon:"❌", zh:"缺勤（扣課）",           en:"Absent (deducted)"},
                   {k:"sick",          icon:"🤒", zh:"病假",                   en:"Sick Leave"},
                   {k:"personal",      icon:"📋", zh:"事假",                   en:"Personal Leave"},
+                  {k:"reschedule",    icon:"🔄", zh:"更換時間補課",           en:"Reschedule / Make-up"},
                 ].map(opt=>(
                   <button key={opt.k} onClick={()=>setEditType(opt.k)} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:8,border:`1.5px solid ${editType===opt.k?"#1A6B8A":"#E0E0E0"}`,background:editType===opt.k?"rgba(26,107,138,0.07)":"transparent",color:editType===opt.k?"#1A6B8A":"#546E7A",fontSize:12,cursor:"pointer",textAlign:"left"}}>
                     <span>{opt.icon}</span>
@@ -3737,14 +3818,34 @@ function LeaveReview({ users, courses, absences, setAbsences, attendance, setAtt
                 ))}
               </div>
 
-              {/* Note */}
-              <div style={{fontSize:12,color:"#546E7A",marginBottom:5}}>{lang==="zh"?"備註：":"Note:"}</div>
-              <input
-                style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13,marginBottom:16}}
-                value={editNote}
-                onChange={e=>setEditNote(e.target.value)}
-                placeholder={lang==="zh"?"備註說明（選填）":"Notes (optional)"}
-              />
+              {/* Reschedule date/time picker — replaces the note field for this option */}
+              {editType==="reschedule" ? (
+                <div style={{marginBottom:16,background:"#F3E5F5",borderRadius:8,padding:"12px 13px"}}>
+                  <div style={{fontSize:11,color:"#7B1FA2",marginBottom:8}}>{lang==="zh"?"這堂課只有這一次會被移動，不影響其他堂次":"Only this one session moves — no other sessions are affected"}</div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                    <div>
+                      <label style={{fontSize:11,color:"#546E7A",display:"block",marginBottom:4}}>{lang==="zh"?"新日期":"New Date"}</label>
+                      <input type="date" style={{width:"100%",boxSizing:"border-box",padding:"7px 9px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13}} value={rsDate} onChange={e=>setRsDate(e.target.value)}/>
+                    </div>
+                    <div>
+                      <label style={{fontSize:11,color:"#546E7A",display:"block",marginBottom:4}}>{lang==="zh"?"新時間":"New Time"}</label>
+                      <input type="time" style={{width:"100%",boxSizing:"border-box",padding:"7px 9px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13}} value={rsTime} onChange={e=>setRsTime(e.target.value)}/>
+                    </div>
+                  </div>
+                  {rsDate && <div style={{fontSize:11,color:"#7B1FA2",marginTop:8}}>→ {rsDate} ({T[lang].days[(new Date(rsDate+"T00:00:00").getDay()+6)%7]}) {rsTime}</div>}
+                </div>
+              ) : (
+                <>
+                  {/* Note */}
+                  <div style={{fontSize:12,color:"#546E7A",marginBottom:5}}>{lang==="zh"?"備註：":"Note:"}</div>
+                  <input
+                    style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13,marginBottom:16}}
+                    value={editNote}
+                    onChange={e=>setEditNote(e.target.value)}
+                    placeholder={lang==="zh"?"備註說明（選填）":"Notes (optional)"}
+                  />
+                </>
+              )}
 
               {/* Actions */}
               <div style={{display:"flex",gap:8}}>
@@ -4582,7 +4683,7 @@ function TeacherDirectory({ users, setUsers, lang, setToast }) {
   const tdStyle={fontSize:12,color:"#172F39",padding:"8px 10px",borderBottom:"0.5px solid #F0F0F0",verticalAlign:"middle"};
   const lStyle={fontSize:11,color:"#546E7A",display:"block",marginBottom:3,marginTop:8};
 
-  const cols = [t.dirTeacherName, t.dirYearsExp, t.dirRegYear, t.salary, t.dirStatus, ""];
+  const cols = [t.dirTeacherName, lang==="zh"?"聯絡資訊":"Contact Info", t.dirYearsExp, t.dirRegYear, t.salary, t.dirStatus, ""];
 
   return (
     <div>
@@ -4704,6 +4805,13 @@ function TeacherDirectory({ users, setUsers, lang, setToast }) {
                     <>
                       <tr key={entryId} style={{background:"#EEF6FB"}}>
                         <td style={tdStyle}>{inEd("nameEn","John Smith")}</td>
+                        <td style={tdStyle}>
+                          <div style={{fontSize:11,color:"#546E7A",lineHeight:1.6}}>
+                            <div>🎂 {d.birthDate || "—"}</div>
+                            <div>✉️ {d.email || "—"}</div>
+                            <div>📱 {d.phone || "—"}</div>
+                          </div>
+                        </td>
                         <td style={tdStyle}>{inEd("yearsExp","5")}</td>
                         <td style={tdStyle}>{inEd("joinYear","2025")}</td>
                         <td style={tdStyle}>—</td>
@@ -4715,7 +4823,7 @@ function TeacherDirectory({ users, setUsers, lang, setToast }) {
                         </td>
                       </tr>
                       <tr key={entryId+"_bio"} style={{background:"#EEF6FB"}}>
-                        <td colSpan={6} style={{...tdStyle,paddingTop:0}}>
+                        <td colSpan={7} style={{...tdStyle,paddingTop:0}}>
                           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
                             <label style={{fontSize:11,color:"#546E7A"}}>{t.teacherBio}</label>
                             <button onClick={()=>setEditForm(f=>({...f,bio:DEFAULT_TEACHER_BIO[lang]||DEFAULT_TEACHER_BIO.en}))} style={{fontSize:10,padding:"2px 8px",borderRadius:4,border:"0.5px solid #1A6B8A",background:"transparent",color:"#1A6B8A",cursor:"pointer"}}>
@@ -4734,6 +4842,13 @@ function TeacherDirectory({ users, setUsers, lang, setToast }) {
                     <td style={tdStyle}>
                       <div style={{fontWeight:500}}>{d.nameEn||"—"}</div>
                       {linkedUser&&<div style={{fontSize:10,color:"#9E9E9E"}}>@{linkedUser.username}</div>}
+                    </td>
+                    <td style={tdStyle}>
+                      <div style={{fontSize:11,color:"#546E7A",lineHeight:1.6}}>
+                        <div>🎂 {d.birthDate || "—"}</div>
+                        <div>✉️ {d.email || "—"}</div>
+                        <div>📱 {d.phone || "—"}</div>
+                      </div>
                     </td>
                     <td style={tdStyle}>{d.yearsExp?`${d.yearsExp} ${t.yearsUnit}`:"—"}</td>
                     <td style={tdStyle}>{d.joinYear||"—"}</td>
@@ -4786,17 +4901,23 @@ function ChangeNotifications({ users, setUsers, lang, setToast, profileChanges, 
   const t = T[lang];
   const [filter, setFilter] = useState("pending"); // pending | all
   const [dirEntries, setDirEntries] = useState([]);
+  const [teacherDirEntries, setTeacherDirEntries] = useState([]);
   const [dirLoaded, setDirLoaded] = useState(false);
 
   useEffect(()=>{
     (async()=>{
       try{ const r=await window.storage.get("cp3_student_dir"); if(r?.value) setDirEntries(JSON.parse(r.value)); }catch{}
+      try{ const r2=await window.storage.get("cp3_teacher_dir"); if(r2?.value) setTeacherDirEntries(JSON.parse(r2.value)); }catch{}
       setDirLoaded(true);
     })();
   },[]);
   const saveDirEntries = async (next) => {
     setDirEntries(next);
     try{ await window.storage.set("cp3_student_dir",JSON.stringify(next)); }catch{}
+  };
+  const saveTeacherDirEntries = async (next) => {
+    setTeacherDirEntries(next);
+    try{ await window.storage.set("cp3_teacher_dir",JSON.stringify(next)); }catch{}
   };
 
   const getStudent = id => users.find(u=>u.id===id);
@@ -4818,9 +4939,16 @@ function ChangeNotifications({ users, setUsers, lang, setToast, profileChanges, 
   };
 
   const merge = (change) => {
+    // Students and teachers each have their own directory — pick whichever
+    // one this change belongs to (defaults to "student" for older records
+    // saved before teachers had their own Settings panel).
+    const isTeacherChange = change.role === "teacher";
+    const entries = isTeacherChange ? teacherDirEntries : dirEntries;
+    const saveEntries = isTeacherChange ? saveTeacherDirEntries : saveDirEntries;
+
     // English name → users array (referenced everywhere: courses, schedule,
     // teacher's roster, etc.) AND the directory's nameEn field.
-    // Chinese name → only the directory's nameCn field (no separate slot elsewhere).
+    // Chinese name (students only) → only the directory's nameCn field.
     const dirPatch = {};
     if (change.changes.nameEn) {
       setUsers(prev => prev.map(u => u.id===change.studentId ? {...u, name:change.changes.nameEn} : u));
@@ -4830,12 +4958,12 @@ function ChangeNotifications({ users, setUsers, lang, setToast, profileChanges, 
       dirPatch.nameCn = change.changes.nameCn;
     }
     if (Object.keys(dirPatch).length > 0) {
-      const existingIdx = dirEntries.findIndex(d=>d.linkedUserId===change.studentId);
-      const student = getStudent(change.studentId);
+      const existingIdx = entries.findIndex(d=>d.linkedUserId===change.studentId);
+      const person = getStudent(change.studentId);
       const next = existingIdx >= 0
-        ? dirEntries.map((d,i)=> i===existingIdx ? {...d, ...dirPatch} : d)
-        : [...dirEntries, {id:genId(), nameEn:student?.name||"", linkedUserId:change.studentId, ...dirPatch}];
-      saveDirEntries(next);
+        ? entries.map((d,i)=> i===existingIdx ? {...d, ...dirPatch} : d)
+        : [...entries, {id:genId(), nameEn:person?.name||"", linkedUserId:change.studentId, ...dirPatch}];
+      saveEntries(next);
     }
     setProfileChanges(prev => prev.map(c => c.id===change.id ? {...c, status:"merged", mergedAt:new Date().toISOString(), mergedBy:"admin"} : c));
     setToast(t.changeNotifMerged);
@@ -4873,7 +5001,12 @@ function ChangeNotifications({ users, setUsers, lang, setToast, profileChanges, 
           <div key={c.id} style={{background:"#FFFFFF",border:`1px solid ${meta.color}33`,borderRadius:10,padding:"14px 16px",marginBottom:10}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,marginBottom:10,flexWrap:"wrap"}}>
               <div>
-                <div style={{fontWeight:600,fontSize:13,color:"#172F39"}}>{t.changeNotifFrom} {student?.name||"—"}</div>
+                <div style={{fontWeight:600,fontSize:13,color:"#172F39",display:"flex",alignItems:"center",gap:6}}>
+                  {t.changeNotifFrom} {student?.name||"—"}
+                  <span style={{fontSize:10,background:c.role==="teacher"?"#EDE7F6":"#E3F2FD",color:c.role==="teacher"?"#7B1FA2":"#1565C0",borderRadius:3,padding:"1px 6px",fontWeight:500}}>
+                    {c.role==="teacher"?(lang==="zh"?"老師":"Teacher"):(lang==="zh"?"學生":"Student")}
+                  </span>
+                </div>
                 <div style={{fontSize:11,color:"#9E9E9E",marginTop:2}}>{t.changeNotifAt}: {c.requestedAt.slice(0,16).replace("T"," ")}</div>
               </div>
               <span style={{fontSize:11,background:meta.bg,color:meta.color,borderRadius:5,padding:"3px 10px",fontWeight:600,flexShrink:0}}>● {meta.label}</span>
@@ -4982,7 +5115,7 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
       </div>
       {tab==="courses"&&<CourseManager users={users} courses={courses} setCourses={setCourses} lang={lang} setToast={setToast} materials={materials} setMaterials={setMaterials} enrollments={enrollments}/>}
       {tab==="enroll" &&<EnrollmentManager users={users} courses={courses} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} lang={lang} setToast={setToast}/>}
-      {tab==="leave"  &&<LeaveReview users={users} courses={courses} absences={absences} setAbsences={setAbsences} attendance={attendance} setAttendance={setAttendance} enrollments={enrollments} lang={lang}/>}
+      {tab==="leave"  &&<LeaveReview users={users} courses={courses} absences={absences} setAbsences={setAbsences} attendance={attendance} setAttendance={setAttendance} enrollments={enrollments} setEnrollments={setEnrollments} lang={lang}/>}
       {tab==="feedback"&&<FeedbackCenter users={users} courses={courses} enrollments={enrollments} attendance={attendance} feedback={feedback||[]} setFeedback={setFeedback} lang={lang} setToast={setToast}/>}
       {tab==="availability"&&<AdminTeacherAvailability users={users} courses={courses} availability={teacherAvailability||[]} setAvailability={setTeacherAvailability} overrides={availabilityOverrides||[]} setOverrides={setAvailabilityOverrides} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang} setToast={setToast}/>}
       {tab==="peopledir" &&<PeopleDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses} profileChanges={profileChanges} setProfileChanges={setProfileChanges}/>}
@@ -6730,15 +6863,17 @@ function getAvatarById(id) { return AVATAR_OPTIONS.find(a=>a.id===id) || null; }
 // ─── Student Settings Panel ───────────────────────────────────────────────────
 // Lets a student self-edit basic profile info (staged as a pending change for
 // admin to review/merge) and change their own password (applies immediately).
-function StudentSettingsPanel({ currentUser, users, setUsers, dirEntries, saveDirEntries, dirLoaded, profileChanges, setProfileChanges, lang, setToast }) {
+function StudentSettingsPanel({ currentUser, users, setUsers, dirEntries, saveDirEntries, dirLoaded, profileChanges, setProfileChanges, lang, setToast, role }) {
   const t = T[lang];
+  const isTeacherRole = role === "teacher"; // teachers use the exact same panel, minus the Chinese-name field
   const myDirEntry = dirEntries.find(d=>d.linkedUserId===currentUser.id);
   const myPending = (profileChanges||[]).filter(c=>c.studentId===currentUser.id && c.status==="pending").sort((a,b)=>b.requestedAt.localeCompare(a.requestedAt))[0];
 
   // Chinese and English names are tracked separately and BOTH require admin
-  // review. English name is what's used everywhere else in the system
-  // (schedule, teacher's roster, etc.) so it maps to users.name on merge;
-  // Chinese name lives in the student directory (nameCn).
+  // review (students only — teachers just have the one name field). English
+  // name is what's used everywhere else in the system (schedule, rosters,
+  // etc.) so it maps to users.name on merge; Chinese name lives in the
+  // student directory (nameCn).
   const [nameEn, setNameEn] = useState(currentUser.name || "");
   const [nameCn, setNameCn] = useState(myDirEntry?.nameCn || "");
   const [birthDate, setBirthDate] = useState(myDirEntry?.birthDate || "");
@@ -6760,14 +6895,14 @@ function StudentSettingsPanel({ currentUser, users, setUsers, dirEntries, saveDi
   }
 
   const saveInfo = () => {
-    // Names (Chinese + English) are the only fields that need admin review
-    // before taking effect. Everything else applies immediately, but STILL
-    // generates a notification record so admin has visibility into every
-    // change a student makes — it's just already-applied, not blocking.
+    // Name(s) are the only field(s) that need admin review before taking
+    // effect. Everything else applies immediately, but STILL generates a
+    // notification record so admin has visibility into every change someone
+    // makes — it's just already-applied, not blocking.
     const nameChanges = {};
     const namePrevious = {};
     if (nameEn.trim() && nameEn.trim() !== currentUser.name) { nameChanges.nameEn = nameEn.trim(); namePrevious.nameEn = currentUser.name; }
-    if (nameCn.trim() !== (myDirEntry?.nameCn||"")) { nameChanges.nameCn = nameCn.trim(); namePrevious.nameCn = myDirEntry?.nameCn||""; }
+    if (!isTeacherRole && nameCn.trim() !== (myDirEntry?.nameCn||"")) { nameChanges.nameCn = nameCn.trim(); namePrevious.nameCn = myDirEntry?.nameCn||""; }
     const hasNameChanges = Object.keys(nameChanges).length > 0;
 
     const immediateFields = {};
@@ -6794,16 +6929,16 @@ function StudentSettingsPanel({ currentUser, users, setUsers, dirEntries, saveDi
       }
       saveDirEntries(next);
       setProfileChanges(prev => [...prev, {
-        id:genId(), studentId:currentUser.id, requestedAt:now,
+        id:genId(), studentId:currentUser.id, role, requestedAt:now,
         changes:immediateFields, previousValues:immediatePrevious,
         status:"auto_applied", mergedAt:now, mergedBy:"system",
       }]);
     }
 
-    // Names still require admin review, since English name is referenced everywhere else
+    // Name(s) still require admin review, since English name is referenced everywhere else
     if (hasNameChanges) {
       setProfileChanges(prev => [...prev, {
-        id:genId(), studentId:currentUser.id, requestedAt:now,
+        id:genId(), studentId:currentUser.id, role, requestedAt:now,
         changes:nameChanges, previousValues:namePrevious, status:"pending",
       }]);
     }
@@ -6837,7 +6972,7 @@ function StudentSettingsPanel({ currentUser, users, setUsers, dirEntries, saveDi
         </div>
         <div style={{fontSize:12,color:"#546E7A",lineHeight:1.9}}>
           <div><strong style={{color:"#172F39"}}>{t.settingsNameEn}</strong>：{currentUser.name || t.settingsNoneValue}</div>
-          <div><strong style={{color:"#172F39"}}>{t.settingsNameCn}</strong>：{myDirEntry?.nameCn || t.settingsNoneValue}</div>
+          {!isTeacherRole && <div><strong style={{color:"#172F39"}}>{t.settingsNameCn}</strong>：{myDirEntry?.nameCn || t.settingsNoneValue}</div>}
           <div><strong style={{color:"#172F39"}}>{t.settingsBirthDate}</strong>：{myDirEntry?.birthDate || t.settingsNoneValue}</div>
           <div><strong style={{color:"#172F39"}}>{t.settingsEmail}</strong>：{myDirEntry?.email || t.settingsNoneValue}</div>
           <div><strong style={{color:"#172F39"}}>{t.settingsPhone}</strong>：{myDirEntry?.phone || t.settingsNoneValue}</div>
@@ -6861,8 +6996,12 @@ function StudentSettingsPanel({ currentUser, users, setUsers, dirEntries, saveDi
         <label style={lStyle}>{t.settingsNameEn}</label>
         <input style={iStyle} value={nameEn} onChange={e=>setNameEn(e.target.value)} placeholder={currentUser.name}/>
 
-        <label style={lStyle}>{t.settingsNameCn}</label>
-        <input style={iStyle} value={nameCn} onChange={e=>setNameCn(e.target.value)} placeholder={lang==="zh"?"例：王小明":"e.g. 王小明"}/>
+        {!isTeacherRole && (
+          <>
+            <label style={lStyle}>{t.settingsNameCn}</label>
+            <input style={iStyle} value={nameCn} onChange={e=>setNameCn(e.target.value)} placeholder={lang==="zh"?"例：王小明":"e.g. 王小明"}/>
+          </>
+        )}
 
         <label style={lStyle}>{t.settingsBirthDate}</label>
         <input type="date" style={iStyle} value={birthDate} onChange={e=>setBirthDate(e.target.value)}/>
@@ -6951,7 +7090,7 @@ function StudentTeacherIntroPanel({ currentUser, users, courses, teacherDirEntri
   );
 }
 
-function StudentTeacherLayout({ currentUser, users, setUsers, courses, lang, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, setToast, feedback, setFeedback, teacherAvailability, setTeacherAvailability, availabilityOverrides, setAvailabilityOverrides, profileChanges, setProfileChanges, dirEntries, saveDirEntries, dirLoaded }) {
+function StudentTeacherLayout({ currentUser, users, setUsers, courses, lang, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, setToast, feedback, setFeedback, teacherAvailability, setTeacherAvailability, availabilityOverrides, setAvailabilityOverrides, profileChanges, setProfileChanges, dirEntries, saveDirEntries, dirLoaded, teacherDirEntries, saveTeacherDirEntries, teacherDirLoaded }) {
   const t = T[lang];
   const isStudent = currentUser.role==="student";
   const isTeacher = currentUser.role==="teacher";
@@ -6960,12 +7099,6 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, lang, abs
   // Sidebar starts open; after picking a menu item it auto-collapses to give the
   // content more room, but hovering the mouse over it still reveals it temporarily.
   const sidebarEffectiveOpen = sidebarOpen || sidebarHover;
-  const [teacherDirEntries, setTeacherDirEntries] = useState([]);
-  useEffect(()=>{
-    (async()=>{
-      try{ const r2=await window.storage.get("cp3_teacher_dir"); if(r2?.value) setTeacherDirEntries(JSON.parse(r2.value)); }catch{}
-    })();
-  },[]);
   // The admin-confirmed official session count for the logged-in student (if any) —
   // this is the single source of truth used everywhere in the student's own views.
   const myDirEntry = dirEntries.find(d=>d.linkedUserId===currentUser.id);
@@ -6997,6 +7130,7 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, lang, abs
     : [
         { key:"students",      icon:"👥", zh:"任教學生", en:"My Students" },
         { key:"availability",  icon:"🗓", zh:"可安排時段", en:"Availability" },
+        { key:"settings",      icon:"⚙️", zh:"基本資訊與設定", en:"Basic Info & Settings" },
         { key:"schedule_side", icon:"📅", zh:"課表",     en:"Schedule"   },
       ];
 
@@ -7104,6 +7238,8 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, lang, abs
               ? <TeacherStudentsPanel currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} attendance={attendance} lang={lang} dirEntries={dirEntries}/>
             : isTeacher && sideTab==="availability"
               ? <TeacherAvailabilityPanel currentUser={currentUser} users={users} availability={teacherAvailability} setAvailability={setTeacherAvailability} overrides={availabilityOverrides} setOverrides={setAvailabilityOverrides} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang} setToast={setToast}/>
+            : isTeacher && sideTab==="settings"
+              ? <StudentSettingsPanel currentUser={currentUser} users={users} setUsers={setUsers} dirEntries={teacherDirEntries} saveDirEntries={saveTeacherDirEntries} dirLoaded={teacherDirLoaded} profileChanges={profileChanges} setProfileChanges={setProfileChanges} lang={lang} setToast={setToast} role="teacher"/>
             : isStudent && sideTab.startsWith("shared_")
               ? <div style={{padding:"1.5rem"}}>
                   <div style={{background:"#F3E5F5",border:"0.5px solid #E1BEE7",borderRadius:8,padding:"9px 13px",marginBottom:14,fontSize:12,color:"#7B1FA2"}}>
@@ -7189,6 +7325,10 @@ export default function App() {
   // panel writes here directly — the header reads the exact same state, so
   // avatar changes are reflected immediately with no separate sync step needed.
   const [studentDirEntries,setStudentDirEntries,sdLoaded]=useStorage("cp3_student_dir",[]);
+  // Same treatment for the teacher directory — teachers now get their own
+  // Settings panel too, and this keeps their header avatar in sync the same
+  // reliable way (single shared state, not a separate self-fetch copy).
+  const [teacherDirEntries,setTeacherDirEntries,tdLoaded]=useStorage("cp3_teacher_dir",[]);
   const [introText,setIntroText,introLoaded]=useStorage("cp3_intro_text","");
   const [toast,setToastMsg]=useState("");
   const t=T[lang];
@@ -7214,7 +7354,9 @@ export default function App() {
   const initials=currentUser.name.slice(0,2).toUpperCase();
   const roleLabel=t[`role_${currentUser.role}`];
   const isAdmin=currentUser.role==="admin";
-  const myDirEntryForHeader = (studentDirEntries||[]).find(d=>d.linkedUserId===currentUser.id);
+  const myDirEntryForHeader = currentUser.role==="teacher"
+    ? (teacherDirEntries||[]).find(d=>d.linkedUserId===currentUser.id)
+    : (studentDirEntries||[]).find(d=>d.linkedUserId===currentUser.id);
   const headerAvatar = getAvatarById(myDirEntryForHeader?.avatar);
 
   return (
@@ -7276,6 +7418,7 @@ export default function App() {
             availabilityOverrides={availabilityOverrides} setAvailabilityOverrides={setAvailabilityOverrides}
             profileChanges={profileChanges} setProfileChanges={setProfileChanges}
             dirEntries={studentDirEntries} saveDirEntries={setStudentDirEntries} dirLoaded={sdLoaded}
+            teacherDirEntries={teacherDirEntries} saveTeacherDirEntries={setTeacherDirEntries} teacherDirLoaded={tdLoaded}
             setToast={setToast}
           />
         )}
