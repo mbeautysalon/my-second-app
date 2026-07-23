@@ -2015,7 +2015,7 @@ function WeekExportModal({ weekSlots, absences, lang, setToast, onClose }) {
           <span style={{fontSize:14,fontWeight:600,color:"#fff"}}>📅 {t.weekExportTitle}</span>
           <button onClick={onClose} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",color:"#fff",fontSize:16}}>×</button>
         </div>
-        <div style={{padding:"16px 18px",overflowY:"auto"}}>
+        <div style={{padding:"16px 18px",overflowY:"auto",flex:1,minHeight:0}}>
           <p style={{fontSize:12,color:"#546E7A",margin:"0 0 12px",lineHeight:1.6}}>{t.weekExportDesc}</p>
 
           {exportable.length===0 ? (
@@ -2043,15 +2043,14 @@ function WeekExportModal({ weekSlots, absences, lang, setToast, onClose }) {
           <div style={{fontSize:11,color:"#1A6B8A",background:"#EEF6FB",borderRadius:6,padding:"9px 11px",marginTop:14,lineHeight:1.6}}>
             ℹ️ {t.weekExportHowTo}
           </div>
-
-          <div style={{display:"flex",gap:8,marginTop:14}}>
-            <button onClick={doExport} disabled={selected.size===0} style={{flex:1,padding:"10px",borderRadius:7,background:selected.size>0?"#1A6B8A":"#E0E0E0",border:"none",color:selected.size>0?"#fff":"#9E9E9E",fontSize:13,fontWeight:600,cursor:selected.size>0?"pointer":"not-allowed"}}>
-              ⬇ {t.weekExportDownload} ({selected.size})
-            </button>
-            <button onClick={onClose} style={{padding:"10px 16px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>
-              {t.cancel}
-            </button>
-          </div>
+        </div>
+        <div style={{display:"flex",gap:8,padding:"12px 18px 16px",borderTop:"0.5px solid #E0E0E0",flexShrink:0}}>
+          <button onClick={doExport} disabled={selected.size===0} style={{flex:1,padding:"10px",borderRadius:7,background:selected.size>0?"#1A6B8A":"#E0E0E0",border:"none",color:selected.size>0?"#fff":"#9E9E9E",fontSize:13,fontWeight:600,cursor:selected.size>0?"pointer":"not-allowed"}}>
+            ⬇ {t.weekExportDownload} ({selected.size})
+          </button>
+          <button onClick={onClose} style={{padding:"10px 16px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>
+            {t.cancel}
+          </button>
         </div>
       </div>
     </div>
@@ -2317,63 +2316,67 @@ function CourseForm({ course, users, onSave, onCancel, lang }) {
   };
 
   return (
-    <div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-        <div><label style={lStyle}>{t.selectTeacher}</label><select style={iStyle} value={form.teacherId} onChange={e=>handleTeacher(e.target.value)}>{teachers.map(te=><option key={te.id} value={te.id}>{te.name}</option>)}</select></div>
-        <div><label style={lStyle}>{t.selectStudent}</label><select style={iStyle} value={form.studentId} onChange={e=>handleStudent(e.target.value)}>{students.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
-      </div>
-      <label style={lStyle}>{t.subjectName}</label>
-      <input style={iStyle} value={form.subject} onChange={e=>setForm(f=>({...f,subject:e.target.value,_edited:true}))} placeholder={t.autoSubjectHint}/>
+    <div style={{display:"flex",flexDirection:"column",maxHeight:"70vh"}}>
+      <div style={{overflowY:"auto",flex:1,minHeight:0,paddingRight:2}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <div><label style={lStyle}>{t.selectTeacher}</label><select style={iStyle} value={form.teacherId} onChange={e=>handleTeacher(e.target.value)}>{teachers.map(te=><option key={te.id} value={te.id}>{te.name}</option>)}</select></div>
+          <div><label style={lStyle}>{t.selectStudent}</label><select style={iStyle} value={form.studentId} onChange={e=>handleStudent(e.target.value)}>{students.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
+        </div>
+        <label style={lStyle}>{t.subjectName}</label>
+        <input style={iStyle} value={form.subject} onChange={e=>setForm(f=>({...f,subject:e.target.value,_edited:true}))} placeholder={t.autoSubjectHint}/>
 
-      <label style={lStyle}>{t.duration}</label>
-      <div style={{display:"flex",gap:8}}>
-        {[25,50].map(d=>(
-          <button key={d} type="button" onClick={()=>set("duration",d)} style={{flex:1,padding:"8px",borderRadius:6,fontSize:13,cursor:"pointer",border:`1px solid ${form.duration===d?"#1A6B8A":"#CFD8DC"}`,background:form.duration===d?"#1A6B8A":"transparent",color:form.duration===d?"#fff":"#546E7A"}}>
-            {d===25?t.min25:t.min50}
-          </button>
-        ))}
-      </div>
+        <label style={lStyle}>{t.duration}</label>
+        <div style={{display:"flex",gap:8}}>
+          {[25,50].map(d=>(
+            <button key={d} type="button" onClick={()=>set("duration",d)} style={{flex:1,padding:"8px",borderRadius:6,fontSize:13,cursor:"pointer",border:`1px solid ${form.duration===d?"#1A6B8A":"#CFD8DC"}`,background:form.duration===d?"#1A6B8A":"transparent",color:form.duration===d?"#fff":"#546E7A"}}>
+              {d===25?t.min25:t.min50}
+            </button>
+          ))}
+        </div>
 
-      {/* ── Time slots — one block per group of days sharing a start time; all blocks belong to ONE course ── */}
-      <label style={lStyle}>{lang==="zh"?"上課時段（可新增多組，星期跟時間可各自不同，仍屬同一堂課）":"Time Slots (add more — days & times can differ, still one course)"}</label>
-      {form.blocks.map((b,idx)=>{
-        const blockEnd = addMins(b.start, form.duration);
-        return (
-          <div key={b._bid} style={{background:"#F5F5F5",borderRadius:8,border:"0.5px solid #E0E0E0",padding:"10px 12px",marginBottom:8}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-              <span style={{fontSize:11,fontWeight:600,color:"#546E7A"}}>{lang==="zh"?`時段 ${idx+1}`:`Slot ${idx+1}`}</span>
-              {form.blocks.length>1 && (
-                <button type="button" onClick={()=>removeBlock(b._bid)} style={{fontSize:11,padding:"2px 8px",borderRadius:4,border:"0.5px solid #FFCDD2",background:"transparent",color:"#D32F2F",cursor:"pointer"}}>✕ {lang==="zh"?"移除":"Remove"}</button>
-              )}
-            </div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:6}}>
-              {t.days.map((d,i)=>(
-                <button key={i} type="button" onClick={()=>toggleBlockDay(b._bid,i)} style={{padding:"5px 10px",borderRadius:5,fontSize:12,cursor:"pointer",border:`1px solid ${b.days?.includes(i)?"#1A6B8A":"#CFD8DC"}`,background:b.days?.includes(i)?"#1A6B8A":"transparent",color:b.days?.includes(i)?"#fff":"#546E7A"}}>{d}</button>
-              ))}
-            </div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-              <div>
-                <label style={{...lStyle,marginTop:0}}>{t.startTime}</label>
-                <input type="time" style={iStyle} value={b.start} onChange={e=>updateBlock(b._bid,{start:e.target.value})}/>
+        {/* ── Time slots — one block per group of days sharing a start time; all blocks belong to ONE course ── */}
+        <label style={lStyle}>{lang==="zh"?"上課時段（可新增多組，星期跟時間可各自不同，仍屬同一堂課）":"Time Slots (add more — days & times can differ, still one course)"}</label>
+        {form.blocks.map((b,idx)=>{
+          const blockEnd = addMins(b.start, form.duration);
+          return (
+            <div key={b._bid} style={{background:"#F5F5F5",borderRadius:8,border:"0.5px solid #E0E0E0",padding:"10px 12px",marginBottom:8}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                <span style={{fontSize:11,fontWeight:600,color:"#546E7A"}}>{lang==="zh"?`時段 ${idx+1}`:`Slot ${idx+1}`}</span>
+                {form.blocks.length>1 && (
+                  <button type="button" onClick={()=>removeBlock(b._bid)} style={{fontSize:11,padding:"2px 8px",borderRadius:4,border:"0.5px solid #FFCDD2",background:"transparent",color:"#D32F2F",cursor:"pointer"}}>✕ {lang==="zh"?"移除":"Remove"}</button>
+                )}
               </div>
-              <div>
-                <label style={{...lStyle,marginTop:0}}>{t.endTime}</label>
-                <div style={{...iStyle,background:"#FFFFFF",color:"#9E9E9E",borderStyle:"dashed",cursor:"not-allowed",display:"flex",alignItems:"center"}}>{blockEnd}</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:6}}>
+                {t.days.map((d,i)=>(
+                  <button key={i} type="button" onClick={()=>toggleBlockDay(b._bid,i)} style={{padding:"5px 10px",borderRadius:5,fontSize:12,cursor:"pointer",border:`1px solid ${b.days?.includes(i)?"#1A6B8A":"#CFD8DC"}`,background:b.days?.includes(i)?"#1A6B8A":"transparent",color:b.days?.includes(i)?"#fff":"#546E7A"}}>{d}</button>
+                ))}
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <div>
+                  <label style={{...lStyle,marginTop:0}}>{t.startTime}</label>
+                  <input type="time" style={iStyle} value={b.start} onChange={e=>updateBlock(b._bid,{start:e.target.value})}/>
+                </div>
+                <div>
+                  <label style={{...lStyle,marginTop:0}}>{t.endTime}</label>
+                  <div style={{...iStyle,background:"#FFFFFF",color:"#9E9E9E",borderStyle:"dashed",cursor:"not-allowed",display:"flex",alignItems:"center"}}>{blockEnd}</div>
+                </div>
               </div>
             </div>
-          </div>
-        );
-      })}
-      <button type="button" onClick={addBlock} style={{width:"100%",padding:"8px",borderRadius:6,border:"1px dashed #1A6B8A",background:"transparent",color:"#1A6B8A",fontSize:12,cursor:"pointer",marginBottom:6}}>
-        + {lang==="zh"?"新增時段（可設定不同星期與時間）":"Add Time Slot (different day/time)"}
-      </button>
-      <div style={{fontSize:11,color:"#9E9E9E",marginBottom:8}}>{t.sessionsPerWeek}: <strong style={{color:"#172F39"}}>{totalSessionsPerWeek}</strong> {lang==="zh"?"堂/週":"sessions/week"}</div>
+          );
+        })}
+        <button type="button" onClick={addBlock} style={{width:"100%",padding:"8px",borderRadius:6,border:"1px dashed #1A6B8A",background:"transparent",color:"#1A6B8A",fontSize:12,cursor:"pointer",marginBottom:6}}>
+          + {lang==="zh"?"新增時段（可設定不同星期與時間）":"Add Time Slot (different day/time)"}
+        </button>
+        <div style={{fontSize:11,color:"#9E9E9E",marginBottom:8}}>{t.sessionsPerWeek}: <strong style={{color:"#172F39"}}>{totalSessionsPerWeek}</strong> {lang==="zh"?"堂/週":"sessions/week"}</div>
 
-      <label style={lStyle}>{t.meetingUrl}</label>
-      <input style={iStyle} value={form.meetingUrl} onChange={e=>set("meetingUrl",e.target.value)} placeholder="https://..."/>
-      <div style={{display:"flex",gap:8,marginTop:16}}>
-        <button onClick={handleSave} style={{flex:1,background:"#1A6B8A",border:"none",borderRadius:6,color:"#fff",padding:"9px",fontSize:13,fontWeight:500,cursor:"pointer"}}>{t.save}</button>
-        <button onClick={onCancel} style={{flex:1,background:"#F5F5F5",border:"0.5px solid #CFD8DC",borderRadius:6,color:"#172F39",padding:"9px",fontSize:13,cursor:"pointer"}}>{t.cancel}</button>
+        <label style={lStyle}>{t.meetingUrl}</label>
+        <input style={iStyle} value={form.meetingUrl} onChange={e=>set("meetingUrl",e.target.value)} placeholder="https://..."/>
+      </div>
+
+      {/* Buttons — always visible outside the scrollable area, never pushed off-screen */}
+      <div style={{display:"flex",gap:8,marginTop:14,paddingTop:12,borderTop:"0.5px solid #E0E0E0",flexShrink:0}}>
+        <button onClick={handleSave} style={{flex:1,background:"#1A6B8A",border:"none",borderRadius:6,color:"#fff",padding:"10px",fontSize:14,fontWeight:600,cursor:"pointer"}}>{t.save}</button>
+        <button onClick={onCancel} style={{flex:1,background:"#FFFFFF",border:"0.5px solid #CFD8DC",borderRadius:6,color:"#172F39",padding:"10px",fontSize:14,cursor:"pointer"}}>{t.cancel}</button>
       </div>
     </div>
   );
@@ -3330,74 +3333,83 @@ function EnrollmentManager({ users, courses, enrollments, setEnrollments, attend
 
       {/* ── Form ── */}
       {showForm && (
-        <div style={{background:"#F5F5F5",borderRadius:12,border:"0.5px solid #E0E0E0",padding:"1.25rem",marginBottom:"1.5rem"}}>
-          <div style={{fontWeight:500,fontSize:14,color:"#172F39",marginBottom:12}}>{editingId?(lang==="zh"?"編輯排課":"Edit Schedule"):t.addEnrollment}</div>
+        <div style={{background:"#F5F5F5",borderRadius:12,border:"0.5px solid #E0E0E0",padding:"1.25rem",marginBottom:"1.5rem",display:"flex",flexDirection:"column",maxHeight:"75vh"}}>
+          <div style={{fontWeight:500,fontSize:14,color:"#172F39",marginBottom:12,flexShrink:0}}>{editingId?(lang==="zh"?"編輯排課":"Edit Schedule"):t.addEnrollment}</div>
 
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-            <div>
-              <label style={lStyle}>{lang==="zh"?"選擇課程":"Select Course"}</label>
-              <select style={iStyle} value={form.courseId} onChange={e=>{fset("courseId",e.target.value);setPreview(null);}}>
-                <option value="">{lang==="zh"?"—請選擇—":"—Select—"}</option>
-                {allCourses.map(c=><option key={c.id} value={c.id}>{c.subject} ({getName(c.studentId)})</option>)}
-              </select>
-            </div>
-            <div>
-              <label style={lStyle}>{t.payDate}</label>
-              <input type="date" style={iStyle} value={form.payDate} onChange={e=>fset("payDate",e.target.value)}/>
-            </div>
-          </div>
-
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-            <div>
-              <label style={lStyle}>{t.totalSessions}</label>
-              <input type="number" min={1} max={200} style={iStyle} value={form.totalSessions} onChange={e=>fset("totalSessions",e.target.value)}/>
-            </div>
-            <div>
-              <label style={lStyle}>{t.startDate}</label>
-              <input type="date" style={iStyle} value={form.startDate} onChange={e=>{fset("startDate",e.target.value);setPreview(null);}}/>
-            </div>
-          </div>
-
-          {selectedCourse && (
-            <div style={{marginTop:10,fontSize:12,color:"#546E7A",background:"#FFFFFF",borderRadius:6,padding:"8px 12px"}}>
-              {lang==="zh"?"每週":"Weekly"}: {formatCourseScheduleSummary(selectedCourse,lang)} ({selectedCourse.duration}min)
-            </div>
-          )}
-
-          <div style={{display:"flex",gap:8,marginTop:14}}>
-            <button onClick={handlePreview} disabled={!form.courseId||!form.startDate} style={{flex:1,padding:"9px",borderRadius:7,background:form.courseId?"#F5F5F5":"#FFFFFF",border:"1px solid #4A9FD4",color:"#1A6B8A",fontSize:13,cursor:form.courseId?"pointer":"not-allowed"}}>
-              🔍 {t.previewSchedule}
-            </button>
-            <button onClick={()=>{setShowForm(false);setPreview(null);setEditingId(null);}} style={{padding:"9px 16px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>{t.cancel}</button>
-          </div>
-
-          {/* Preview */}
-          {preview && (
-            <div style={{marginTop:14}}>
-              <div style={{fontSize:12,fontWeight:500,color:"#172F39",marginBottom:8}}>
-                {t.scheduledDates} — {preview.length} {lang==="zh"?"堂":"sessions"} ({lang==="zh"?"起":"from"} {form.startDate} {lang==="zh"?"至":"to"} {preview[preview.length-1]?.date})
+          {/* Scrollable content — course/date fields + preview grid, however tall it gets */}
+          <div style={{overflowY:"auto",flex:1,minHeight:0,paddingRight:2}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div>
+                <label style={lStyle}>{lang==="zh"?"選擇課程":"Select Course"}</label>
+                <select style={iStyle} value={form.courseId} onChange={e=>{fset("courseId",e.target.value);setPreview(null);}}>
+                  <option value="">{lang==="zh"?"—請選擇—":"—Select—"}</option>
+                  {allCourses.map(c=><option key={c.id} value={c.id}>{c.subject} ({getName(c.studentId)})</option>)}
+                </select>
               </div>
-              {Number(form.totalSessions) !== preview.length && (
-                <div style={{fontSize:11,color:"#E65100",background:"#FFF3E0",borderRadius:6,padding:"8px 11px",marginBottom:10,lineHeight:1.6}}>
-                  ⚠️ {lang==="zh"
-                    ? `購買堂數為 ${form.totalSessions} 堂，但實際排課有 ${preview.length} 堂，兩者不一致——可能是請假改期造成的，請確認是否需要手動調整。`
-                    : `Purchased ${form.totalSessions} session(s), but the actual schedule has ${preview.length} — these don't match, possibly from a leave reschedule. Please check if manual adjustment is needed.`}
-                </div>
-              )}
-              <div style={{maxHeight:220,overflowY:"auto",display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))",gap:5,marginBottom:12}}>
-                {preview.map((s,i)=>(
-                  <div key={i} style={{background:s.customStart?"#F3E5F5":"#FFFFFF",border:`0.5px solid ${s.customStart?"#CE93D8":"#CFD8DC"}`,borderRadius:6,padding:"6px 9px",fontSize:11}}>
-                    <div style={{color:"#9E9E9E",marginBottom:1}}>#{s.sessionNo}{s.customStart?" 🔄":""}</div>
-                    <div style={{color:"#172F39",fontWeight:500}}>{s.date}</div>
-                    <div style={{color:"#546E7A"}}>{T[lang].days[s.dayIndex]}{s.customStart?` ${s.customStart}`:""}</div>
-                  </div>
-                ))}
+              <div>
+                <label style={lStyle}>{t.payDate}</label>
+                <input type="date" style={iStyle} value={form.payDate} onChange={e=>fset("payDate",e.target.value)}/>
               </div>
-              <button onClick={handleSave} style={{width:"100%",padding:"10px",borderRadius:7,background:"#4CAF50",border:"none",color:"#fff",fontSize:13,fontWeight:500,cursor:"pointer"}}>
-                ✓ {t.confirmSchedule}
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div>
+                <label style={lStyle}>{t.totalSessions}</label>
+                <input type="number" min={1} max={200} style={iStyle} value={form.totalSessions} onChange={e=>fset("totalSessions",e.target.value)}/>
+              </div>
+              <div>
+                <label style={lStyle}>{t.startDate}</label>
+                <input type="date" style={iStyle} value={form.startDate} onChange={e=>{fset("startDate",e.target.value);setPreview(null);}}/>
+              </div>
+            </div>
+
+            {selectedCourse && (
+              <div style={{marginTop:10,fontSize:12,color:"#546E7A",background:"#FFFFFF",borderRadius:6,padding:"8px 12px"}}>
+                {lang==="zh"?"每週":"Weekly"}: {formatCourseScheduleSummary(selectedCourse,lang)} ({selectedCourse.duration}min)
+              </div>
+            )}
+
+            <div style={{display:"flex",gap:8,marginTop:14}}>
+              <button onClick={handlePreview} disabled={!form.courseId||!form.startDate} style={{flex:1,padding:"9px",borderRadius:7,background:form.courseId?"#F5F5F5":"#FFFFFF",border:"1px solid #4A9FD4",color:"#1A6B8A",fontSize:13,cursor:form.courseId?"pointer":"not-allowed"}}>
+                🔍 {t.previewSchedule}
               </button>
             </div>
-          )}
+
+            {/* Preview */}
+            {preview && (
+              <div style={{marginTop:14}}>
+                <div style={{fontSize:12,fontWeight:500,color:"#172F39",marginBottom:8}}>
+                  {t.scheduledDates} — {preview.length} {lang==="zh"?"堂":"sessions"} ({lang==="zh"?"起":"from"} {form.startDate} {lang==="zh"?"至":"to"} {preview[preview.length-1]?.date})
+                </div>
+                {Number(form.totalSessions) !== preview.length && (
+                  <div style={{fontSize:11,color:"#E65100",background:"#FFF3E0",borderRadius:6,padding:"8px 11px",marginBottom:10,lineHeight:1.6}}>
+                    ⚠️ {lang==="zh"
+                      ? `購買堂數為 ${form.totalSessions} 堂，但實際排課有 ${preview.length} 堂，兩者不一致——可能是請假改期造成的，請確認是否需要手動調整。`
+                      : `Purchased ${form.totalSessions} session(s), but the actual schedule has ${preview.length} — these don't match, possibly from a leave reschedule. Please check if manual adjustment is needed.`}
+                  </div>
+                )}
+                <div style={{maxHeight:220,overflowY:"auto",display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))",gap:5}}>
+                  {preview.map((s,i)=>(
+                    <div key={i} style={{background:s.customStart?"#F3E5F5":"#FFFFFF",border:`0.5px solid ${s.customStart?"#CE93D8":"#CFD8DC"}`,borderRadius:6,padding:"6px 9px",fontSize:11}}>
+                      <div style={{color:"#9E9E9E",marginBottom:1}}>#{s.sessionNo}{s.customStart?" 🔄":""}</div>
+                      <div style={{color:"#172F39",fontWeight:500}}>{s.date}</div>
+                      <div style={{color:"#546E7A"}}>{T[lang].days[s.dayIndex]}{s.customStart?` ${s.customStart}`:""}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Buttons — always visible outside the scrollable area, never pushed off-screen */}
+          <div style={{display:"flex",gap:8,marginTop:14,paddingTop:12,borderTop:"0.5px solid #E0E0E0",flexShrink:0}}>
+            {preview && (
+              <button onClick={handleSave} style={{flex:1,padding:"11px",borderRadius:7,background:"#4CAF50",border:"none",color:"#fff",fontSize:14,fontWeight:600,cursor:"pointer"}}>
+                ✓ {t.confirmSchedule}
+              </button>
+            )}
+            <button onClick={()=>{setShowForm(false);setPreview(null);setEditingId(null);}} style={{padding:"11px 16px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer",flex:preview?"none":1}}>{t.cancel}</button>
+          </div>
         </div>
       )}
 
@@ -4005,7 +4017,7 @@ function ScheduleShareModal({ ownerEntry, users, dirEntries, saveDirEntries, lan
           <span style={{fontSize:14,fontWeight:600,color:"#fff"}}>🔗 {t.scheduleShareTitle}</span>
           <button onClick={onClose} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",color:"#fff",fontSize:16}}>×</button>
         </div>
-        <div style={{padding:"16px 18px",overflowY:"auto"}}>
+        <div style={{padding:"16px 18px",overflowY:"auto",flex:1,minHeight:0}}>
           <div style={{fontSize:12,color:"#546E7A",marginBottom:2}}>{t.scheduleShareDesc}</div>
           <div style={{fontSize:13,fontWeight:600,color:"#172F39",marginBottom:12}}>{ownerEntry.nameEn||ownerUser?.name||"—"}</div>
 
@@ -4028,15 +4040,14 @@ function ScheduleShareModal({ ownerEntry, users, dirEntries, saveDirEntries, lan
               ℹ️ {t.scheduleShareHint.replace("{n}", selected.size)}
             </div>
           )}
-
-          <div style={{display:"flex",gap:8,marginTop:16}}>
-            <button onClick={save} style={{flex:1,padding:"10px",borderRadius:7,background:"#1A6B8A",border:"none",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer"}}>
-              ✓ {t.save}
-            </button>
-            <button onClick={onClose} style={{padding:"10px 16px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>
-              {t.cancel}
-            </button>
-          </div>
+        </div>
+        <div style={{display:"flex",gap:8,padding:"12px 18px 16px",borderTop:"0.5px solid #E0E0E0",flexShrink:0}}>
+          <button onClick={save} style={{flex:1,padding:"10px",borderRadius:7,background:"#1A6B8A",border:"none",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+            ✓ {t.save}
+          </button>
+          <button onClick={onClose} style={{padding:"10px 16px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>
+            {t.cancel}
+          </button>
         </div>
       </div>
     </div>
@@ -4087,6 +4098,12 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
   const [addForm, setAddForm] = useState({nameEn:"",nameCn:"",age:"",regYear:String(new Date().getFullYear()),regDate:"",startDate:"",duration:"",manualSessions:"",linkedUserId:""});
   const [confirmDelDirId, setConfirmDelDirId] = useState(null);
   const [shareTarget, setShareTarget] = useState(null); // dir entry whose schedule-sharing is being edited
+  const [sortField, setSortField] = useState(null); // "age" | "regYear" | "duration" | "points" | null
+  const [sortDir, setSortDir] = useState("asc"); // "asc" | "desc"
+  const toggleSort = (field) => {
+    if (sortField === field) setSortDir(d => d==="asc" ? "desc" : "asc");
+    else { setSortField(field); setSortDir("asc"); }
+  };
 
   useEffect(()=>{
     (async()=>{
@@ -4183,19 +4200,43 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
     })),
   ];
 
+  // Precompute numeric sort keys once per row (points needs the getSessions
+  // calc; empty/missing values always sort to the end regardless of direction)
+  const sortKeyFor = (d, field) => {
+    if (field === "points") return getSessions(d.linkedUserId, d.manualSessions, d.confirmedSessions).total;
+    // "age" shows a computed CURRENT age (join age + years elapsed since
+    // regYear), not the raw stored value — sort by that same computed number,
+    // or the sort order won't match what's actually on screen.
+    if (field === "age") return computeCurrentAge(d.age, d.regYear) ?? (parseInt(d.age) || null);
+    const v = parseInt(d[field]);
+    return isNaN(v) ? null : v;
+  };
+  const sortedStudents = sortField
+    ? [...allStudents].sort((a,b) => {
+        const av = sortKeyFor(a, sortField), bv = sortKeyFor(b, sortField);
+        if (av === null && bv === null) return 0;
+        if (av === null) return 1;   // empty values always last
+        if (bv === null) return -1;
+        return sortDir === "asc" ? av - bv : bv - av;
+      })
+    : allStudents;
+
   const iStyle={width:"100%",boxSizing:"border-box",padding:"7px 9px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:12};
   const thStyle={fontSize:11,fontWeight:600,color:"#546E7A",padding:"8px 10px",textAlign:"left",borderBottom:"1px solid #E0E0E0",whiteSpace:"nowrap",background:"#F5F5F5"};
   const tdStyle={fontSize:12,color:"#172F39",padding:"8px 10px",borderBottom:"0.5px solid #F0F0F0",verticalAlign:"middle"};
   const lStyle={fontSize:11,color:"#546E7A",display:"block",marginBottom:3,marginTop:8};
 
-  const cols = [
-    t.dirStudentName, t.dirCnName, t.dirAge,
-    lang==="zh"?"聯絡資訊":"Contact Info",
-    lang==="zh"?"加入年":"Join Yr",
-    t.dirRegDate, t.dirStartDate, t.dirDuration,
-    lang==="zh"?"積分":"Points",
-    t.dirStatus, "",
-  ];
+  // Small clickable header — label + sort arrow, toggles asc/desc, highlights when active
+  const SortTh = ({ label, field }) => (
+    <th style={thStyle}>
+      <button onClick={()=>toggleSort(field)} style={{display:"flex",alignItems:"center",gap:3,background:"none",border:"none",padding:0,cursor:"pointer",font:"inherit",color:sortField===field?"#1A6B8A":"inherit",fontWeight:sortField===field?700:600}}>
+        {label}
+        <span style={{fontSize:9,color:sortField===field?"#1A6B8A":"#CFD8DC"}}>
+          {sortField===field ? (sortDir==="asc"?"▲":"▼") : "⇅"}
+        </span>
+      </button>
+    </th>
+  );
 
   return (
     <div>
@@ -4314,10 +4355,22 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
         <div style={{overflowX:"auto",borderRadius:10,border:"0.5px solid #E0E0E0"}}>
           <table style={{width:"100%",borderCollapse:"collapse",minWidth:780}}>
             <thead>
-              <tr>{cols.map((h,i)=><th key={i} style={thStyle}>{h}</th>)}</tr>
+              <tr>
+                <th style={thStyle}>{t.dirStudentName}</th>
+                <th style={thStyle}>{t.dirCnName}</th>
+                <SortTh label={t.dirAge} field="age"/>
+                <th style={thStyle}>{lang==="zh"?"聯絡資訊":"Contact Info"}</th>
+                <SortTh label={lang==="zh"?"加入年":"Join Yr"} field="regYear"/>
+                <th style={thStyle}>{t.dirRegDate}</th>
+                <th style={thStyle}>{t.dirStartDate}</th>
+                <SortTh label={t.dirDuration} field="duration"/>
+                <SortTh label={lang==="zh"?"積分":"Points"} field="points"/>
+                <th style={thStyle}>{t.dirStatus}</th>
+                <th style={thStyle}></th>
+              </tr>
             </thead>
             <tbody>
-              {allStudents.map((d,i)=>{
+              {sortedStudents.map((d,i)=>{
                 const linkedUser = users.find(u=>u.id===d.linkedUserId);
                 const entryId = d.id||d.linkedUserId;
                 const isEditing = editingId===entryId;
@@ -6821,7 +6874,7 @@ function TeacherAvailabilityGrid({ teacherId, availability, setAvailability, cou
               <span style={{fontSize:14,fontWeight:600,color:"#fff"}}>{lang==="zh"?"確認本次操作":"Confirm Changes"}</span>
               <button onClick={()=>setShowConfirm(false)} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",color:"#fff",fontSize:16}}>×</button>
             </div>
-            <div style={{padding:"16px 18px",overflowY:"auto"}}>
+            <div style={{padding:"16px 18px",overflowY:"auto",flex:1,minHeight:0}}>
               {preview.length===0 && <p style={{fontSize:12,color:"#9E9E9E",textAlign:"center"}}>—</p>}
               {preview.map((r,i)=>(
                 <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:7,background:r.action==="open"?"#E8F5E9":"#FFEBEE",marginBottom:6}}>
@@ -6832,14 +6885,14 @@ function TeacherAvailabilityGrid({ teacherId, availability, setAvailability, cou
                   </span>
                 </div>
               ))}
-              <div style={{display:"flex",gap:8,marginTop:14}}>
-                <button onClick={confirmSave} style={{flex:1,padding:"10px",borderRadius:7,background:"#1A6B8A",border:"none",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer"}}>
-                  ✓ {lang==="zh"?"確認送出":"Confirm & Save"}
-                </button>
-                <button onClick={()=>setShowConfirm(false)} style={{padding:"10px 16px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>
-                  {lang==="zh"?"返回修改":"Back"}
-                </button>
-              </div>
+            </div>
+            <div style={{display:"flex",gap:8,padding:"12px 18px 16px",borderTop:"0.5px solid #E0E0E0",flexShrink:0}}>
+              <button onClick={confirmSave} style={{flex:1,padding:"10px",borderRadius:7,background:"#1A6B8A",border:"none",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                ✓ {lang==="zh"?"確認送出":"Confirm & Save"}
+              </button>
+              <button onClick={()=>setShowConfirm(false)} style={{padding:"10px 16px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>
+                {lang==="zh"?"返回修改":"Back"}
+              </button>
             </div>
           </div>
         </div>
