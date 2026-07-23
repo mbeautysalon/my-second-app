@@ -153,6 +153,10 @@ const T = {
     fbTrackingDesc:"以下是已經上完課、但老師還沒有填寫課後反饋的堂次，依週分類",
     fbTrackingEmpty:"目前沒有未填寫反饋的課堂 🎉", fbTrackingCount:"{n} 堂未填寫",
     fbWeekOf:"週次",
+    teacherFeedbackTab:"課後回饋", teacherFeedbackDesc:"只顯示你自己任教的課堂，依時間排序",
+    teacherFbOverviewTab:"課堂反饋總覽", teacherFbMissingTab:"未填寫追蹤",
+    teacherFbNoSessions:"目前沒有已完成的課堂", feedbackNotWrittenShort:"尚未填寫",
+    sortOldToNew:"舊到新", sortNewToOld:"新到舊",
     fbTabOverview:"反饋總覽", fbOverviewDesc:"勾選學生，依週檢視該生課表與已填寫的課後心得",
     fbOverviewSelectPrompt:"請先勾選至少一位學生", fbOverviewNoSessions:"該生尚無排課紀錄",
     fbNotWritten:"尚未填寫課後心得", fbSelectStudents:"選擇學生",
@@ -368,6 +372,10 @@ const T = {
     fbTrackingDesc:"Classes that have already ended but the teacher hasn't written feedback for yet, grouped by week",
     fbTrackingEmpty:"No missing feedback right now 🎉", fbTrackingCount:"{n} missing",
     fbWeekOf:"Week of",
+    teacherFeedbackTab:"Post-Class Feedback", teacherFeedbackDesc:"Only your own courses, sorted by time",
+    teacherFbOverviewTab:"Feedback Overview", teacherFbMissingTab:"Missing Feedback",
+    teacherFbNoSessions:"No completed sessions yet", feedbackNotWrittenShort:"Not written yet",
+    sortOldToNew:"Oldest first", sortNewToOld:"Newest first",
     fbTabOverview:"Feedback Overview", fbOverviewDesc:"Check students to view their weekly schedule with any feedback already written",
     fbOverviewSelectPrompt:"Select at least one student", fbOverviewNoSessions:"No scheduled sessions for this student",
     fbNotWritten:"No feedback written yet", fbSelectStudents:"Select Students",
@@ -670,6 +678,16 @@ function getCourseStartForDay(course, dayIndex) {
   const entry = getCourseSchedule(course).find(s => s.dayIndex === dayIndex);
   return entry ? entry.start : course?.start;
 }
+// A scheduledDates entry's ACTUAL start time — a rescheduled/make-up session
+// (customStart, set via "更換時間補課") always overrides the course's regular
+// weekly pattern for that one occurrence. Using getCourseStartForDay alone
+// here was a bug: it silently ignored reschedules when checking whether a
+// session had ended yet (isSessionOver), completion status, medal points,
+// feedback tracking, etc. — a moved session could be judged "over" or "not
+// over" against the WRONG (original) time instead of its real new time.
+function resolveSessionStart(course, s) {
+  return s.customStart || getCourseStartForDay(course, s.dayIndex);
+}
 // Human-readable summary like "週六 9:00、週日 8:00" — groups days that share
 // the same start time together, e.g. "一、三、五 16:00" if they're identical.
 function formatCourseScheduleSummary(course, lang) {
@@ -751,11 +769,11 @@ function Toast({ msg }) {
 }
 
 // ─── Absence modal ────────────────────────────────────────────────────────────
-function AbsenceModal({ course, dayIndex, users, lang, currentUser, onConfirm, onClose }) {
+function AbsenceModal({ course, dayIndex, resolvedStart, users, lang, currentUser, onConfirm, onClose }) {
   const t = T[lang];
   const teacher = users.find(u=>u.id===course.teacherId);
   const student = users.find(u=>u.id===course.studentId);
-  const startTime = getCourseStartForDay(course, dayIndex);
+  const startTime = resolvedStart || getCourseStartForDay(course, dayIndex);
   const endTime = addMins(startTime, course.duration);
 
   // ── Step 1: reason; Step 2: notify ──
@@ -1496,7 +1514,7 @@ function SlotCalendarView({ slots, users, lang, currentUser, absences, materials
                           >📅</a>
                         )}
                         <button onClick={()=>setMatTarget({course:sl.course,date:sl.date})} style={{fontSize:9,background:"transparent",border:`1px solid ${dimBorder}`,color:dimText,borderRadius:3,padding:"2px 5px",cursor:"pointer"}}>📄{dayMatCount>0?` ${dayMatCount}`:""}</button>
-                        {canAbsent&&!isAbsent&&!isPast&&!attRec&&<button onClick={()=>{if(leaveOk)onAbsent(sl.course,sl.dayIndex);else setToast(t.absentTooLate);}} style={{fontSize:8,background:"transparent",border:`1px solid ${leaveOk?"#9E9E9E":"#E0E0E0"}`,color:leaveOk?"#9E9E9E":"#CFD8DC",borderRadius:3,padding:"2px 4px",cursor:leaveOk?"pointer":"not-allowed",opacity:leaveOk?0.6:0.25,marginLeft:"auto"}} title={leaveOk?t.absent:t.absentTooLate}>{lang==="zh"?"假":"Lv"}</button>}
+                        {canAbsent&&!isAbsent&&!isPast&&!attRec&&<button onClick={()=>{if(leaveOk)onAbsent(sl.course,sl.dayIndex,sl.date,sl.start);else setToast(t.absentTooLate);}} style={{fontSize:8,background:"transparent",border:`1px solid ${leaveOk?"#9E9E9E":"#E0E0E0"}`,color:leaveOk?"#9E9E9E":"#CFD8DC",borderRadius:3,padding:"2px 4px",cursor:leaveOk?"pointer":"not-allowed",opacity:leaveOk?0.6:0.25,marginLeft:"auto"}} title={leaveOk?t.absent:t.absentTooLate}>{lang==="zh"?"假":"Lv"}</button>}
                         {/* Teacher: write/edit feedback */}
                         {showTeacherFbBtn&&<button onClick={()=>setFbTarget(sl)} title={t.feedbackShort} style={{fontSize:9,background:fbRec?`${fbColor}18`:"transparent",border:`1px solid ${fbColor}`,color:fbColor,borderRadius:3,padding:"2px 5px",cursor:"pointer",marginLeft:"auto",fontWeight:600}}>💬</button>}
                         {/* Student: view approved feedback */}
@@ -1928,7 +1946,7 @@ function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, ma
             </button>
           )}
           {canAbsent&&!isAbsent&&!isPast&&!attRec&&(
-            <button onClick={()=>{if(leaveOk)onAbsent(course,dayIndex);else setToast(t.absentTooLate);}}
+            <button onClick={()=>{if(leaveOk)onAbsent(course,dayIndex,date,start);else setToast(t.absentTooLate);}}
               style={{marginLeft:"auto",fontSize:10,background:"transparent",border:`1px solid ${leaveOk?"#9E9E9E":"#E0E0E0"}`,color:leaveOk?"#9E9E9E":"#CFD8DC",borderRadius:5,padding:"3px 8px",cursor:leaveOk?"pointer":"not-allowed",opacity:leaveOk?0.7:0.35}}
               title={leaveOk?t.absent:t.absentTooLate}>{t.absent}</button>
           )}
@@ -2097,11 +2115,16 @@ function ScheduleView({ currentUser, users, courses, lang, absences, setAbsences
     :weekOffset===2?(lang==="zh"?"下下週":"In 2 weeks")
     :`${weekOffset>0?"+":""}${weekOffset} ${lang==="zh"?"週":"wk"}`;
 
-  const handleAbsent = (course, dayIndex) => {
-    if (!canRequestLeaveForWeek(weekDates, dayIndex, getCourseStartForDay(course, dayIndex), course.duration)) {
+  const handleAbsent = (course, dayIndex, date, start) => {
+    // Reuse the ALREADY-correct resolved start time (which accounts for a
+    // reschedule/make-up's customStart) instead of re-deriving it here — the
+    // re-derivation used to ignore customStart, so a rescheduled session could
+    // show its "Request Leave" button as enabled but then fail this re-check.
+    const effectiveStart = start || getCourseStartForDay(course, dayIndex);
+    if (!canRequestLeaveForWeek(weekDates, dayIndex, effectiveStart, course.duration)) {
       setToast(t.absentTooLate); return;
     }
-    setAbsentTarget({course, dayIndex});
+    setAbsentTarget({course, dayIndex, date, start: effectiveStart});
   };
   const confirmAbsent = (reason, note) => {
     const {course, dayIndex} = absentTarget;
@@ -2116,7 +2139,7 @@ function ScheduleView({ currentUser, users, courses, lang, absences, setAbsences
 
   return (
     <div>
-      {absentTarget&&<AbsenceModal course={absentTarget.course} dayIndex={absentTarget.dayIndex} users={users} lang={lang} currentUser={currentUser} onConfirm={confirmAbsent} onClose={()=>setAbsentTarget(null)}/>}
+      {absentTarget&&<AbsenceModal course={absentTarget.course} dayIndex={absentTarget.dayIndex} resolvedStart={absentTarget.start} users={users} lang={lang} currentUser={currentUser} onConfirm={confirmAbsent} onClose={()=>setAbsentTarget(null)}/>}
       {showWeekExport&&<WeekExportModal weekSlots={weekSlots} absences={absences} lang={lang} setToast={setToast} onClose={()=>setShowWeekExport(false)}/>}
 
       {/* ── Top bar ── */}
@@ -2892,7 +2915,7 @@ function computeStats(courses, absences, allTime, dateFrom, dateTo, enrollments,
         return;
       }
       // Past session with no record = completed (only once the session has actually ended)
-      if (isSessionOver(s.date, getCourseStartForDay(c, s.dayIndex), c.duration)) completed++;
+      if (isSessionOver(s.date, resolveSessionStart(c, s), c.duration)) completed++;
     });
   });
   return { total, studentAbsent, teacherAbsent, completed };
@@ -3244,7 +3267,7 @@ function EnrollmentManager({ users, courses, enrollments, setEnrollments, attend
     const att = getAttendance(enr.id, s.date);
     if (att) return att.type; // "excused" | "teacher_leave" | "absent"
     const course = allCourses.find(c=>c.id===enr.courseId);
-    if (isSessionOver(s.date, getCourseStartForDay(course, s.dayIndex), course?.duration)) return "completed"; // ended → completed
+    if (isSessionOver(s.date, resolveSessionStart(course, s), course?.duration)) return "completed"; // ended → completed
     return "upcoming";
   };
 
@@ -3533,7 +3556,7 @@ function AttendanceModal({ enrollment, sessionEntry, existing, users, lang, onSa
 }
 
 // ─── Leave Review ─────────────────────────────────────────────────────────────
-function LeaveReview({ users, courses, absences, setAbsences, attendance, setAttendance, enrollments, setEnrollments, lang }) {
+function LeaveReview({ users, courses, absences, setAbsences, attendance, setAttendance, enrollments, setEnrollments, lang, setToast }) {
   const t = T[lang];
   const today = new Date().toISOString().slice(0,10);
   const [filterRole, setFilterRole] = useState("all");
@@ -3564,22 +3587,56 @@ function LeaveReview({ users, courses, absences, setAbsences, attendance, setAtt
     setEditType(r.type);
     setEditNote(r.note||"");
     const match = findEnrollmentAndSession(r.courseId, r.date);
+    const course = courses.find(c=>c.id===r.courseId);
+    const fallbackDayIndex = (new Date(r.date+"T00:00:00").getDay()+6)%7;
     setRsDate(r.date);
-    setRsTime(match?.session?.customStart || (match ? getCourseStartForDay(courses.find(c=>c.id===r.courseId), match.session.dayIndex) : ""));
+    setRsTime(
+      match?.session?.customStart
+      || (match && course ? getCourseStartForDay(course, match.session.dayIndex) : null)
+      || (course ? getCourseStartForDay(course, fallbackDayIndex) : "")
+      || ""
+    );
   };
 
   const doRescheduleFromReview = () => {
     if (!editTarget) return;
+    if (!rsDate || !rsTime) { setToast(lang==="zh"?"請選擇日期與時間":"Please pick a date and time"); return; }
+
     const match = findEnrollmentAndSession(editTarget.courseId, editTarget.date);
-    if (!match) { return; }
-    if (!rsDate || !rsTime) { return; }
-    const { enrollment, session } = match;
+    let enrollment, session;
+
+    if (match) {
+      ({ enrollment, session } = match);
+    } else {
+      // The original date is no longer in scheduledDates — this happens once
+      // a leave was already recorded as excused/teacher_leave: buildSchedule
+      // drops that date entirely and defers a replacement session elsewhere,
+      // so there's nothing left at the old date to "move". Fall back to
+      // re-inserting this session as a fresh, specifically-dated make-up
+      // class instead of silently failing.
+      enrollment = enrollments.find(e=>e.courseId===editTarget.courseId);
+      if (!enrollment) { setToast(lang==="zh"?"找不到對應的排課紀錄，無法更換時間":"Couldn't find a matching enrollment — unable to reschedule"); return; }
+      session = { date: editTarget.date, dayIndex: (new Date(editTarget.date+"T00:00:00").getDay()+6)%7, sessionNo: null };
+    }
+
     const newDayIndex = (new Date(rsDate+"T00:00:00").getDay()+6)%7;
-    const newSched = (enrollment.scheduledDates||[]).map(s =>
-      (s.date===session.date && s.sessionNo===session.sessionNo)
-        ? { ...s, date: rsDate, dayIndex: newDayIndex, customStart: rsTime, rescheduledFrom: s.rescheduledFrom || session.date }
-        : s
-    );
+    let newSched;
+    if (session.sessionNo !== null) {
+      // Editing an existing, still-present entry
+      newSched = (enrollment.scheduledDates||[]).map(s =>
+        (s.date===session.date && s.sessionNo===session.sessionNo)
+          ? { ...s, date: rsDate, dayIndex: newDayIndex, customStart: rsTime, rescheduledFrom: s.rescheduledFrom || session.date }
+          : s
+      );
+    } else {
+      // Insert as a new make-up session — restores the missed class as a
+      // real, specifically-dated session rather than leaving it as an
+      // open-ended deferral
+      const maxNo = Math.max(0, ...(enrollment.scheduledDates||[]).map(s=>s.sessionNo||0));
+      newSched = [...(enrollment.scheduledDates||[]), {
+        date: rsDate, dayIndex: newDayIndex, sessionNo: maxNo+1, customStart: rsTime, rescheduledFrom: editTarget.date,
+      }];
+    }
     setEnrollments(es=>es.map(e=>e.id===enrollment.id?{...e,scheduledDates:newSched}:e));
     // The original leave record is superseded by the move — remove it
     if (editTarget.source==="self") {
@@ -3587,6 +3644,7 @@ function LeaveReview({ users, courses, absences, setAbsences, attendance, setAtt
     } else {
       setAttendance(prev=>prev.filter(a=>a.id!==editTarget._id));
     }
+    setToast(lang==="zh"?`已將此堂課改到 ${rsDate} ${rsTime}`:`This session moved to ${rsDate} ${rsTime}`);
     setEditTarget(null); setEditType(""); setEditNote("");
   };
 
@@ -5115,7 +5173,7 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
       </div>
       {tab==="courses"&&<CourseManager users={users} courses={courses} setCourses={setCourses} lang={lang} setToast={setToast} materials={materials} setMaterials={setMaterials} enrollments={enrollments}/>}
       {tab==="enroll" &&<EnrollmentManager users={users} courses={courses} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} lang={lang} setToast={setToast}/>}
-      {tab==="leave"  &&<LeaveReview users={users} courses={courses} absences={absences} setAbsences={setAbsences} attendance={attendance} setAttendance={setAttendance} enrollments={enrollments} setEnrollments={setEnrollments} lang={lang}/>}
+      {tab==="leave"  &&<LeaveReview users={users} courses={courses} absences={absences} setAbsences={setAbsences} attendance={attendance} setAttendance={setAttendance} enrollments={enrollments} setEnrollments={setEnrollments} lang={lang} setToast={setToast}/>}
       {tab==="feedback"&&<FeedbackCenter users={users} courses={courses} enrollments={enrollments} attendance={attendance} feedback={feedback||[]} setFeedback={setFeedback} lang={lang} setToast={setToast}/>}
       {tab==="availability"&&<AdminTeacherAvailability users={users} courses={courses} availability={teacherAvailability||[]} setAvailability={setTeacherAvailability} overrides={availabilityOverrides||[]} setOverrides={setAvailabilityOverrides} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang} setToast={setToast}/>}
       {tab==="peopledir" &&<PeopleDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses} profileChanges={profileChanges} setProfileChanges={setProfileChanges}/>}
@@ -5138,7 +5196,7 @@ function computeMissingFeedback(courses, enrollments, feedback, attendance) {
     const course = courses.find(c=>c.id===enr.courseId);
     if (!course) return;
     (enr.scheduledDates||[]).forEach(s => {
-      if (!isSessionOver(s.date, getCourseStartForDay(course, s.dayIndex), course.duration)) return;
+      if (!isSessionOver(s.date, resolveSessionStart(course, s), course.duration)) return;
       const attRec = (attendance||[]).find(a=>a.enrollmentId===enr.id && a.date===s.date);
       if (attRec && attRec.type!=="other") return; // absent/excused/teacher_leave — feedback not expected
       const hasFeedback = (feedback||[]).some(f=>f.enrollmentId===enr.id && f.date===s.date);
@@ -5281,7 +5339,7 @@ function FeedbackCenter({ users, courses, enrollments, attendance, feedback, set
           if (!course) return [];
           return (enr.scheduledDates||[]).map(s => ({
             course, enrollment: enr, studentId: enr.studentId,
-            date: s.date, dayIndex: s.dayIndex, sessionNo: s.sessionNo,
+            date: s.date, dayIndex: s.dayIndex, sessionNo: s.sessionNo, customStart: s.customStart,
             fb: (feedback||[]).find(f=>f.enrollmentId===enr.id && f.date===s.date) || null,
           }));
         })
@@ -5574,7 +5632,7 @@ function FeedbackCenter({ users, courses, enrollments, attendance, feedback, set
                         <div>
                           <div style={{fontSize:12,fontWeight:600,color:"#172F39"}}>{r.course.subject}</div>
                           <div style={{fontSize:11,color:"#9E9E9E",marginTop:2}}>
-                            {r.date} ({T[lang].days[r.dayIndex]}) · #{r.sessionNo} · {getCourseStartForDay(r.course, r.dayIndex)}
+                            {r.date} ({T[lang].days[r.dayIndex]}) · #{r.sessionNo} · {r.customStart || getCourseStartForDay(r.course, r.dayIndex)}
                           </div>
                           <div style={{fontSize:11,color:"#546E7A",marginTop:2}}>
                             {overviewStudents.size>1 && <>{student?.name||"—"} · </>}{teacher?.name||"—"}
@@ -5876,7 +5934,7 @@ function calcStudentSessions(studentId, enrollments, attendance, courses, confir
     const sessVal = course.duration===25 ? 1 : 2; // 25min=1, 50min=2
     (enr.scheduledDates||[]).forEach(s=>{
       // Only count sessions whose actual end time has passed (not just "today or earlier")
-      if (!isSessionOver(s.date, getCourseStartForDay(course, s.dayIndex), course.duration)) return;
+      if (!isSessionOver(s.date, resolveSessionStart(course, s), course.duration)) return;
       const att = attendance.find(a=>a.enrollmentId===enr.id&&a.date===s.date);
       if (att?.type==="absent") return; // deducted
       count += sessVal;
@@ -6147,11 +6205,12 @@ function StudentClassHistory({ currentUser, enrollments, attendance, courses, us
       const attRec = attendance.find(a=>a.enrollmentId===enr.id&&a.date===s.date);
       const status = attRec
         ? attRec.type   // "absent" | "excused" | "teacher_leave"
-        : isSessionOver(s.date, getCourseStartForDay(course, s.dayIndex), course.duration) ? "completed" : "upcoming";
+        : isSessionOver(s.date, resolveSessionStart(course, s), course.duration) ? "completed" : "upcoming";
       sessions.push({
         date: s.date,
         dayIndex: s.dayIndex,
         sessionNo: s.sessionNo,
+        customStart: s.customStart,
         course,
         teacher,
         enrollment: enr,
@@ -6234,7 +6293,7 @@ function StudentClassHistory({ currentUser, enrollments, attendance, courses, us
                 <span style={{fontSize:12,fontWeight:600,color:"#172F39",minWidth:70}}>{s.date}</span>
                 <span style={{fontSize:11,color:"#9E9E9E",minWidth:28}}>{dayLabel(s.dayIndex)}</span>
                 <span style={{fontSize:11,color:"#546E7A",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.course.subject}</span>
-                <span style={{fontSize:11,color:"#9E9E9E"}}>{getCourseStartForDay(s.course, s.dayIndex)}</span>
+                <span style={{fontSize:11,color:"#9E9E9E"}}>{s.customStart || getCourseStartForDay(s.course, s.dayIndex)}</span>
                 <span style={{fontSize:10,background:"rgba(26,107,138,0.1)",color:"#1A6B8A",borderRadius:4,padding:"1px 6px"}}>{s.sessVal===2?"50m":"25m"}</span>
               </div>
             ))}
@@ -6282,7 +6341,7 @@ function StudentClassHistory({ currentUser, enrollments, attendance, courses, us
                       {/* Date */}
                       <div style={{minWidth:80}}>
                         <div style={{fontSize:12,fontWeight:600,color:"#172F39"}}>{s.date}</div>
-                        <div style={{fontSize:10,color:"#9E9E9E"}}>{dayLabel(s.dayIndex)} {getCourseStartForDay(s.course,s.dayIndex)}–{addMins(getCourseStartForDay(s.course,s.dayIndex),s.course.duration)}</div>
+                        <div style={{fontSize:10,color:"#9E9E9E"}}>{dayLabel(s.dayIndex)} {s.customStart||getCourseStartForDay(s.course,s.dayIndex)}–{addMins(s.customStart||getCourseStartForDay(s.course,s.dayIndex),s.course.duration)}</div>
                       </div>
                       {/* Course */}
                       <div style={{flex:1,minWidth:0}}>
@@ -7050,6 +7109,145 @@ function StudentSettingsPanel({ currentUser, users, setUsers, dirEntries, saveDi
 // ─── Student Teacher Introduction Panel ───────────────────────────────────────
 // Shows the student's own teacher(s) — basic profile with years of experience
 // and teaching philosophy/strengths, filled in (and editable) by admin.
+// ─── Teacher's own Post-Class Feedback panel ──────────────────────────────────
+// Scoped to just this teacher's own courses — "課堂反饋總覽" lists every past
+// session chronologically (oldest first by default), "未填寫追蹤" narrows that
+// down to sessions still missing feedback, grouped by week. Both let the
+// teacher write/edit feedback directly via the same FeedbackModal used from
+// the schedule view.
+function TeacherFeedbackPanel({ currentUser, users, courses, enrollments, attendance, feedback, setFeedback, lang, setToast }) {
+  const t = T[lang];
+  const [subTab, setSubTab] = useState("overview"); // overview | missing
+  const [sortOldFirst, setSortOldFirst] = useState(true); // default: old → new, top to bottom
+  const [fbTarget, setFbTarget] = useState(null); // slot-like object passed to FeedbackModal
+
+  const myCourseIds = new Set(courses.filter(c=>c.teacherId===currentUser.id).map(c=>c.id));
+
+  // Every past session across this teacher's own courses
+  const allSessions = enrollments
+    .filter(enr => myCourseIds.has(enr.courseId))
+    .flatMap(enr => {
+      const course = courses.find(c=>c.id===enr.courseId);
+      if (!course) return [];
+      return (enr.scheduledDates||[])
+        .filter(s => isSessionOver(s.date, resolveSessionStart(course, s), course.duration))
+        .map(s => {
+          const start = s.customStart || getCourseStartForDay(course, s.dayIndex);
+          return {
+            course, enrollment: enr, date: s.date, dayIndex: s.dayIndex, sessionNo: s.sessionNo, start,
+            feedbackRec: (feedback||[]).find(f=>f.enrollmentId===enr.id && f.date===s.date) || null,
+            attRec: (attendance||[]).find(a=>a.enrollmentId===enr.id && a.date===s.date) || null,
+          };
+        });
+    });
+
+  const sorted = [...allSessions].sort((a,b) => {
+    const cmp = a.date.localeCompare(b.date) || a.start.localeCompare(b.start);
+    return sortOldFirst ? cmp : -cmp;
+  });
+
+  // Sessions where feedback is genuinely expected but missing (absent/excused/
+  // teacher_leave sessions don't need feedback)
+  const missingSessions = sorted.filter(s => (!s.attRec || s.attRec.type==="other") && !s.feedbackRec);
+  const missingByWeek = {};
+  missingSessions.forEach(s => {
+    const wk = getMondayKey(s.date);
+    if (!missingByWeek[wk]) missingByWeek[wk] = [];
+    missingByWeek[wk].push(s);
+  });
+  const weekKeys = Object.keys(missingByWeek).sort((a,b)=> sortOldFirst ? a.localeCompare(b) : b.localeCompare(a));
+
+  const STATUS_META = {
+    pending:  {label:t.feedbackStatusPending,  color:"#E65100", bg:"#FFF3E0"},
+    approved: {label:t.feedbackStatusApproved, color:"#2E7D32", bg:"#E8F5E9"},
+    rejected: {label:t.feedbackStatusRejected, color:"#D32F2F", bg:"#FFEBEE"},
+  };
+
+  const renderSessionRow = (s, i) => {
+    const student = users.find(u=>u.id===s.course.studentId);
+    const meta = s.feedbackRec ? STATUS_META[s.feedbackRec.status] : null;
+    return (
+      <div key={i} style={{background:"#FFFFFF",border:`1px solid ${meta?meta.color+"33":"#E0E0E0"}`,borderRadius:9,padding:"10px 14px",marginBottom:8}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,flexWrap:"wrap",marginBottom:s.feedbackRec?8:0}}>
+          <div>
+            <div style={{fontSize:12,fontWeight:600,color:"#172F39"}}>{s.course.subject}</div>
+            <div style={{fontSize:11,color:"#9E9E9E",marginTop:2}}>
+              {s.date} ({T[lang].days[s.dayIndex]}) · {s.start} · #{s.sessionNo}
+            </div>
+            <div style={{fontSize:11,color:"#546E7A",marginTop:2}}>{lang==="zh"?"學生":"Student"}: {student?.name||"—"}</div>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+            {meta
+              ? <span style={{fontSize:10,background:meta.bg,color:meta.color,borderRadius:5,padding:"2px 9px",fontWeight:600}}>● {meta.label}</span>
+              : <span style={{fontSize:10,background:"#F5F5F5",color:"#9E9E9E",borderRadius:5,padding:"2px 9px"}}>{t.feedbackNotWrittenShort}</span>}
+            <button onClick={()=>setFbTarget(s)} style={{fontSize:11,padding:"4px 11px",borderRadius:6,background:s.feedbackRec?"transparent":"#7B1FA2",border:s.feedbackRec?"1px solid #7B1FA2":"none",color:s.feedbackRec?"#7B1FA2":"#fff",cursor:"pointer",fontWeight:500,whiteSpace:"nowrap"}}>
+              {s.feedbackRec?t.feedbackEdit:t.feedbackWrite}
+            </button>
+          </div>
+        </div>
+        {s.feedbackRec && (
+          <div style={{background:"#F5F5F5",borderRadius:7,padding:"9px 12px",fontSize:12,color:"#172F39",lineHeight:1.7,whiteSpace:"pre-wrap"}}>
+            {s.feedbackRec.text}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{padding:"1.25rem"}}>
+      {fbTarget && <FeedbackModal slot={fbTarget} currentUser={currentUser} users={users} lang={lang} feedback={feedback||[]} setFeedback={setFeedback} setToast={setToast} onClose={()=>setFbTarget(null)} readOnly={false}/>}
+
+      <div style={{marginBottom:14}}>
+        <h3 style={{fontSize:15,fontWeight:600,color:"#172F39",margin:"0 0 3px"}}>{t.teacherFeedbackTab}</h3>
+        <p style={{fontSize:12,color:"#9E9E9E",margin:0}}>{t.teacherFeedbackDesc}</p>
+      </div>
+
+      {/* Sub-tabs */}
+      <div style={{display:"flex",gap:5,marginBottom:14,flexWrap:"wrap"}}>
+        {[["overview",t.teacherFbOverviewTab,0],["missing",t.teacherFbMissingTab,missingSessions.length]].map(([k,l,badge])=>(
+          <button key={k} onClick={()=>setSubTab(k)} style={{position:"relative",padding:"7px 16px",borderRadius:7,fontSize:13,cursor:"pointer",border:subTab===k?"none":"0.5px solid #CFD8DC",background:subTab===k?"#1A6B8A":"transparent",color:subTab===k?"#fff":"#546E7A",fontWeight:subTab===k?600:400}}>
+            {l}
+            {badge>0 && <span style={{marginLeft:6,fontSize:10,background:subTab===k?"rgba(255,255,255,0.25)":"#D32F2F",color:"#fff",borderRadius:9,padding:"1px 6px",fontWeight:700}}>{badge}</span>}
+          </button>
+        ))}
+        <button onClick={()=>setSortOldFirst(o=>!o)} style={{marginLeft:"auto",fontSize:12,padding:"6px 12px",borderRadius:7,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer",whiteSpace:"nowrap"}}>
+            {sortOldFirst ? `↓ ${t.sortOldToNew}` : `↑ ${t.sortNewToOld}`}
+        </button>
+      </div>
+
+      {/* ── Overview: every past session, chronological ── */}
+      {subTab==="overview" && (
+        sorted.length===0
+          ? <div style={{textAlign:"center",padding:"2.5rem 0",color:"#9E9E9E"}}><div style={{fontSize:28,marginBottom:8}}>📭</div><div style={{fontSize:13}}>{t.teacherFbNoSessions}</div></div>
+          : sorted.map(renderSessionRow)
+      )}
+
+      {/* ── Missing: only sessions without feedback, grouped by week ── */}
+      {subTab==="missing" && (
+        weekKeys.length===0
+          ? <div style={{textAlign:"center",padding:"2.5rem 0",color:"#9E9E9E"}}><div style={{fontSize:28,marginBottom:8}}>🎉</div><div style={{fontSize:13}}>{t.fbTrackingEmpty}</div></div>
+          : weekKeys.map(wk=>{
+              const items = missingByWeek[wk];
+              const monday = new Date(wk+"T00:00:00");
+              const sunday = new Date(monday); sunday.setDate(monday.getDate()+6);
+              const rangeLabel = `${fmtMD(monday)} – ${fmtMD(sunday)}`;
+              return (
+                <div key={wk} style={{marginBottom:"1.25rem"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                    <span style={{fontSize:13,fontWeight:600,color:"#172F39"}}>{t.fbWeekOf} {rangeLabel}</span>
+                    <span style={{fontSize:10,background:"#FFF3E0",color:"#E65100",borderRadius:9,padding:"2px 8px",fontWeight:700}}>{t.fbTrackingCount.replace("{n}", items.length)}</span>
+                    <div style={{flex:1,height:"0.5px",background:"#E0E0E0"}}/>
+                  </div>
+                  {items.map(renderSessionRow)}
+                </div>
+              );
+            })
+      )}
+    </div>
+  );
+}
+
 function StudentTeacherIntroPanel({ currentUser, users, courses, teacherDirEntries, dirLoaded, lang }) {
   const t = T[lang];
 
@@ -7129,6 +7327,7 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, lang, abs
       ]
     : [
         { key:"students",      icon:"👥", zh:"任教學生", en:"My Students" },
+        { key:"teacherFeedback",icon:"💬", zh:"課後回饋", en:"Post-Class Feedback" },
         { key:"availability",  icon:"🗓", zh:"可安排時段", en:"Availability" },
         { key:"settings",      icon:"⚙️", zh:"基本資訊與設定", en:"Basic Info & Settings" },
         { key:"schedule_side", icon:"📅", zh:"課表",     en:"Schedule"   },
@@ -7185,7 +7384,7 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, lang, abs
                 (e.scheduledDates||[]).forEach(s=>{
                   const attRec=attendance.find(a=>a.enrollmentId===e.id&&a.date===s.date);
                   if(attRec?.type==="absent"){ usedCount++; return; }
-                  if(!attRec && isSessionOver(s.date,getCourseStartForDay(c,s.dayIndex),c.duration)){ usedCount++; }
+                  if(!attRec && isSessionOver(s.date,resolveSessionStart(c,s),c.duration)){ usedCount++; }
                 });
               });
               const remaining=Math.max(0, totalPurchased - usedCount);
@@ -7236,6 +7435,8 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, lang, abs
               ? <StudentSettingsPanel currentUser={currentUser} users={users} setUsers={setUsers} dirEntries={dirEntries} saveDirEntries={saveDirEntries} dirLoaded={dirLoaded} profileChanges={profileChanges} setProfileChanges={setProfileChanges} lang={lang} setToast={setToast}/>
             : isTeacher && sideTab==="students"
               ? <TeacherStudentsPanel currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} attendance={attendance} lang={lang} dirEntries={dirEntries}/>
+            : isTeacher && sideTab==="teacherFeedback"
+              ? <TeacherFeedbackPanel currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} attendance={attendance} feedback={feedback} setFeedback={setFeedback} lang={lang} setToast={setToast}/>
             : isTeacher && sideTab==="availability"
               ? <TeacherAvailabilityPanel currentUser={currentUser} users={users} availability={teacherAvailability} setAvailability={setTeacherAvailability} overrides={availabilityOverrides} setOverrides={setAvailabilityOverrides} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang} setToast={setToast}/>
             : isTeacher && sideTab==="settings"
