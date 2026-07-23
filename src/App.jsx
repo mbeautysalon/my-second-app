@@ -3377,12 +3377,19 @@ function EnrollmentManager({ users, courses, enrollments, setEnrollments, attend
               <div style={{fontSize:12,fontWeight:500,color:"#172F39",marginBottom:8}}>
                 {t.scheduledDates} — {preview.length} {lang==="zh"?"堂":"sessions"} ({lang==="zh"?"起":"from"} {form.startDate} {lang==="zh"?"至":"to"} {preview[preview.length-1]?.date})
               </div>
+              {Number(form.totalSessions) !== preview.length && (
+                <div style={{fontSize:11,color:"#E65100",background:"#FFF3E0",borderRadius:6,padding:"8px 11px",marginBottom:10,lineHeight:1.6}}>
+                  ⚠️ {lang==="zh"
+                    ? `購買堂數為 ${form.totalSessions} 堂，但實際排課有 ${preview.length} 堂，兩者不一致——可能是請假改期造成的，請確認是否需要手動調整。`
+                    : `Purchased ${form.totalSessions} session(s), but the actual schedule has ${preview.length} — these don't match, possibly from a leave reschedule. Please check if manual adjustment is needed.`}
+                </div>
+              )}
               <div style={{maxHeight:220,overflowY:"auto",display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))",gap:5,marginBottom:12}}>
                 {preview.map((s,i)=>(
-                  <div key={i} style={{background:"#FFFFFF",border:"0.5px solid #CFD8DC",borderRadius:6,padding:"6px 9px",fontSize:11}}>
-                    <div style={{color:"#9E9E9E",marginBottom:1}}>#{s.sessionNo}</div>
+                  <div key={i} style={{background:s.customStart?"#F3E5F5":"#FFFFFF",border:`0.5px solid ${s.customStart?"#CE93D8":"#CFD8DC"}`,borderRadius:6,padding:"6px 9px",fontSize:11}}>
+                    <div style={{color:"#9E9E9E",marginBottom:1}}>#{s.sessionNo}{s.customStart?" 🔄":""}</div>
                     <div style={{color:"#172F39",fontWeight:500}}>{s.date}</div>
-                    <div style={{color:"#546E7A"}}>{T[lang].days[s.dayIndex]}</div>
+                    <div style={{color:"#546E7A"}}>{T[lang].days[s.dayIndex]}{s.customStart?` ${s.customStart}`:""}</div>
                   </div>
                 ))}
               </div>
@@ -3610,33 +3617,23 @@ function LeaveReview({ users, courses, absences, setAbsences, attendance, setAtt
     } else {
       // The original date is no longer in scheduledDates — this happens once
       // a leave was already recorded as excused/teacher_leave: buildSchedule
-      // drops that date entirely and defers a replacement session elsewhere,
-      // so there's nothing left at the old date to "move". Fall back to
-      // re-inserting this session as a fresh, specifically-dated make-up
-      // class instead of silently failing.
+      // drops that date entirely and appends ONE compensating replacement
+      // session later in the sequence, keeping scheduledDates.length equal to
+      // totalSessions (堂數 purchased). That replacement is the highest
+      // sessionNo entry — reuse ITS slot for the specific make-up date/time
+      // instead of appending an extra (11th, 12th, ...) entry, which would
+      // silently desync the schedule from what was actually purchased.
       enrollment = enrollments.find(e=>e.courseId===editTarget.courseId);
-      if (!enrollment) { setToast(lang==="zh"?"找不到對應的排課紀錄，無法更換時間":"Couldn't find a matching enrollment — unable to reschedule"); return; }
-      session = { date: editTarget.date, dayIndex: (new Date(editTarget.date+"T00:00:00").getDay()+6)%7, sessionNo: null };
+      if (!enrollment || !(enrollment.scheduledDates||[]).length) { setToast(lang==="zh"?"找不到對應的排課紀錄，無法更換時間":"Couldn't find a matching enrollment — unable to reschedule"); return; }
+      session = enrollment.scheduledDates.reduce((max, s) => (s.sessionNo||0) > (max.sessionNo||0) ? s : max, enrollment.scheduledDates[0]);
     }
 
     const newDayIndex = (new Date(rsDate+"T00:00:00").getDay()+6)%7;
-    let newSched;
-    if (session.sessionNo !== null) {
-      // Editing an existing, still-present entry
-      newSched = (enrollment.scheduledDates||[]).map(s =>
-        (s.date===session.date && s.sessionNo===session.sessionNo)
-          ? { ...s, date: rsDate, dayIndex: newDayIndex, customStart: rsTime, rescheduledFrom: s.rescheduledFrom || session.date }
-          : s
-      );
-    } else {
-      // Insert as a new make-up session — restores the missed class as a
-      // real, specifically-dated session rather than leaving it as an
-      // open-ended deferral
-      const maxNo = Math.max(0, ...(enrollment.scheduledDates||[]).map(s=>s.sessionNo||0));
-      newSched = [...(enrollment.scheduledDates||[]), {
-        date: rsDate, dayIndex: newDayIndex, sessionNo: maxNo+1, customStart: rsTime, rescheduledFrom: editTarget.date,
-      }];
-    }
+    const newSched = (enrollment.scheduledDates||[]).map(s =>
+      (s.date===session.date && s.sessionNo===session.sessionNo)
+        ? { ...s, date: rsDate, dayIndex: newDayIndex, customStart: rsTime, rescheduledFrom: s.rescheduledFrom || (match ? session.date : editTarget.date) }
+        : s
+    );
     setEnrollments(es=>es.map(e=>e.id===enrollment.id?{...e,scheduledDates:newSched}:e));
     // The original leave record is superseded by the move — remove it
     if (editTarget.source==="self") {
