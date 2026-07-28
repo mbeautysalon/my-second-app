@@ -494,6 +494,8 @@ const COLORS = [
   {bg:"#FBE9E7",border:"#BF360C",text:"#BF360C"},
 ];
 
+const genId = () => "id_" + Math.random().toString(36).slice(2,9);
+
 const DEFAULT_USERS = [
   {id:"u1",username:"admin",password:"admin123",name:"Admin 管理員",role:"admin"},
   {id:"u2",username:"teacher1",password:"pass123",name:"王大明",role:"teacher"},
@@ -595,8 +597,6 @@ function useStorage(key, def) {
   }, [key, val]);
   return [val, save, loaded];
 }
-
-const genId = () => "id_" + Math.random().toString(36).slice(2,9);
 
 // ─── Password hashing (Web Crypto API, built into every modern browser) ───
 // PBKDF2 with a random per-user salt and 100k iterations — deliberately slow
@@ -6320,8 +6320,8 @@ function TrialApplicationForm({ englishLevels, learningPurposes, onSubmit, onBac
     return (
       <div style={{background:"#FFFFFF",borderRadius:13,border:"1px solid rgba(26,107,138,0.25)",boxShadow:"0 4px 24px rgba(23,47,57,0.15)",padding:"2rem 1.6rem",width:"100%",maxWidth:320,textAlign:"center"}}>
         <div style={{fontSize:40,marginBottom:10}}>✅</div>
-        <div style={{fontSize:14,color:"#172F39",fontWeight:600,marginBottom:6}}>{lang==="zh"?"申請已送出！":"Application submitted!"}</div>
-        <div style={{fontSize:12,color:"#546E7A",lineHeight:1.7,marginBottom:16}}>{lang==="zh"?"我們會盡快與您聯繫安排試聽課程。":"We'll be in touch soon to arrange your trial lesson."}</div>
+        <div style={{fontSize:14,color:"#172F39",fontWeight:600,marginBottom:6}}>{lang==="zh"?"我們已經收到你的申請":"We've received your application"}</div>
+        <div style={{fontSize:12,color:"#546E7A",lineHeight:1.7,marginBottom:16}}>{lang==="zh"?"會盡速聯繫通知你。":"We'll contact you as soon as possible."}</div>
         <button onClick={onBack} style={{width:"100%",background:"#1A6B8A",border:"none",borderRadius:7,color:"#fff",padding:"9px",fontSize:13,fontWeight:500,cursor:"pointer"}}>{lang==="zh"?"返回登入":"Back to Login"}</button>
       </div>
     );
