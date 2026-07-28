@@ -46,7 +46,8 @@ const T = {
   zh: {
     appName:"ES Online Course Platform", login:"登入", logout:"登出", username:"帳號", password:"密碼",
     loginBtn:"登入", loginError:"帳號或密碼錯誤",
-    role_student:"學生", role_teacher:"老師", role_admin:"管理員",
+    role_student:"學生", role_teacher:"老師", role_admin:"管理員", role_assistant:"助教",
+    assistantPanel:"助教後台",
     weekSchedule:"本週課表", teacher:"老師", student:"學生", time:"時間",
     join:"加入會議", material:"教材", noClass:"本週無課程",
     addToGCal:"新增到 Google 日曆", addToGCalShort:"加到日曆",
@@ -265,7 +266,8 @@ const T = {
   en: {
     appName:"ES Online Course Platform", login:"Login", logout:"Logout", username:"Username", password:"Password",
     loginBtn:"Sign In", loginError:"Invalid username or password",
-    role_student:"Student", role_teacher:"Teacher", role_admin:"Admin",
+    role_student:"Student", role_teacher:"Teacher", role_admin:"Admin", role_assistant:"Assistant",
+    assistantPanel:"Assistant Panel",
     weekSchedule:"This Week's Schedule", teacher:"Teacher", student:"Student", time:"Time",
     join:"Join", material:"Materials", noClass:"No classes this week",
     addToGCal:"Add to Google Calendar", addToGCalShort:"Add to Calendar",
@@ -507,6 +509,24 @@ const DEFAULT_COURSES = [
   {id:"c3",subject:"ES English Study - 李雅婷 and 王大明",teacherId:"u2",studentId:"u6",days:[2,4],start:"11:00",duration:50,meetingUrl:"https://meet.google.com/xyz-abcd"},
 ];
 
+// Admin-editable dropdown choices for the trial-lesson application form.
+const DEFAULT_ENGLISH_LEVELS = [
+  {id:genId(), zh:"初階", en:"Beginner"},
+  {id:genId(), zh:"中階", en:"Intermediate"},
+  {id:genId(), zh:"中高階", en:"Upper-Intermediate"},
+  {id:genId(), zh:"高階", en:"Advanced"},
+];
+const DEFAULT_LEARNING_PURPOSES = [
+  {id:genId(), zh:"出國留學", en:"Study Abroad"},
+  {id:genId(), zh:"職場工作需求", en:"Career / Workplace"},
+  {id:genId(), zh:"學術／考試準備（多益、雅思、托福等）", en:"Academic / Test Prep (TOEIC, IELTS, TOEFL)"},
+  {id:genId(), zh:"日常生活溝通", en:"Daily Communication"},
+  {id:genId(), zh:"兒童／青少年基礎教育", en:"Child / Teen Foundational Education"},
+  {id:genId(), zh:"旅遊會話", en:"Travel Conversation"},
+  {id:genId(), zh:"興趣嗜好", en:"Personal Interest"},
+  {id:genId(), zh:"其他", en:"Other"},
+];
+
 // materials = [{id, courseId, dayIndex, date:"YYYY-MM-DD", title, url, desc, addedBy, addedAt}]
 
 const DEFAULT_ENROLLMENTS = []; // {id, courseId, studentId, payDate, totalSessions, startDate, scheduledDates:[{date,dayIndex,sessionNo}]}
@@ -577,6 +597,34 @@ function useStorage(key, def) {
 }
 
 const genId = () => "id_" + Math.random().toString(36).slice(2,9);
+
+// ─── Password hashing (Web Crypto API, built into every modern browser) ───
+// PBKDF2 with a random per-user salt and 100k iterations — deliberately slow
+// to make brute-forcing a leaked database impractical, unlike plaintext or a
+// single fast hash. Migration is transparent: an account's ACTUAL password
+// never changes; only how it's stored changes, automatically, the next time
+// that person logs in (see LoginPage) — nobody needs to reset anything.
+async function hashPassword(password, existingSaltHex) {
+  const enc = new TextEncoder();
+  const salt = existingSaltHex
+    ? new Uint8Array(existingSaltHex.match(/.{2}/g).map(b => parseInt(b, 16)))
+    : crypto.getRandomValues(new Uint8Array(16));
+  const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", salt, iterations: 100000, hash: "SHA-256" }, keyMaterial, 256);
+  const toHex = (buf) => Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+  return { hash: toHex(bits), salt: toHex(salt) };
+}
+// Verifies a typed password against a user record that may still be on the
+// OLD plaintext scheme (passwordHash/passwordSalt not set yet) — supports
+// both transparently so nothing breaks mid-migration.
+async function verifyPassword(typed, user) {
+  if (user.passwordHash && user.passwordSalt) {
+    const { hash } = await hashPassword(typed, user.passwordSalt);
+    return hash === user.passwordHash;
+  }
+  return typed === user.password; // legacy plaintext fallback
+}
+
 
 function addMins(timeStr, mins) {
   const [h,m] = timeStr.split(":").map(Number);
@@ -2063,9 +2111,7 @@ function ScheduleView({ currentUser, users, courses, lang, absences, setAbsences
   const [weekOffset, setWeekOffset] = useState(0);
   const [absentTarget, setAbsentTarget] = useState(null);
   const [showWeekExport, setShowWeekExport] = useState(false);
-  const isAdmin = currentUser.role==="admin";
-
-  // Admin filter state
+  const isAdmin = currentUser.role==="admin"||currentUser.role==="assistant";
   const [adminFilterType, setAdminFilterType] = useState("all"); // "all" | "teacher" | "student"
   const [adminFilterId, setAdminFilterId] = useState("all"); // used for teacher (single-select)
   const [adminSelectedStudents, setAdminSelectedStudents] = useState(new Set()); // used for student (multi-select) — empty = all
@@ -2663,11 +2709,58 @@ function CourseManager({ users, courses, setCourses, lang, setToast, materials, 
   const collapseAll = () => setCollapsedGroups(new Set(groupKeys));
   const expandAll = () => setCollapsedGroups(new Set());
 
+  // ── This week's sessions missing materials — a prominent, hard-to-miss
+  // reminder so materials don't quietly go unfilled. Scoped to THIS WEEK
+  // only (not all-time), since that's what's actionable right now.
+  const [showMissingMat, setShowMissingMat] = useState(true);
+  const thisWeekDateStrs = getWeekDates(0).map(fmtYMD);
+  const missingMaterialsThisWeek = enrollments.flatMap(enr => {
+    const course = courses.find(c=>c.id===enr.courseId);
+    if (!course) return [];
+    return (enr.scheduledDates||[])
+      .filter(s => thisWeekDateStrs.includes(s.date))
+      .filter(s => !materials.some(m => m.courseId===course.id && m.date===s.date))
+      .map(s => ({ course, date:s.date, dayIndex:s.dayIndex }));
+  }).sort((a,b)=>a.date.localeCompare(b.date));
+
   return (
     <div>
       {confirmDelCourseId && <ConfirmModal title={lang==="zh"?"刪除課程":"Delete Course"} message={lang==="zh"?"確認要刪除此課程？此操作無法復原，相關教材紀錄也將失效。":"Delete this course? This cannot be undone."} confirmLabel={lang==="zh"?"確認刪除":"Delete"} onConfirm={doDelCourse} onCancel={()=>setConfirmDelCourseId(null)} danger/>}
       {matTarget && <MaterialPanel course={matTarget} initialDate={null} users={users} lang={lang} currentUser={fakeAdmin} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setMatTarget(null)} enrollments={enrollments}/>}
       {showBatch && <BatchMaterialModal users={users} courses={courses} materials={materials} setMaterials={setMaterials} lang={lang} setToast={setToast} onClose={()=>setShowBatch(false)} enrollments={enrollments}/>}
+
+      {/* ── Prominent alert: this week's sessions still missing materials ── */}
+      {missingMaterialsThisWeek.length > 0 && showMissingMat && (
+        <div style={{background:"#FFF3E0",border:"1.5px solid #FF9800",borderRadius:10,padding:"12px 16px",marginBottom:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:8}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:18}}>⚠️</span>
+              <span style={{fontSize:14,fontWeight:700,color:"#E65100"}}>
+                {lang==="zh"?`本週有 ${missingMaterialsThisWeek.length} 堂課尚未填寫教材`:`${missingMaterialsThisWeek.length} session(s) this week still need materials`}
+              </span>
+            </div>
+            <button onClick={()=>setShowMissingMat(false)} style={{background:"transparent",border:"none",color:"#E65100",cursor:"pointer",fontSize:16,padding:"2px 6px"}}>×</button>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {missingMaterialsThisWeek.map((m,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,background:"#FFFFFF",borderRadius:7,padding:"7px 11px",flexWrap:"wrap"}}>
+                <div style={{fontSize:12,color:"#172F39"}}>
+                  <strong>{m.date}</strong> ({T[lang].days[m.dayIndex]}) · {m.course.subject}
+                  <span style={{color:"#9E9E9E"}}> · {getName(m.course.teacherId)} → {getName(m.course.studentId)}</span>
+                </div>
+                <button onClick={()=>setMatTarget(m.course)} style={{fontSize:11,padding:"4px 12px",borderRadius:5,background:"#FF9800",border:"none",color:"#fff",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>
+                  📄 {lang==="zh"?"前往填寫":"Fill in now"}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {missingMaterialsThisWeek.length > 0 && !showMissingMat && (
+        <button onClick={()=>setShowMissingMat(true)} style={{display:"flex",alignItems:"center",gap:6,background:"#FFF3E0",border:"1px solid #FFCC80",borderRadius:7,color:"#E65100",padding:"6px 12px",fontSize:12,cursor:"pointer",marginBottom:16,fontWeight:600}}>
+          ⚠️ {lang==="zh"?`本週有 ${missingMaterialsThisWeek.length} 堂課尚未填寫教材（點擊展開）`:`${missingMaterialsThisWeek.length} session(s) missing materials (click to expand)`}
+        </button>
+      )}
       <div style={{display:"flex",gap:8,marginBottom:"1rem",flexWrap:"wrap"}}>
         <button onClick={()=>{setShowAdd(true);setEditing(null);}} style={{background:"#1A6B8A",border:"none",borderRadius:7,color:"#fff",padding:"8px 16px",fontSize:13,cursor:"pointer"}}>+ {t.addCourse}</button>
         <button onClick={()=>setShowBatch(true)} style={{background:"transparent",border:"1px solid #4A9FD4",borderRadius:7,color:"#1A6B8A",padding:"8px 16px",fontSize:13,cursor:"pointer"}}>📦 {t.batchMaterials}</button>
@@ -2756,7 +2849,7 @@ function CourseManager({ users, courses, setCourses, lang, setToast, materials, 
 }
 
 // ─── User manager ─────────────────────────────────────────────────────────────
-function UserManager({ users, setUsers, lang, setToast }) {
+function UserManager({ users, setUsers, lang, setToast, onImpersonate }) {
   const t = T[lang];
   const [showAdd,setShowAdd] = useState(false);
   const [editing,setEditing] = useState(null);
@@ -2766,11 +2859,12 @@ function UserManager({ users, setUsers, lang, setToast }) {
   const iStyle={width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13};
   const lStyle={display:"block",fontSize:12,color:"#546E7A",marginBottom:4,marginTop:10};
 
-  const addUser = () => {
+  const addUser = async () => {
     if (!newUser.username||!newUser.password||!newUser.name) return;
     if (users.some(u=>u.username===newUser.username)) { setDupError(lang==="zh"?"此帳號已存在":"Username already exists"); return; }
     setDupError("");
-    setUsers([...users,{...newUser,id:genId()}]);
+    const { hash, salt } = await hashPassword(newUser.password);
+    setUsers([...users,{username:newUser.username,name:newUser.name,role:newUser.role,passwordHash:hash,passwordSalt:salt,id:genId()}]);
     setNewUser({username:"",password:"",name:"",role:"student"}); setShowAdd(false); setToast(t.userAdded);
   };
   const delUser = id => { setConfirmDelUserId(id); };
@@ -2779,8 +2873,13 @@ function UserManager({ users, setUsers, lang, setToast }) {
     setToast(t.userDeleted);
     setConfirmDelUserId(null);
   };
-  const saveEdit = () => {
-    setUsers(users.map(u=>u.id!==editing.id?u:{...u,name:editing.name,username:editing.username,...(editing.newPwd?{password:editing.newPwd}:{}),...(u.role!=="admin"?{role:editing.role}:{})}));
+  const saveEdit = async () => {
+    let pwdPatch = {};
+    if (editing.newPwd) {
+      const { hash, salt } = await hashPassword(editing.newPwd);
+      pwdPatch = { passwordHash: hash, passwordSalt: salt, password: undefined };
+    }
+    setUsers(users.map(u=>u.id!==editing.id?u:{...u,name:editing.name,username:editing.username,...pwdPatch,...(u.role!=="admin"?{role:editing.role}:{})}));
     setEditing(null); setToast(t.userUpdated);
   };
 
@@ -2797,7 +2896,7 @@ function UserManager({ users, setUsers, lang, setToast }) {
           <label style={lStyle}>{t.passwordLabel}</label><input type="password" style={iStyle} value={newUser.password} onChange={e=>setNewUser(u=>({...u,password:e.target.value}))}/>
           <label style={lStyle}>{t.roleLabel}</label>
           <select style={iStyle} value={newUser.role} onChange={e=>setNewUser(u=>({...u,role:e.target.value}))}>
-            <option value="student">{t.role_student}</option><option value="teacher">{t.role_teacher}</option>
+            <option value="student">{t.role_student}</option><option value="teacher">{t.role_teacher}</option><option value="assistant">{t.role_assistant}</option>
           </select>
           {dupError && <p style={{color:"#D32F2F",fontSize:12,margin:"6px 0 0"}}>{dupError}</p>}
           <div style={{display:"flex",gap:8,marginTop:14}}>
@@ -2814,7 +2913,7 @@ function UserManager({ users, setUsers, lang, setToast }) {
           <label style={lStyle}>{t.newPassword}</label><input type="password" style={iStyle} value={editing.newPwd||""} onChange={e=>setEditing(v=>({...v,newPwd:e.target.value}))} placeholder={lang==="zh"?"留空不更改":"Leave blank to keep"}/>
           {editing.role!=="admin"&&<><label style={lStyle}>{t.roleLabel}</label>
           <select style={iStyle} value={editing.role} onChange={e=>setEditing(v=>({...v,role:e.target.value}))}>
-            <option value="student">{t.role_student}</option><option value="teacher">{t.role_teacher}</option>
+            <option value="student">{t.role_student}</option><option value="teacher">{t.role_teacher}</option><option value="assistant">{t.role_assistant}</option>
           </select></>}
           <div style={{display:"flex",gap:8,marginTop:14}}>
             <button onClick={saveEdit} style={{flex:1,background:"#1A6B8A",border:"none",borderRadius:6,color:"#fff",padding:"9px",fontSize:13,cursor:"pointer"}}>{t.save}</button>
@@ -2828,9 +2927,10 @@ function UserManager({ users, setUsers, lang, setToast }) {
             <div>
               <span style={{fontWeight:500,fontSize:14,color:"#172F39"}}>{u.name}</span>
               <span style={{fontSize:12,color:"#546E7A",marginLeft:8}}>@{u.username}</span>
-              <span style={{fontSize:11,marginLeft:8,background:u.role==="admin"?"#EDE7F6":u.role==="teacher"?"#E3F2FD":"#E8F5E9",color:u.role==="admin"?"#311B92":u.role==="teacher"?"#1565C0":"#2E7D32",borderRadius:4,padding:"2px 7px"}}>{t[`role_${u.role}`]}</span>
+              <span style={{fontSize:11,marginLeft:8,background:u.role==="admin"?"#EDE7F6":u.role==="teacher"?"#E3F2FD":u.role==="assistant"?"#FFF3E0":"#E8F5E9",color:u.role==="admin"?"#311B92":u.role==="teacher"?"#1565C0":u.role==="assistant"?"#E65100":"#2E7D32",borderRadius:4,padding:"2px 7px"}}>{t[`role_${u.role}`]}</span>
             </div>
             <div style={{display:"flex",gap:6}}>
+              {u.role!=="admin"&&<button onClick={()=>onImpersonate(u)} title={lang==="zh"?"不需密碼，直接切換成此帳號的視角":"No password needed — switch straight into this account's view"} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"0.5px solid #4A9FD4",background:"transparent",color:"#1A6B8A",cursor:"pointer",fontWeight:500}}>🔑 {lang==="zh"?"以此身分登入":"Login as"}</button>}
               {u.role!=="admin"&&<button onClick={()=>{setEditing({...u,newPwd:""});setShowAdd(false);}} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>{t.editUser}</button>}
               {u.role!=="admin"&&<button onClick={()=>delUser(u.id)} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"0.5px solid #C0392B",background:"transparent",color:"#D32F2F",cursor:"pointer"}}>{t.deleteUser}</button>}
             </div>
@@ -2933,18 +3033,56 @@ function TeacherStats({ users, courses, absences, attendance, enrollments, lang 
   const today = new Date().toISOString().slice(0,10);
   const [dateFrom, setDateFrom] = useState(today.slice(0,7)+"-01");
   const [dateTo, setDateTo] = useState(today);
+  const [sortOldFirst, setSortOldFirst] = useState(true);
   const getName = id => users.find(u=>u.id===id)?.name||id;
   const iStyle={padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13};
 
   const myCourses = courses.filter(c=>c.teacherId===selId);
   const stats = computeStats(myCourses, absences, allTime, dateFrom, dateTo, enrollments, attendance);
 
-  const allAbsences = absences.filter(a => {
-    const c = myCourses.find(x=>x.id===a.courseId);
-    if (!c) return false;
-    if (!allTime && a.requestedAt) { const d=a.requestedAt.slice(0,10); if ((dateFrom&&d<dateFrom)||(dateTo&&d>dateTo)) return false; }
-    return true;
-  });
+  // ── Full session-by-session ledger — every scheduled session for this
+  // teacher's courses, with its exact date/time and what actually happened
+  // (completed / student leave / teacher leave / absent-deducted). This is
+  // the basis for reconciling actual teaching time against payroll — the old
+  // "absence history" section only listed self-reported leave by day-of-week
+  // (no exact date/time) and missed anything admin recorded directly, so it
+  // couldn't answer "what exactly happened on which date".
+  const STATUS_META = {
+    completed:     {label:lang==="zh"?"完課":"Completed",      color:"#2E7D32", bg:"#E8F5E9"},
+    absent:        {label:t.studentAbsent,                      color:"#D32F2F", bg:"#FFEBEE"},
+    excused:       {label:lang==="zh"?"學生請假（順延）":"Student Leave", color:"#1A6B8A", bg:"#E3F2FD"},
+    teacher_leave: {label:t.teacherAbsent,                      color:"#E65100", bg:"#FFF3E0"},
+    upcoming:      {label:lang==="zh"?"尚未上課":"Upcoming",     color:"#9E9E9E", bg:"#F5F5F5"},
+  };
+  const allSessions = myCourses.flatMap(c => {
+    const courseEnrs = (enrollments||[]).filter(e=>e.courseId===c.id);
+    return courseEnrs.flatMap(enr =>
+      (enr.scheduledDates||[]).map(s => {
+        if (!allTime && ((dateFrom && s.date<dateFrom) || (dateTo && s.date>dateTo))) return null;
+        const start = s.customStart || getCourseStartForDay(c, s.dayIndex);
+        const attRec = (attendance||[]).find(a=>a.enrollmentId===enr.id && a.date===s.date);
+        let status = attRec?.type;
+        if (!status) status = isSessionOver(s.date, start, c.duration) ? "completed" : "upcoming";
+        return { course:c, student:getName(c.studentId), date:s.date, dayIndex:s.dayIndex, start, duration:c.duration, status, note:attRec?.note||"" };
+      }).filter(Boolean)
+    );
+  }).sort((a,b)=> sortOldFirst ? (a.date.localeCompare(b.date)||a.start.localeCompare(b.start)) : (b.date.localeCompare(a.date)||b.start.localeCompare(a.start)));
+
+  const completedCount = allSessions.filter(s=>s.status==="completed").length;
+  const csvExport = () => {
+    const header = lang==="zh" ? "日期,星期,時間,課程,學生,狀態,備註" : "Date,Day,Time,Course,Student,Status,Note";
+    const rows = allSessions.map(s => [
+      s.date, T[lang].days[s.dayIndex], s.start, s.course.subject, s.student,
+      STATUS_META[s.status]?.label||s.status, s.note
+    ].map(v=>`"${String(v||"").replace(/"/g,'""')}"`).join(","));
+    const csv = [header, ...rows].join("\r\n");
+    const blob = new Blob(["\uFEFF"+csv], {type:"text/csv;charset=utf-8"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `${getName(selId)}_${allTime?"all":dateFrom+"_"+dateTo}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div>
@@ -2984,25 +3122,54 @@ function TeacherStats({ users, courses, absences, attendance, enrollments, lang 
           </div>
         );
       })}
-      {allAbsences.length>0&&(
-        <>
-          <div style={{fontSize:13,color:"#546E7A",marginBottom:8,marginTop:"1.5rem",fontWeight:500}}>{t.absenceHistory}</div>
-          {allAbsences.map(a=>{
-            const c=myCourses.find(x=>x.id===a.courseId);
-            const requester=users.find(u=>u.id===a.requestedBy);
-            if(!c) return null;
-            const isTeacherLeave = a.requesterRole==="teacher";
-            return (
-              <div key={a.id} style={{background:isTeacherLeave?"#FBE9E7":"#FCE4EC",border:`0.5px solid ${isTeacherLeave?"#BF360C":"#C2185B"}`,borderRadius:7,padding:"8px 12px",marginBottom:6,fontSize:12,display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-                <span style={{background:isTeacherLeave?"#BF360C":"#C2185B",color:"#fff",borderRadius:4,padding:"1px 6px",fontSize:10}}>{isTeacherLeave?t.teacherAbsent:t.studentAbsent}</span>
-                <span style={{fontWeight:500,color:"#172F39"}}>{c.subject}</span>
-                <span style={{color:"#546E7A"}}>{t.days[a.day]}</span>
-                <span style={{color:"#546E7A"}}>{t.by} {requester?.name||"?"}</span>
-                <span style={{color:"#9E9E9E",marginLeft:"auto"}}>{a.requestedAt?.slice(0,10)}</span>
-              </div>
-            );
-          })}
-        </>
+
+      {/* ── Full date/time ledger — every session, exact date+time, for payroll reconciliation ── */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:"1.5rem",marginBottom:8,flexWrap:"wrap",gap:8}}>
+        <div style={{fontSize:13,color:"#546E7A",fontWeight:500}}>
+          {lang==="zh"?"完課與請假逐筆明細":"Session-by-Session Ledger"}
+          <span style={{fontSize:11,color:"#9E9E9E",fontWeight:400,marginLeft:8}}>
+            ({lang==="zh"?`共 ${allSessions.length} 筆，完課 ${completedCount} 堂`:`${allSessions.length} entries, ${completedCount} completed`})
+          </span>
+        </div>
+        <div style={{display:"flex",gap:6}}>
+          <button onClick={()=>setSortOldFirst(o=>!o)} style={{fontSize:12,padding:"5px 11px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>
+            {sortOldFirst?(lang==="zh"?"↓ 舊到新":"↓ Oldest first"):(lang==="zh"?"↑ 新到舊":"↑ Newest first")}
+          </button>
+          {allSessions.length>0 && (
+            <button onClick={csvExport} style={{fontSize:12,padding:"5px 11px",borderRadius:6,border:"0.5px solid #4A9FD4",background:"transparent",color:"#1A6B8A",cursor:"pointer"}}>
+              ⬇ {lang==="zh"?"匯出 CSV":"Export CSV"}
+            </button>
+          )}
+        </div>
+      </div>
+      {allSessions.length===0 ? (
+        <p style={{color:"#9E9E9E",fontSize:13,textAlign:"center",padding:"1.5rem 0"}}>—</p>
+      ) : (
+        <div style={{maxHeight:480,overflowY:"auto",border:"0.5px solid #E0E0E0",borderRadius:8}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+            <thead style={{background:"#F5F5F5",position:"sticky",top:0}}>
+              <tr>
+                {[lang==="zh"?"日期":"Date", lang==="zh"?"時間":"Time", lang==="zh"?"課程／學生":"Course / Student", lang==="zh"?"狀態":"Status", lang==="zh"?"備註":"Note"].map((h,i)=>(
+                  <th key={i} style={{textAlign:"left",padding:"8px 10px",color:"#546E7A",fontWeight:600,borderBottom:"0.5px solid #E0E0E0"}}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {allSessions.map((s,i)=>{
+                const meta = STATUS_META[s.status]||STATUS_META.upcoming;
+                return (
+                  <tr key={i} style={{borderBottom:"0.5px solid #F0F0F0"}}>
+                    <td style={{padding:"7px 10px",color:"#172F39",whiteSpace:"nowrap"}}>{s.date} ({T[lang].days[s.dayIndex]})</td>
+                    <td style={{padding:"7px 10px",color:"#546E7A",whiteSpace:"nowrap"}}>{s.start}–{addMins(s.start,s.duration)}</td>
+                    <td style={{padding:"7px 10px",color:"#172F39"}}>{s.course.subject}<span style={{color:"#9E9E9E"}}> · {s.student}</span></td>
+                    <td style={{padding:"7px 10px"}}><span style={{background:meta.bg,color:meta.color,borderRadius:4,padding:"2px 8px",fontWeight:600,whiteSpace:"nowrap"}}>{meta.label}</span></td>
+                    <td style={{padding:"7px 10px",color:"#9E9E9E"}}>{s.note||"—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
@@ -4135,23 +4302,28 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
     return users.find(u=>u.role==="student"&&(u.name.toLowerCase().replace(/\s/g,"")===lower||u.username.toLowerCase()===lower));
   };
 
-  const createAccounts = () => {
+  const createAccounts = async () => {
     let created = 0;
     const newUsers = [...users];
     const newDir = [...dirEntries];
-    parsed.forEach((row, i) => {
-      if (!selected.has(i)) return;
+    for (let i = 0; i < parsed.length; i++) {
+      const row = parsed[i];
+      if (!selected.has(i)) continue;
       const existing = isLinked(row.nameEn);
-      if (existing) return;
+      if (existing) continue;
       const pwd = genPassword();
+      const { hash, salt } = await hashPassword(pwd);
       const username = row.nameEn.toLowerCase().replace(/\s+/g,".");
-      const newUser = { id:genId(), username, password:pwd, name:row.nameEn+(row.nameCn?` (${row.nameCn})`:""), role:"student", _defaultPwd:pwd };
+      // _defaultPwd stays plaintext ON PURPOSE — it's shown once to the admin
+      // so they can actually hand the student their first-login credential.
+      // It never participates in login verification; passwordHash does.
+      const newUser = { id:genId(), username, passwordHash:hash, passwordSalt:salt, name:row.nameEn+(row.nameCn?` (${row.nameCn})`:""), role:"student", _defaultPwd:pwd };
       newUsers.push(newUser);
       const existingDirIdx = newDir.findIndex(d=>d.nameEn===row.nameEn);
       const entry = { id:genId(), ...row, linkedUserId:newUser.id };
       if (existingDirIdx>=0) newDir[existingDirIdx]=entry; else newDir.push(entry);
       created++;
-    });
+    }
     setUsers(newUsers);
     saveDirEntries(newDir);
     setParsed([]); setPasteText(""); setShowPaste(false);
@@ -4688,7 +4860,7 @@ function TeacherProfileCard({ entry, lang }) {
   );
 }
 
-function TeacherDirectory({ users, setUsers, lang, setToast }) {
+function TeacherDirectory({ users, setUsers, lang, setToast, hideSalary }) {
   const t = T[lang];
   const teachers = users.filter(u=>u.role==="teacher");
 
@@ -4731,22 +4903,24 @@ function TeacherDirectory({ users, setUsers, lang, setToast }) {
     return users.find(u=>u.role==="teacher"&&(u.name.toLowerCase().replace(/\s/g,"")===lower||u.username.toLowerCase()===lower));
   };
 
-  const createAccounts = () => {
+  const createAccounts = async () => {
     let created = 0;
     const newUsers = [...users];
     const newDir = [...dirEntries];
-    parsed.forEach((row,i) => {
-      if (!selected.has(i)) return;
-      if (isLinked(row.nameEn)) return;
+    for (let i = 0; i < parsed.length; i++) {
+      const row = parsed[i];
+      if (!selected.has(i)) continue;
+      if (isLinked(row.nameEn)) continue;
       const pwd = genPassword();
+      const { hash, salt } = await hashPassword(pwd);
       const username = row.nameEn.toLowerCase().replace(/\s+/g,".");
-      const newUser = { id:genId(), username, password:pwd, name:row.nameEn, role:"teacher", _defaultPwd:pwd };
+      const newUser = { id:genId(), username, passwordHash:hash, passwordSalt:salt, name:row.nameEn, role:"teacher", _defaultPwd:pwd };
       newUsers.push(newUser);
       const existingDirIdx = newDir.findIndex(d=>d.nameEn===row.nameEn);
       const entry = { id:genId(), ...row, linkedUserId:newUser.id };
       if (existingDirIdx>=0) newDir[existingDirIdx]=entry; else newDir.push(entry);
       created++;
-    });
+    }
     setUsers(newUsers);
     saveDirEntries(newDir);
     setParsed([]); setPasteText(""); setShowPaste(false);
@@ -4961,9 +5135,11 @@ function TeacherDirectory({ users, setUsers, lang, setToast }) {
                     <td style={tdStyle}>{d.yearsExp?`${d.yearsExp} ${t.yearsUnit}`:"—"}</td>
                     <td style={tdStyle}>{d.joinYear||"—"}</td>
                     <td style={tdStyle}>
-                      <button onClick={()=>setSalaryTarget({id:entryId,nameEn:d.nameEn,linkedUserId:d.linkedUserId})} style={{fontSize:11,padding:"4px 10px",borderRadius:5,border:"0.5px solid #2E7D32",background:"transparent",color:"#2E7D32",cursor:"pointer",fontWeight:500}}>
-                        💰 {t.salaryManage}
-                      </button>
+                      {!hideSalary && (
+                        <button onClick={()=>setSalaryTarget({id:entryId,nameEn:d.nameEn,linkedUserId:d.linkedUserId})} style={{fontSize:11,padding:"4px 10px",borderRadius:5,border:"0.5px solid #2E7D32",background:"transparent",color:"#2E7D32",cursor:"pointer",fontWeight:500}}>
+                          💰 {t.salaryManage}
+                        </button>
+                      )}
                     </td>
                     <td style={tdStyle}>
                       {linkedUser
@@ -5170,7 +5346,7 @@ function ChangeNotifications({ users, setUsers, lang, setToast, profileChanges, 
   );
 }
 
-function PeopleDirectory({ users, setUsers, lang, setToast, enrollments, attendance, courses, profileChanges, setProfileChanges }) {
+function PeopleDirectory({ users, setUsers, lang, setToast, enrollments, attendance, courses, profileChanges, setProfileChanges, hideSalary }) {
   const t = T[lang];
   const [subTab, setSubTab] = useState("students"); // students | teachers | changes
   const pendingChangeCount = (profileChanges||[]).filter(c=>c.status==="pending").length;
@@ -5186,18 +5362,185 @@ function PeopleDirectory({ users, setUsers, lang, setToast, enrollments, attenda
         ))}
       </div>
       {subTab==="students" && <StudentDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses}/>}
-      {subTab==="teachers" && <TeacherDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast}/>}
+      {subTab==="teachers" && <TeacherDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} hideSalary={hideSalary}/>}
       {subTab==="changes" && <ChangeNotifications users={users} setUsers={setUsers} lang={lang} setToast={setToast} profileChanges={profileChanges} setProfileChanges={setProfileChanges}/>}
     </div>
   );
 }
 
 // ─── Admin panel ──────────────────────────────────────────────────────────────
-function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, lang, setToast, introText, setIntroText, feedback, setFeedback, teacherAvailability, setTeacherAvailability, availabilityOverrides, setAvailabilityOverrides, profileChanges, setProfileChanges }) {
+// ─── Trial application review + option-list editor ────────────────────────────
+function TrialApplicationsPanel({ users, setUsers, lang, setToast, trialApplications, setTrialApplications, englishLevels, setEnglishLevels, learningPurposes, setLearningPurposes }) {
+  const t = T[lang];
+  const [subTab, setSubTab] = useState("pending"); // pending | history | options
+  const [dirEntries, setDirEntries] = useState([]);
+  const [dirLoaded, setDirLoaded] = useState(false);
+  const [justCreated, setJustCreated] = useState(null); // {username, pwd, name} — shown once after approval
+  const [rejectTarget, setRejectTarget] = useState(null);
+  const [rejectNote, setRejectNote] = useState("");
+
+  useEffect(()=>{
+    (async()=>{
+      try{ const r=await window.storage.get("cp3_student_dir"); if(r?.value) setDirEntries(JSON.parse(r.value)); }catch{}
+      setDirLoaded(true);
+    })();
+  },[]);
+  const saveDirEntries = async (next) => {
+    setDirEntries(next);
+    try{ await window.storage.set("cp3_student_dir",JSON.stringify(next)); }catch{}
+  };
+
+  const genPassword = () => Math.random().toString(36).slice(2,8).toUpperCase();
+  const iStyle = {width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13};
+  const lStyle = {fontSize:11,color:"#546E7A",display:"block",marginBottom:4,marginTop:8};
+
+  const pending = trialApplications.filter(a=>a.status==="pending").sort((a,b)=>a.submittedAt.localeCompare(b.submittedAt));
+  const history = trialApplications.filter(a=>a.status!=="pending").sort((a,b)=>b.submittedAt.localeCompare(a.submittedAt));
+
+  const levelLabel = (id) => { const l=englishLevels.find(x=>x.id===id); return l ? (lang==="zh"?l.zh:l.en) : "—"; };
+  const purposeLabel = (id) => { const p=learningPurposes.find(x=>x.id===id); return p ? (lang==="zh"?p.zh:p.en) : "—"; };
+
+  const approve = async (app) => {
+    const baseUsername = app.nameEn.toLowerCase().replace(/[^a-z0-9]+/g,".").replace(/^\.+|\.+$/g,"") || "student";
+    let username = baseUsername, n = 1;
+    while (users.some(u=>u.username===username)) { username = `${baseUsername}${n}`; n++; }
+    const pwd = genPassword();
+    const { hash, salt } = await hashPassword(pwd);
+    const newUserId = genId();
+    const newUser = { id:newUserId, username, passwordHash:hash, passwordSalt:salt, name:app.nameEn, role:"student", _defaultPwd:pwd };
+    setUsers(prev => [...prev, newUser]);
+    const dirEntry = { id:genId(), nameEn:app.nameEn, nameCn:app.nameCn, birthDate:app.birthDate, phone:app.phone||"", linkedUserId:newUserId };
+    saveDirEntries([...dirEntries, dirEntry]);
+    setTrialApplications(prev => prev.map(a => a.id===app.id ? {...a, status:"approved", reviewedAt:new Date().toISOString(), createdUserId:newUserId} : a));
+    setJustCreated({ username, pwd, name:app.nameEn });
+    setToast(lang==="zh"?"已核准並建立帳號":"Approved and account created");
+  };
+
+  const doReject = () => {
+    setTrialApplications(prev => prev.map(a => a.id===rejectTarget.id ? {...a, status:"rejected", reviewedAt:new Date().toISOString(), reviewNote:rejectNote} : a));
+    setRejectTarget(null); setRejectNote("");
+    setToast(lang==="zh"?"已標記為婉拒":"Marked as declined");
+  };
+
+  const addOption = (list, setList) => setList(prev => [...prev, {id:genId(), zh:"", en:""}]);
+  const updateOption = (list, setList, id, field, val) => setList(prev => prev.map(o=>o.id===id?{...o,[field]:val}:o));
+  const removeOption = (list, setList, id) => setList(prev => prev.filter(o=>o.id!==id));
+
+  return (
+    <div>
+      {justCreated && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9300,padding:"1rem"}}>
+          <div style={{background:"#FFFFFF",borderRadius:16,width:"100%",maxWidth:360,boxSizing:"border-box",boxShadow:"0 8px 36px rgba(23,47,57,0.2)",padding:"22px"}}>
+            <div style={{fontSize:32,textAlign:"center",marginBottom:8}}>✅</div>
+            <div style={{fontSize:14,fontWeight:600,color:"#172F39",textAlign:"center",marginBottom:4}}>{lang==="zh"?"帳號已建立":"Account Created"}</div>
+            <div style={{fontSize:12,color:"#9E9E9E",textAlign:"center",marginBottom:16}}>{lang==="zh"?"請把以下帳密提供給學生（僅顯示這一次）":"Give these credentials to the student (shown only this once)"}</div>
+            <div style={{background:"#F5F5F5",borderRadius:8,padding:"12px 14px",fontSize:13,lineHeight:2}}>
+              <div>{lang==="zh"?"姓名":"Name"}：<strong>{justCreated.name}</strong></div>
+              <div>{lang==="zh"?"帳號":"Username"}：<strong>{justCreated.username}</strong></div>
+              <div>{lang==="zh"?"密碼":"Password"}：<strong>{justCreated.pwd}</strong></div>
+            </div>
+            <button onClick={()=>setJustCreated(null)} style={{width:"100%",marginTop:16,padding:"10px",borderRadius:8,background:"#1A6B8A",border:"none",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer"}}>{lang==="zh"?"知道了":"Got it"}</button>
+          </div>
+        </div>
+      )}
+      {rejectTarget && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9300,padding:"1rem"}}>
+          <div style={{background:"#FFFFFF",borderRadius:16,width:"100%",maxWidth:360,boxSizing:"border-box",boxShadow:"0 8px 36px rgba(23,47,57,0.2)",padding:"22px"}}>
+            <div style={{fontSize:14,fontWeight:600,color:"#172F39",marginBottom:10}}>{lang==="zh"?`婉拒「${rejectTarget.nameCn}」的申請`:`Decline ${rejectTarget.nameCn}'s application`}</div>
+            <label style={lStyle}>{lang==="zh"?"備註（選填）":"Note (optional)"}</label>
+            <input style={iStyle} value={rejectNote} onChange={e=>setRejectNote(e.target.value)}/>
+            <div style={{display:"flex",gap:8,marginTop:16}}>
+              <button onClick={doReject} style={{flex:1,padding:"9px",borderRadius:7,background:"#D32F2F",border:"none",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer"}}>{lang==="zh"?"確認婉拒":"Confirm Decline"}</button>
+              <button onClick={()=>{setRejectTarget(null);setRejectNote("");}} style={{padding:"9px 16px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>{t.cancel}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{display:"flex",gap:5,marginBottom:16,flexWrap:"wrap"}}>
+        {[["pending",lang==="zh"?"待審核":"Pending",pending.length],["history",lang==="zh"?"已處理":"History",0],["options",lang==="zh"?"選項設定":"Options",0]].map(([k,l,badge])=>(
+          <button key={k} onClick={()=>setSubTab(k)} style={{position:"relative",padding:"7px 16px",borderRadius:7,fontSize:13,cursor:"pointer",border:subTab===k?"none":"0.5px solid #CFD8DC",background:subTab===k?"#1A6B8A":"transparent",color:subTab===k?"#fff":"#546E7A",fontWeight:subTab===k?600:400}}>
+            {l}
+            {badge>0 && <span style={{marginLeft:6,fontSize:10,background:subTab===k?"rgba(255,255,255,0.25)":"#D32F2F",color:"#fff",borderRadius:9,padding:"1px 6px",fontWeight:700}}>{badge}</span>}
+          </button>
+        ))}
+      </div>
+
+      {subTab==="pending" && (
+        pending.length===0 ? <p style={{color:"#9E9E9E",fontSize:13,textAlign:"center",padding:"2rem 0"}}>{lang==="zh"?"目前沒有待審核的試聽申請":"No pending trial applications"}</p> :
+        pending.map(app => (
+          <div key={app.id} style={{background:"#FFFFFF",border:"0.5px solid #E0E0E0",borderRadius:10,padding:"14px 16px",marginBottom:10}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:8}}>
+              <div>
+                <div style={{fontSize:14,fontWeight:600,color:"#172F39"}}>{app.nameCn}（{app.nameEn}）</div>
+                <div style={{fontSize:12,color:"#546E7A",marginTop:3,lineHeight:1.8}}>
+                  🎂 {app.birthDate}　{app.phone&&`📱 ${app.phone}`}<br/>
+                  📊 {levelLabel(app.englishLevel)}　🎯 {purposeLabel(app.learningPurpose)}
+                  {app.note && <><br/>📝 {app.note}</>}
+                </div>
+                <div style={{fontSize:10,color:"#9E9E9E",marginTop:4}}>{lang==="zh"?"申請時間":"Submitted"}: {app.submittedAt.slice(0,16).replace("T"," ")}</div>
+              </div>
+              <div style={{display:"flex",gap:6,flexShrink:0}}>
+                <button onClick={()=>approve(app)} style={{fontSize:12,padding:"6px 14px",borderRadius:6,background:"#2E7D32",border:"none",color:"#fff",cursor:"pointer",fontWeight:600}}>✓ {lang==="zh"?"核准並建立帳號":"Approve & Create Account"}</button>
+                <button onClick={()=>setRejectTarget(app)} style={{fontSize:12,padding:"6px 14px",borderRadius:6,background:"transparent",border:"0.5px solid #D32F2F",color:"#D32F2F",cursor:"pointer"}}>✕ {lang==="zh"?"婉拒":"Decline"}</button>
+              </div>
+            </div>
+          </div>
+        ))
+      )}
+
+      {subTab==="history" && (
+        history.length===0 ? <p style={{color:"#9E9E9E",fontSize:13,textAlign:"center",padding:"2rem 0"}}>—</p> :
+        history.map(app => (
+          <div key={app.id} style={{background:"#FFFFFF",border:"0.5px solid #E0E0E0",borderRadius:10,padding:"12px 16px",marginBottom:8}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+              <div>
+                <span style={{fontSize:13,fontWeight:600,color:"#172F39"}}>{app.nameCn}（{app.nameEn}）</span>
+                <span style={{fontSize:11,color:"#9E9E9E",marginLeft:8}}>{app.submittedAt.slice(0,10)}</span>
+                {app.reviewNote && <div style={{fontSize:11,color:"#9E9E9E",marginTop:2}}>{lang==="zh"?"備註":"Note"}: {app.reviewNote}</div>}
+              </div>
+              <span style={{fontSize:11,fontWeight:600,borderRadius:5,padding:"2px 10px",background:app.status==="approved"?"#E8F5E9":"#FFEBEE",color:app.status==="approved"?"#2E7D32":"#D32F2F"}}>
+                {app.status==="approved"?(lang==="zh"?"已核准":"Approved"):(lang==="zh"?"已婉拒":"Declined")}
+              </span>
+            </div>
+          </div>
+        ))
+      )}
+
+      {subTab==="options" && (
+        <div>
+          <div style={{fontSize:13,fontWeight:600,color:"#172F39",marginBottom:8}}>{lang==="zh"?"英文程度選項":"English Level Options"}</div>
+          {englishLevels.map(opt=>(
+            <div key={opt.id} style={{display:"flex",gap:6,marginBottom:6,alignItems:"center"}}>
+              <input style={{...iStyle,flex:1}} value={opt.zh} onChange={e=>updateOption(englishLevels,setEnglishLevels,opt.id,"zh",e.target.value)} placeholder="中文"/>
+              <input style={{...iStyle,flex:1}} value={opt.en} onChange={e=>updateOption(englishLevels,setEnglishLevels,opt.id,"en",e.target.value)} placeholder="English"/>
+              <button onClick={()=>removeOption(englishLevels,setEnglishLevels,opt.id)} style={{background:"transparent",border:"0.5px solid #FFCDD2",borderRadius:5,color:"#D32F2F",padding:"7px 10px",cursor:"pointer",fontSize:13}}>✕</button>
+            </div>
+          ))}
+          <button onClick={()=>addOption(englishLevels,setEnglishLevels)} style={{fontSize:12,padding:"6px 14px",borderRadius:6,border:"1px dashed #1A6B8A",background:"transparent",color:"#1A6B8A",cursor:"pointer",marginBottom:20}}>+ {lang==="zh"?"新增選項":"Add Option"}</button>
+
+          <div style={{fontSize:13,fontWeight:600,color:"#172F39",marginBottom:8}}>{lang==="zh"?"學習英文目的選項":"Learning Purpose Options"}</div>
+          {learningPurposes.map(opt=>(
+            <div key={opt.id} style={{display:"flex",gap:6,marginBottom:6,alignItems:"center"}}>
+              <input style={{...iStyle,flex:1}} value={opt.zh} onChange={e=>updateOption(learningPurposes,setLearningPurposes,opt.id,"zh",e.target.value)} placeholder="中文"/>
+              <input style={{...iStyle,flex:1}} value={opt.en} onChange={e=>updateOption(learningPurposes,setLearningPurposes,opt.id,"en",e.target.value)} placeholder="English"/>
+              <button onClick={()=>removeOption(learningPurposes,setLearningPurposes,opt.id)} style={{background:"transparent",border:"0.5px solid #FFCDD2",borderRadius:5,color:"#D32F2F",padding:"7px 10px",cursor:"pointer",fontSize:13}}>✕</button>
+            </div>
+          ))}
+          <button onClick={()=>addOption(learningPurposes,setLearningPurposes)} style={{fontSize:12,padding:"6px 14px",borderRadius:6,border:"1px dashed #1A6B8A",background:"transparent",color:"#1A6B8A",cursor:"pointer"}}>+ {lang==="zh"?"新增選項":"Add Option"}</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, lang, setToast, introText, setIntroText, feedback, setFeedback, teacherAvailability, setTeacherAvailability, availabilityOverrides, setAvailabilityOverrides, profileChanges, setProfileChanges, onImpersonate, trialApplications, setTrialApplications, englishLevels, setEnglishLevels, learningPurposes, setLearningPurposes }) {
   const t = T[lang];
   const [tab, setTab] = useState("courses");
   const pendingFbCount = (feedback||[]).filter(f=>f.status==="pending").length;
   const pendingChangeCount = (profileChanges||[]).filter(c=>c.status==="pending").length;
+  const pendingTrialCount = (trialApplications||[]).filter(a=>a.status==="pending").length;
   const tabs = [
     {key:"courses", label:t.courses},
     {key:"enroll",  label:t.enrollments},
@@ -5205,6 +5548,7 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
     {key:"feedback",label:t.feedbackCenterTitle, badge:pendingFbCount},
     {key:"availability", label:t.availability},
     {key:"peopledir", label:t.peopleDir, badge:pendingChangeCount},
+    {key:"trial", label:lang==="zh"?"試聽申請":"Trial Applications", badge:pendingTrialCount},
     {key:"users",   label:t.manageUsers},
     {key:"tstats",  label:t.teacherStats},
     {key:"sstats",  label:t.studentStats},
@@ -5227,7 +5571,8 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
       {tab==="feedback"&&<FeedbackCenter users={users} courses={courses} enrollments={enrollments} attendance={attendance} feedback={feedback||[]} setFeedback={setFeedback} lang={lang} setToast={setToast}/>}
       {tab==="availability"&&<AdminTeacherAvailability users={users} courses={courses} availability={teacherAvailability||[]} setAvailability={setTeacherAvailability} overrides={availabilityOverrides||[]} setOverrides={setAvailabilityOverrides} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang} setToast={setToast}/>}
       {tab==="peopledir" &&<PeopleDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses} profileChanges={profileChanges} setProfileChanges={setProfileChanges}/>}
-      {tab==="users"  &&<UserManager users={users} setUsers={setUsers} lang={lang} setToast={setToast}/>}
+      {tab==="trial" &&<TrialApplicationsPanel users={users} setUsers={setUsers} lang={lang} setToast={setToast} trialApplications={trialApplications||[]} setTrialApplications={setTrialApplications} englishLevels={englishLevels||[]} setEnglishLevels={setEnglishLevels} learningPurposes={learningPurposes||[]} setLearningPurposes={setLearningPurposes}/>}
+      {tab==="users"  &&<UserManager users={users} setUsers={setUsers} lang={lang} setToast={setToast} onImpersonate={onImpersonate}/>}
       {tab==="tstats" &&<TeacherStats users={users} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang}/>}
       {tab==="sstats" &&<StudentStats users={users} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang}/>}
       {tab==="settings"&&<SiteSettings introText={introText} setIntroText={setIntroText} lang={lang} setToast={setToast}/>}
@@ -5235,7 +5580,36 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
   );
 }
 
-// ─── Feedback Review (admin) ──────────────────────────────────────────────────
+// ─── Assistant panel ──────────────────────────────────────────────────────────
+// A trimmed-down version of AdminPanel for the 助教 (assistant) role: can edit
+// courses/materials and view the schedule and people directory, but has no
+// access to payment/enrollment records, leave review, feedback moderation,
+// user management, stats, or site settings — and salary is hidden entirely
+// within the people directory.
+function AssistantPanel({ users, setUsers, courses, setCourses, materials, setMaterials, enrollments, attendance, lang, setToast }) {
+  const t = T[lang];
+  const [tab, setTab] = useState("courses");
+  const tabs = [
+    {key:"courses", label:t.courses},
+    {key:"peopledir", label:t.peopleDir},
+  ];
+  return (
+    <div>
+      <h2 style={{fontSize:18,fontWeight:500,color:"#172F39",margin:"0 0 1.25rem"}}>{t.assistantPanel}</h2>
+      <div style={{display:"flex",gap:2,marginBottom:"1.5rem",flexWrap:"wrap",borderBottom:"0.5px solid #E0E0E0",paddingBottom:0}}>
+        {tabs.map(tb=>(
+          <button key={tb.key} onClick={()=>setTab(tb.key)} style={{position:"relative",padding:"7px 12px",borderRadius:"6px 6px 0 0",border:"none",borderBottom:tab===tb.key?"2px solid #1A6B8A":"2px solid transparent",background:tab===tb.key?"#EEF6FB":"transparent",color:tab===tb.key?"#1A6B8A":"#546E7A",fontSize:12,cursor:"pointer",marginBottom:-1,whiteSpace:"nowrap"}}>
+            {tb.label}
+          </button>
+        ))}
+      </div>
+      {tab==="courses"&&<CourseManager users={users} courses={courses} setCourses={setCourses} lang={lang} setToast={setToast} materials={materials} setMaterials={setMaterials} enrollments={enrollments}/>}
+      {tab==="peopledir" &&<PeopleDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses} hideSalary/>}
+    </div>
+  );
+}
+
+
 // Simple check-and-approve flow: view the teacher's written feedback, then
 // one click to Approve (becomes visible to the student) or Reject.
 // Compute completed sessions that have no feedback entry at all yet (excludes
@@ -5922,10 +6296,102 @@ function SiteSettings({ introText, setIntroText, lang, setToast }) {
 }
 
 // ─── Login ────────────────────────────────────────────────────────────────────
-function LoginPage({ onLogin, lang, setLang, users, introText }) {
+// ─── Trial lesson application form (public, no login needed) ─────────────────
+function TrialApplicationForm({ englishLevels, learningPurposes, onSubmit, onBack, lang }) {
+  const [nameCn, setNameCn] = useState("");
+  const [nameEn, setNameEn] = useState("");
+  const [birthDate, setBirthDate] = useState("");
+  const [phone, setPhone] = useState("");
+  const [englishLevel, setEnglishLevel] = useState(englishLevels[0]?.id||"");
+  const [learningPurpose, setLearningPurpose] = useState(learningPurposes[0]?.id||"");
+  const [note, setNote] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+  const canSubmit = nameCn.trim() && nameEn.trim() && birthDate;
+  const iStyle = {width:"100%",boxSizing:"border-box",background:"#FAFAFA",border:"1px solid rgba(26,107,138,0.25)",borderRadius:7,color:"#172F39",padding:"8px 10px",fontSize:12,outline:"none"};
+  const lStyle = {display:"block",fontSize:11,color:"#546E7A",marginBottom:5,marginTop:10};
+
+  const submit = () => {
+    if (!canSubmit) return;
+    onSubmit({ nameCn:nameCn.trim(), nameEn:nameEn.trim(), birthDate, phone:phone.trim(), englishLevel, learningPurpose, note:note.trim() });
+    setSubmitted(true);
+  };
+
+  if (submitted) {
+    return (
+      <div style={{background:"#FFFFFF",borderRadius:13,border:"1px solid rgba(26,107,138,0.25)",boxShadow:"0 4px 24px rgba(23,47,57,0.15)",padding:"2rem 1.6rem",width:"100%",maxWidth:320,textAlign:"center"}}>
+        <div style={{fontSize:40,marginBottom:10}}>✅</div>
+        <div style={{fontSize:14,color:"#172F39",fontWeight:600,marginBottom:6}}>{lang==="zh"?"申請已送出！":"Application submitted!"}</div>
+        <div style={{fontSize:12,color:"#546E7A",lineHeight:1.7,marginBottom:16}}>{lang==="zh"?"我們會盡快與您聯繫安排試聽課程。":"We'll be in touch soon to arrange your trial lesson."}</div>
+        <button onClick={onBack} style={{width:"100%",background:"#1A6B8A",border:"none",borderRadius:7,color:"#fff",padding:"9px",fontSize:13,fontWeight:500,cursor:"pointer"}}>{lang==="zh"?"返回登入":"Back to Login"}</button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{background:"#FFFFFF",borderRadius:13,border:"1px solid rgba(26,107,138,0.25)",boxShadow:"0 4px 24px rgba(23,47,57,0.15)",padding:"1.6rem",width:"100%",maxWidth:320}}>
+      <div style={{fontSize:15,fontWeight:600,color:"#172F39",marginBottom:2}}>{lang==="zh"?"申請免費試聽":"Apply for a Free Trial Lesson"}</div>
+      <div style={{fontSize:11,color:"#9E9E9E"}}>{lang==="zh"?"填妥資料後，我們會盡快與您聯繫":"Fill this out and we'll reach out soon"}</div>
+
+      <label style={lStyle}>{lang==="zh"?"中文姓名 *":"Chinese Name *"}</label>
+      <input style={iStyle} value={nameCn} onChange={e=>setNameCn(e.target.value)}/>
+
+      <label style={lStyle}>{lang==="zh"?"英文姓名 *":"English Name *"}</label>
+      <input style={iStyle} value={nameEn} onChange={e=>setNameEn(e.target.value)}/>
+
+      <label style={lStyle}>{lang==="zh"?"出生年月日 *":"Date of Birth *"}</label>
+      <input type="date" style={iStyle} value={birthDate} onChange={e=>setBirthDate(e.target.value)}/>
+
+      <label style={lStyle}>{lang==="zh"?"聯絡電話（選填）":"Contact Phone (optional)"}</label>
+      <input style={iStyle} value={phone} onChange={e=>setPhone(e.target.value)} placeholder="09xx-xxx-xxx"/>
+
+      <label style={lStyle}>{lang==="zh"?"英文程度":"English Level"}</label>
+      <select style={iStyle} value={englishLevel} onChange={e=>setEnglishLevel(e.target.value)}>
+        {englishLevels.map(l=><option key={l.id} value={l.id}>{lang==="zh"?l.zh:l.en}</option>)}
+      </select>
+
+      <label style={lStyle}>{lang==="zh"?"學習英文目的":"Purpose of Learning English"}</label>
+      <select style={iStyle} value={learningPurpose} onChange={e=>setLearningPurpose(e.target.value)}>
+        {learningPurposes.map(p=><option key={p.id} value={p.id}>{lang==="zh"?p.zh:p.en}</option>)}
+      </select>
+
+      <label style={lStyle}>{lang==="zh"?"備註（選填）":"Notes (optional)"}</label>
+      <textarea style={{...iStyle,minHeight:50,resize:"vertical",fontFamily:"inherit"}} value={note} onChange={e=>setNote(e.target.value)}/>
+
+      <button onClick={submit} disabled={!canSubmit} style={{width:"100%",marginTop:16,background:canSubmit?"#1A6B8A":"#CFD8DC",border:"none",borderRadius:7,color:"#fff",padding:"9px",fontSize:13,fontWeight:500,cursor:canSubmit?"pointer":"not-allowed"}}>
+        {lang==="zh"?"送出申請":"Submit Application"}
+      </button>
+      <button onClick={onBack} style={{width:"100%",marginTop:8,background:"transparent",border:"none",color:"#9E9E9E",padding:"6px",fontSize:12,cursor:"pointer"}}>
+        {lang==="zh"?"返回登入":"Back to Login"}
+      </button>
+    </div>
+  );
+}
+
+function LoginPage({ onLogin, lang, setLang, users, setUsers, introText, trialApplications, setTrialApplications, englishLevels, learningPurposes }) {
   const t=T[lang];
   const [u,setU]=useState("");const [p,setP]=useState("");const [err,setErr]=useState("");
-  const go=()=>{const f=users.find(x=>x.username===u&&x.password===p);if(f){setErr("");onLogin(f);}else setErr(t.loginError);};
+  const [checking,setChecking]=useState(false);
+  const [showTrial,setShowTrial]=useState(false);
+  const go=async ()=>{
+    const f=users.find(x=>x.username===u);
+    if(!f){setErr(t.loginError);return;}
+    setChecking(true);
+    const ok = await verifyPassword(p, f);
+    setChecking(false);
+    if(!ok){setErr(t.loginError);return;}
+    // Transparent migration: this account's password just checked out against
+    // the OLD plaintext field — upgrade it to a salted hash now. The person's
+    // actual password never changes, only how it's stored; they notice nothing.
+    if(!f.passwordHash){
+      hashPassword(p).then(({hash,salt})=>{
+        setUsers(prev=>prev.map(x=>x.id===f.id?{...x,passwordHash:hash,passwordSalt:salt,password:undefined}:x));
+      });
+    }
+    setErr("");onLogin(f);
+  };
+  const submitTrial = (data) => {
+    setTrialApplications(prev => [...prev, { id:genId(), ...data, status:"pending", submittedAt:new Date().toISOString() }]);
+  };
   return (
     <div style={{minHeight:"100vh",background:"#172F39",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:"system-ui, -apple-system, sans-serif",padding:"2rem"}}>
       <button onClick={()=>setLang(lang==="zh"?"en":"zh")} style={{position:"absolute",top:"1.5rem",right:"1.5rem",background:"rgba(26,107,138,0.15)",border:"1px solid rgba(26,107,138,0.4)",color:"#1A6B8A",borderRadius:"6px",padding:"6px 14px",cursor:"pointer",fontSize:"13px"}}>{t.langToggle}</button>
@@ -5935,26 +6401,35 @@ function LoginPage({ onLogin, lang, setLang, users, introText }) {
       </div>
 
       {/* ── Admin-editable intro / announcement block ── */}
-      {introText && introText.trim() && (
+      {introText && introText.trim() && !showTrial && (
         <div style={{maxWidth:420,width:"100%",textAlign:"center",color:"rgba(255,255,255,0.75)",fontSize:13,lineHeight:1.7,marginBottom:"1.5rem",padding:"0 1rem",whiteSpace:"pre-wrap"}}>
           {introText}
         </div>
       )}
 
-      {/* ── Login card — shrunk ~20% and shifted down relative to the title/intro above ── */}
-      <div style={{background:"#FFFFFF",borderRadius:13,border:"1px solid rgba(26,107,138,0.25)",boxShadow:"0 4px 24px rgba(23,47,57,0.15)",padding:"1.6rem",width:"100%",maxWidth:288,marginTop:"0.5rem"}}>
-        <div style={{marginBottom:"0.8rem"}}>
-          <label style={{display:"block",fontSize:11,color:"#546E7A",marginBottom:5}}>{t.username}</label>
-          <input value={u} onChange={e=>setU(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()} style={{width:"100%",boxSizing:"border-box",background:"#FAFAFA",border:"1px solid rgba(26,107,138,0.25)",borderRadius:7,color:"#172F39",padding:"8px 10px",fontSize:12,outline:"none"}}/>
-        </div>
-        <div style={{marginBottom:"1.2rem"}}>
-          <label style={{display:"block",fontSize:11,color:"#546E7A",marginBottom:5}}>{t.password}</label>
-          <input type="password" value={p} onChange={e=>setP(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()} style={{width:"100%",boxSizing:"border-box",background:"#FAFAFA",border:"1px solid rgba(26,107,138,0.25)",borderRadius:7,color:"#172F39",padding:"8px 10px",fontSize:12,outline:"none"}}/>
-        </div>
-        {err&&<p style={{color:"#F0A0A0",fontSize:11,margin:"0 0 0.8rem",textAlign:"center"}}>{err}</p>}
-        <button onClick={go} style={{width:"100%",background:"#1A6B8A",border:"none",borderRadius:7,color:"#fff",padding:"9px",fontSize:13,fontWeight:500,cursor:"pointer"}}>{t.loginBtn}</button>
-        <p style={{color:"rgba(255,255,255,0.5)",fontSize:10,textAlign:"center",marginTop:"0.8rem",marginBottom:0}}>admin/admin123 · teacher1/pass123 · student1/pass123</p>
-      </div>
+      {showTrial ? (
+        <TrialApplicationForm englishLevels={englishLevels} learningPurposes={learningPurposes} onSubmit={submitTrial} onBack={()=>setShowTrial(false)} lang={lang}/>
+      ) : (
+        <>
+          {/* ── Login card — shrunk ~20% and shifted down relative to the title/intro above ── */}
+          <div style={{background:"#FFFFFF",borderRadius:13,border:"1px solid rgba(26,107,138,0.25)",boxShadow:"0 4px 24px rgba(23,47,57,0.15)",padding:"1.6rem",width:"100%",maxWidth:288,marginTop:"0.5rem"}}>
+            <div style={{marginBottom:"0.8rem"}}>
+              <label style={{display:"block",fontSize:11,color:"#546E7A",marginBottom:5}}>{t.username}</label>
+              <input value={u} onChange={e=>setU(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()} style={{width:"100%",boxSizing:"border-box",background:"#FAFAFA",border:"1px solid rgba(26,107,138,0.25)",borderRadius:7,color:"#172F39",padding:"8px 10px",fontSize:12,outline:"none"}}/>
+            </div>
+            <div style={{marginBottom:"1.2rem"}}>
+              <label style={{display:"block",fontSize:11,color:"#546E7A",marginBottom:5}}>{t.password}</label>
+              <input type="password" value={p} onChange={e=>setP(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()} style={{width:"100%",boxSizing:"border-box",background:"#FAFAFA",border:"1px solid rgba(26,107,138,0.25)",borderRadius:7,color:"#172F39",padding:"8px 10px",fontSize:12,outline:"none"}}/>
+            </div>
+            {err&&<p style={{color:"#F0A0A0",fontSize:11,margin:"0 0 0.8rem",textAlign:"center"}}>{err}</p>}
+            <button onClick={go} disabled={checking} style={{width:"100%",background:checking?"#9E9E9E":"#1A6B8A",border:"none",borderRadius:7,color:"#fff",padding:"9px",fontSize:13,fontWeight:500,cursor:checking?"not-allowed":"pointer"}}>{checking?(lang==="zh"?"驗證中…":"Checking…"):t.loginBtn}</button>
+            <p style={{color:"rgba(255,255,255,0.5)",fontSize:10,textAlign:"center",marginTop:"0.8rem",marginBottom:0}}>admin/admin123 · teacher1/pass123 · student1/pass123</p>
+          </div>
+          <button onClick={()=>setShowTrial(true)} style={{marginTop:16,background:"rgba(255,255,255,0.08)",border:"1px solid rgba(255,255,255,0.25)",borderRadius:8,color:"#fff",padding:"9px 20px",fontSize:13,cursor:"pointer",fontWeight:500}}>
+            📝 {lang==="zh"?"申請免費試聽課程":"Apply for a Free Trial Lesson"}
+          </button>
+        </>
+      )}
     </div>
   );
 }
@@ -7055,10 +7530,12 @@ function StudentSettingsPanel({ currentUser, users, setUsers, dirEntries, saveDi
     setToast(hasNameChanges ? t.settingsSubmitted : t.settingsSavedInstant);
   };
 
-  const updatePassword = () => {
-    if (curPwd !== currentUser.password) { setToast(t.settingsCurrentPwdWrong); return; }
+  const updatePassword = async () => {
+    const ok = await verifyPassword(curPwd, currentUser);
+    if (!ok) { setToast(t.settingsCurrentPwdWrong); return; }
     if (!newPwd || newPwd !== confirmPwd) { setToast(t.settingsPwdMismatch); return; }
-    setUsers(prev => prev.map(u => u.id===currentUser.id ? {...u, password:newPwd} : u));
+    const { hash, salt } = await hashPassword(newPwd);
+    setUsers(prev => prev.map(u => u.id===currentUser.id ? {...u, passwordHash:hash, passwordSalt:salt, password:undefined} : u));
     setCurPwd(""); setNewPwd(""); setConfirmPwd("");
     setToast(t.settingsPwdUpdated);
   };
@@ -7557,10 +8034,67 @@ function ResponsiveStyles() {
 }
 
 // ─── App root ─────────────────────────────────────────────────────────────────
+// ─── Change Password Modal ────────────────────────────────────────────────────
+// For roles that don't have a Settings sidebar (admin, assistant) — same
+// verify-then-hash logic as the student/teacher Settings panel's password
+// section, just packaged as a standalone modal reachable from the header.
+function ChangePasswordModal({ currentUser, setUsers, lang, setToast, onClose }) {
+  const t = T[lang];
+  const [curPwd, setCurPwd] = useState("");
+  const [newPwd, setNewPwd] = useState("");
+  const [confirmPwd, setConfirmPwd] = useState("");
+  const [busy, setBusy] = useState(false);
+  const iStyle = {width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13};
+  const lStyle = {fontSize:12,color:"#546E7A",display:"block",marginBottom:4,marginTop:10};
+
+  const submit = async () => {
+    setBusy(true);
+    const ok = await verifyPassword(curPwd, currentUser);
+    if (!ok) { setBusy(false); setToast(t.settingsCurrentPwdWrong); return; }
+    if (!newPwd || newPwd !== confirmPwd) { setBusy(false); setToast(t.settingsPwdMismatch); return; }
+    const { hash, salt } = await hashPassword(newPwd);
+    setUsers(prev => prev.map(u => u.id===currentUser.id ? {...u, passwordHash:hash, passwordSalt:salt, password:undefined} : u));
+    setBusy(false);
+    setToast(t.settingsPwdUpdated);
+    onClose();
+  };
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9300,padding:"1rem"}}>
+      <div style={{background:"#FFFFFF",borderRadius:16,width:"100%",maxWidth:380,boxSizing:"border-box",boxShadow:"0 8px 36px rgba(23,47,57,0.2)",padding:"20px"}}>
+        <div style={{fontSize:14,fontWeight:600,color:"#172F39",marginBottom:4}}>🔒 {t.settingsChangePwd}</div>
+        <div style={{fontSize:11,color:"#9E9E9E",marginBottom:4}}>{currentUser.name}（{t[`role_${currentUser.role}`]}）</div>
+
+        <label style={lStyle}>{t.settingsCurrentPwd}</label>
+        <input type="password" style={iStyle} value={curPwd} onChange={e=>setCurPwd(e.target.value)}/>
+
+        <label style={lStyle}>{t.settingsNewPwd}</label>
+        <input type="password" style={iStyle} value={newPwd} onChange={e=>setNewPwd(e.target.value)}/>
+
+        <label style={lStyle}>{t.settingsConfirmPwd}</label>
+        <input type="password" style={iStyle} value={confirmPwd} onChange={e=>setConfirmPwd(e.target.value)}/>
+
+        <div style={{display:"flex",gap:8,marginTop:16}}>
+          <button onClick={submit} disabled={busy||!curPwd||!newPwd||!confirmPwd} style={{flex:1,padding:"10px",borderRadius:8,background:(!busy&&curPwd&&newPwd&&confirmPwd)?"#2E7D32":"#E0E0E0",border:"none",color:(!busy&&curPwd&&newPwd&&confirmPwd)?"#fff":"#9E9E9E",fontSize:13,fontWeight:600,cursor:(!busy&&curPwd&&newPwd&&confirmPwd)?"pointer":"not-allowed"}}>
+            {busy?(lang==="zh"?"處理中…":"Working…"):(lang==="zh"?"確認變更":"Update Password")}
+          </button>
+          <button onClick={onClose} style={{padding:"10px 16px",borderRadius:8,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>{t.cancel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [lang,setLang]=useState("zh");
   const [currentUser,setCurrentUser]=useState(null);
   const [activeTab,setActiveTab]=useState("schedule");
+  const [showPwdModal,setShowPwdModal]=useState(false);
+  // Admin "login as" — lets a developer/admin jump straight into any
+  // student/teacher's view without knowing (or resetting) their password.
+  // Their own admin session is kept here so "return to admin" is one click,
+  // no re-login needed. Never touches the impersonated account's password.
+  const [impersonatorAdmin,setImpersonatorAdmin]=useState(null);
   const [users,setUsers,uLoaded]=useStorage("cp3_users",DEFAULT_USERS);
   const [courses,setCourses,cLoaded]=useStorage("cp3_courses",DEFAULT_COURSES);
   const [absences,setAbsences,aLoaded]=useStorage("cp3_absences",[]);
@@ -7581,6 +8115,11 @@ export default function App() {
   // reliable way (single shared state, not a separate self-fetch copy).
   const [teacherDirEntries,setTeacherDirEntries,tdLoaded]=useStorage("cp3_teacher_dir",[]);
   const [introText,setIntroText,introLoaded]=useStorage("cp3_intro_text","");
+  // Trial-lesson applications submitted from the public login page, plus the
+  // two admin-editable dropdown option lists used on that form.
+  const [trialApplications,setTrialApplications,trialLoaded]=useStorage("cp3_trial_applications",[]);
+  const [englishLevels,setEnglishLevels,elLoaded]=useStorage("cp3_english_levels",DEFAULT_ENGLISH_LEVELS);
+  const [learningPurposes,setLearningPurposes,lpLoaded]=useStorage("cp3_learning_purposes",DEFAULT_LEARNING_PURPOSES);
   const [toast,setToastMsg]=useState("");
   const t=T[lang];
   const syncFailures = useSyncStatus(); // surfaces any storage keys that failed to save after retry
@@ -7600,15 +8139,28 @@ export default function App() {
     </div>
   );
 
-  if(!currentUser) return <LoginPage onLogin={setCurrentUser} lang={lang} setLang={setLang} users={users} introText={introText}/>;
+  if(!currentUser) return <LoginPage onLogin={setCurrentUser} lang={lang} setLang={setLang} users={users} setUsers={setUsers} introText={introText} trialApplications={trialApplications} setTrialApplications={setTrialApplications} englishLevels={englishLevels} learningPurposes={learningPurposes}/>;
 
   const initials=currentUser.name.slice(0,2).toUpperCase();
   const roleLabel=t[`role_${currentUser.role}`];
   const isAdmin=currentUser.role==="admin";
+  const isAssistant=currentUser.role==="assistant";
   const myDirEntryForHeader = currentUser.role==="teacher"
     ? (teacherDirEntries||[]).find(d=>d.linkedUserId===currentUser.id)
     : (studentDirEntries||[]).find(d=>d.linkedUserId===currentUser.id);
   const headerAvatar = getAvatarById(myDirEntryForHeader?.avatar);
+
+  const startImpersonating = (targetUser) => {
+    setImpersonatorAdmin(currentUser);
+    setCurrentUser(targetUser);
+    setActiveTab("schedule");
+  };
+  const stopImpersonating = () => {
+    if (!impersonatorAdmin) return;
+    setCurrentUser(impersonatorAdmin);
+    setImpersonatorAdmin(null);
+    setActiveTab("admin");
+  };
 
   return (
     <div className="es-app-root" style={{minHeight:"100vh",background:"#FAFAFA",fontFamily:"system-ui, -apple-system, sans-serif",overflowX:"hidden"}}>
@@ -7635,29 +8187,51 @@ export default function App() {
               <div style={{color:"rgba(255,255,255,0.65)",fontSize:11}}>{roleLabel}</div>
             </div>
           </div>
-          <button className="es-logout-btn" onClick={()=>setCurrentUser(null)} style={{background:"transparent",border:"1px solid rgba(255,255,255,0.15)",color:"rgba(255,255,255,0.7)",borderRadius:6,padding:"5px 10px",cursor:"pointer",fontSize:12,flexShrink:0}}>{t.logout}</button>
+          <button className="es-logout-btn" onClick={()=>{setCurrentUser(null);setImpersonatorAdmin(null);}} style={{background:"transparent",border:"1px solid rgba(255,255,255,0.15)",color:"rgba(255,255,255,0.7)",borderRadius:6,padding:"5px 10px",cursor:"pointer",fontSize:12,flexShrink:0}}>{t.logout}</button>
         </div>
       </header>
-      {isAdmin&&(
-        <div style={{background:"#172F39",borderBottom:"1px solid rgba(26,107,138,0.1)",padding:"0 1.25rem",display:"flex",gap:4}}>
-          {["schedule","admin"].map(tab=>(
-            <button key={tab} onClick={()=>setActiveTab(tab)} style={{padding:"10px 14px",background:"transparent",border:"none",borderBottom:activeTab===tab?"2px solid #4DCCF5":"2px solid transparent",color:activeTab===tab?"#FFFFFF":"rgba(255,255,255,0.6)",fontSize:13,cursor:"pointer"}}>
-              {tab==="schedule"?t.tabSchedule:t.tabAdmin}
-            </button>
-          ))}
+      {impersonatorAdmin && (
+        <div style={{background:"#7B1FA2",color:"#fff",padding:"7px 1.25rem",display:"flex",alignItems:"center",justifyContent:"center",gap:10,flexWrap:"wrap",fontSize:12,position:"sticky",top:58,zIndex:99}}>
+          <span>👁 {lang==="zh"?`你正在以「${currentUser.name}」（${roleLabel}）的身分檢視 — 這不是你自己的帳號`:`You're viewing as "${currentUser.name}" (${roleLabel}) — this isn't your own account`}</span>
+          <button onClick={stopImpersonating} style={{background:"#fff",color:"#7B1FA2",border:"none",borderRadius:5,padding:"3px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+            ← {lang==="zh"?"返回管理員帳號":"Return to admin"}
+          </button>
         </div>
       )}
-      <main className="es-main" style={{maxWidth:isAdmin?820:980,margin:"0 auto",padding:"1.25rem",boxSizing:"border-box"}}>
+      {showPwdModal && <ChangePasswordModal currentUser={currentUser} setUsers={setUsers} lang={lang} setToast={setToast} onClose={()=>setShowPwdModal(false)}/>}
+      {(isAdmin||isAssistant)&&(
+        <div style={{background:"#172F39",borderBottom:"1px solid rgba(26,107,138,0.1)",padding:"0 1.25rem",display:"flex",gap:4,alignItems:"center",justifyContent:"space-between"}}>
+          <div style={{display:"flex",gap:4}}>
+            {(isAdmin?["schedule","admin"]:["schedule","assistant"]).map(tab=>(
+              <button key={tab} onClick={()=>setActiveTab(tab)} style={{padding:"10px 14px",background:"transparent",border:"none",borderBottom:activeTab===tab?"2px solid #4DCCF5":"2px solid transparent",color:activeTab===tab?"#FFFFFF":"rgba(255,255,255,0.6)",fontSize:13,cursor:"pointer"}}>
+                {tab==="schedule"?t.tabSchedule:tab==="admin"?t.tabAdmin:t.assistantPanel}
+              </button>
+            ))}
+          </div>
+          <button onClick={()=>setShowPwdModal(true)} style={{background:"transparent",border:"1px solid rgba(255,255,255,0.2)",color:"rgba(255,255,255,0.75)",borderRadius:6,padding:"5px 11px",fontSize:11,cursor:"pointer",flexShrink:0}}>
+            🔒 {lang==="zh"?"修改密碼":"Change Password"}
+          </button>
+        </div>
+      )}
+      <main className="es-main" style={{maxWidth:(isAdmin||isAssistant)?820:980,margin:"0 auto",padding:"1.25rem",boxSizing:"border-box"}}>
         {/* ── Admin view ── */}
         {isAdmin && (
           <div className="es-content-card" style={{background:"#FFFFFF",borderRadius:14,border:"0.5px solid #E0E0E0",boxShadow:"0 2px 12px rgba(23,47,57,0.06)",padding:"1.5rem"}}>
             {activeTab==="schedule"&&<ScheduleView currentUser={currentUser} users={users} courses={courses} lang={lang} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} setToast={setToast} feedback={feedback} setFeedback={setFeedback}/>}
-            {activeTab==="admin"&&<AdminPanel users={users} setUsers={setUsers} courses={courses} setCourses={setCourses} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} lang={lang} setToast={setToast} introText={introText} setIntroText={setIntroText} feedback={feedback} setFeedback={setFeedback} teacherAvailability={teacherAvailability} setTeacherAvailability={setTeacherAvailability} availabilityOverrides={availabilityOverrides} setAvailabilityOverrides={setAvailabilityOverrides} profileChanges={profileChanges} setProfileChanges={setProfileChanges}/>}
+            {activeTab==="admin"&&<AdminPanel users={users} setUsers={setUsers} courses={courses} setCourses={setCourses} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} lang={lang} setToast={setToast} introText={introText} setIntroText={setIntroText} feedback={feedback} setFeedback={setFeedback} teacherAvailability={teacherAvailability} setTeacherAvailability={setTeacherAvailability} availabilityOverrides={availabilityOverrides} setAvailabilityOverrides={setAvailabilityOverrides} profileChanges={profileChanges} setProfileChanges={setProfileChanges} onImpersonate={startImpersonating} trialApplications={trialApplications} setTrialApplications={setTrialApplications} englishLevels={englishLevels} setEnglishLevels={setEnglishLevels} learningPurposes={learningPurposes} setLearningPurposes={setLearningPurposes}/>}
+          </div>
+        )}
+
+        {/* ── Assistant view ── */}
+        {isAssistant && (
+          <div className="es-content-card" style={{background:"#FFFFFF",borderRadius:14,border:"0.5px solid #E0E0E0",boxShadow:"0 2px 12px rgba(23,47,57,0.06)",padding:"1.5rem"}}>
+            {activeTab==="schedule"&&<ScheduleView currentUser={currentUser} users={users} courses={courses} lang={lang} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} setToast={setToast} feedback={feedback} setFeedback={setFeedback}/>}
+            {activeTab==="assistant"&&<AssistantPanel users={users} setUsers={setUsers} courses={courses} setCourses={setCourses} materials={materials} setMaterials={setMaterials} enrollments={enrollments} attendance={attendance} lang={lang} setToast={setToast}/>}
           </div>
         )}
 
         {/* ── Student / Teacher sidebar layout ── */}
-        {!isAdmin && (
+        {!isAdmin && !isAssistant && (
           <StudentTeacherLayout
             currentUser={currentUser} users={users} setUsers={setUsers} courses={courses} lang={lang}
             absences={absences} setAbsences={setAbsences}
