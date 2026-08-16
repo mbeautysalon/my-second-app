@@ -1550,10 +1550,54 @@ function SlotCalendarView({ slots, users, lang, currentUser, absences, materials
   const [adminEditTarget, setAdminEditTarget] = useState(null); // slot being edited by admin
   const [fbTarget, setFbTarget] = useState(null); // slot being written/viewed for feedback
   const isAdmin = currentUser.role==="admin";
+  const isAssistant = currentUser.role==="assistant";
   const isTeacher = currentUser.role==="teacher";
   const isStudent = currentUser.role==="student";
   const byDay = {};
   slots.forEach(s=>{ if(!byDay[s.dayIndex]) byDay[s.dayIndex]=[]; byDay[s.dayIndex].push(s); });
+
+  // Same "copy this teacher's whole day" action as the list view — the
+  // calendar view is the DEFAULT one people land on, so it needs the button
+  // too, not just the list view.
+  const [dayCopiedKey, setDayCopiedKey] = useState(null);
+  const copyDayForTeacher = (teacherId, date) => {
+    const daySessions = [];
+    enrollments.forEach(enr => {
+      const c = courses.find(x=>x.id===enr.courseId);
+      if (!c || c.teacherId !== teacherId) return;
+      (enr.scheduledDates||[]).forEach(s => {
+        if (s.date !== date) return;
+        const sStart = s.customStart || getCourseStartForDay(c, s.dayIndex);
+        daySessions.push({ course:c, start:sStart });
+      });
+    });
+    daySessions.sort((a,b)=>a.start.localeCompare(b.start));
+    const dObj = new Date(date+"T00:00:00");
+    const dayName = dObj.toLocaleDateString("en-US", {weekday:"long"});
+    const dateFmt = `${dObj.getFullYear()}/${dObj.getMonth()+1}/${dObj.getDate()}`;
+    const lines = [dayName, dateFmt];
+    daySessions.forEach(sl => {
+      const stu = users.find(u=>u.id===sl.course.studentId);
+      const sEnd = addMins(sl.start, sl.course.duration);
+      lines.push(`${sl.start}-${sEnd}`);
+      lines.push(stu?.name || "");
+      lines.push(sl.course.meetingUrl || "");
+      materials.filter(m=>m.courseId===sl.course.id && m.date===date).forEach(m => {
+        lines.push("Material");
+        lines.push(m.url || "");
+      });
+    });
+    const text = lines.join("\n");
+    const key = `${teacherId}_${date}`;
+    navigator.clipboard?.writeText(text).then(()=>{
+      setDayCopiedKey(key); setTimeout(()=>setDayCopiedKey(null), 2000);
+    }).catch(()=>{
+      const ta = document.createElement("textarea");
+      ta.value = text; document.body.appendChild(ta);
+      ta.select(); document.execCommand("copy"); document.body.removeChild(ta);
+      setDayCopiedKey(key); setTimeout(()=>setDayCopiedKey(null), 2000);
+    });
+  };
 
   return (
     <div style={{overflowX:"auto"}}>
@@ -1638,6 +1682,11 @@ function SlotCalendarView({ slots, users, lang, currentUser, absences, materials
                           >📅</a>
                         )}
                         <button onClick={()=>setMatTarget({course:sl.course,date:sl.date})} style={{fontSize:9,background:"transparent",border:`1px solid ${dimBorder}`,color:dimText,borderRadius:3,padding:"2px 5px",cursor:"pointer"}}>📄{dayMatCount>0?` ${dayMatCount}`:""}</button>
+                        {(isAdmin||isAssistant)&&(
+                          <button onClick={()=>copyDayForTeacher(sl.course.teacherId,sl.date)} title={lang==="zh"?"複製老師當日課表":"Copy teacher's schedule for today"} style={{fontSize:8,background:"transparent",border:"none",color:dimText,padding:"1px 2px",cursor:"pointer",opacity:0.6}}>
+                            {dayCopiedKey===`${sl.course.teacherId}_${sl.date}`?"✓":"📋"}
+                          </button>
+                        )}
                         {canAbsent&&!isAbsent&&!isPast&&!attRec&&<button onClick={()=>{if(leaveOk)onAbsent(sl.course,sl.dayIndex,sl.date,sl.start);else setToast(t.absentTooLate);}} style={{fontSize:8,background:"transparent",border:`1px solid ${leaveOk?"#9E9E9E":"#E0E0E0"}`,color:leaveOk?"#9E9E9E":"#CFD8DC",borderRadius:3,padding:"2px 4px",cursor:leaveOk?"pointer":"not-allowed",opacity:leaveOk?0.6:0.25,marginLeft:"auto"}} title={leaveOk?t.absent:t.absentTooLate}>{lang==="zh"?"假":"Lv"}</button>}
                         {/* Teacher: write/edit feedback */}
                         {showTeacherFbBtn&&<button onClick={()=>setFbTarget(sl)} title={t.feedbackShort} style={{fontSize:9,background:fbRec?`${fbColor}18`:"transparent",border:`1px solid ${fbColor}`,color:fbColor,borderRadius:3,padding:"2px 5px",cursor:"pointer",marginLeft:"auto",fontWeight:600}}>💬</button>}
@@ -1731,24 +1780,21 @@ function AdminSessionModal({ slot, users, lang, attendance, setAttendance, enrol
       } else {
         setAttendance(prev=>[...prev,rec]);
       }
-      // If excused/teacher_leave → rebuild schedule to defer
-      if (type==="excused"||type==="teacher_leave") {
-        const nextAtt = existing
-          ? attendance.map(a=>a.id===existing.id?rec:a)
-          : [...attendance,rec];
-        const excusedDates = nextAtt
-          .filter(a=>a.courseId===course.id&&(a.type==="excused"||a.type==="teacher_leave"))
-          .map(a=>a.date);
-        const newSched = buildSchedule(course, enrollment.startDate, enrollment.totalSessions, excusedDates);
+      // If NEWLY marked excused/teacher_leave (wasn't already) → keep this
+      // date visible on the schedule and append one compensating make-up
+      // session, instead of the old approach of regenerating the whole
+      // schedule (which deleted the excused date from scheduledDates
+      // entirely — the actual cause of it not showing up on the calendar).
+      const wasAlreadyDeferred = existing && (existing.type==="excused"||existing.type==="teacher_leave");
+      if ((type==="excused"||type==="teacher_leave") && !wasAlreadyDeferred) {
+        const newSched = deferExcusedSession(course, enrollment, date);
         setEnrollments(es=>es.map(e=>e.id===enrollment.id?{...e,scheduledDates:newSched}:e));
       }
-      // If changed FROM excused/teacher_leave TO something else → re-include that date
-      if (existing && (existing.type==="excused"||existing.type==="teacher_leave") && type!=="excused" && type!=="teacher_leave") {
-        const nextAtt = attendance.map(a=>a.id===existing.id?rec:a);
-        const excusedDates = nextAtt
-          .filter(a=>a.courseId===course.id&&(a.type==="excused"||a.type==="teacher_leave"))
-          .map(a=>a.date);
-        const newSched = buildSchedule(course, enrollment.startDate, enrollment.totalSessions, excusedDates);
+      // If changed FROM excused/teacher_leave TO something else → remove
+      // the compensating make-up session that was added for it (the
+      // excused date's own entry was never removed, so nothing to restore there)
+      if (wasAlreadyDeferred && type!=="excused" && type!=="teacher_leave") {
+        const newSched = undoDeferExcusedSession(enrollment, date);
         setEnrollments(es=>es.map(e=>e.id===enrollment.id?{...e,scheduledDates:newSched}:e));
       }
       setToast(t.sessionSaved);
@@ -2033,6 +2079,7 @@ function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, ma
   const isAbsent = absences.some(a=>a.courseId===course.id&&a.dateStr===date) || (attRec && attRec.type!=="other");
   const canAbsent = !sharedView && (currentUser.role==="student"||currentUser.role==="teacher");
   const isAdmin = currentUser.role==="admin";
+  const isAssistant = currentUser.role==="assistant";
   const isTeacher = currentUser.role==="teacher";
   const isStudent = currentUser.role==="student";
   const leaveOk  = canRequestLeaveForWeek(weekDates, dayIndex, start, course.duration);
@@ -2048,6 +2095,53 @@ function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, ma
   const [showAdminEdit, setShowAdminEdit] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
   const openMat = (d) => { setMatInitDate(d); setShowMat(true); };
+
+  // ── Small, unobtrusive "copy today's schedule for this teacher" button —
+  // separate from the single-session "複製課程資訊" inside the detail modal.
+  // Gathers EVERY session this same teacher has on this same date (not just
+  // this one card) into one paste-ready block: day name, date, then each
+  // session's time / student / meeting link / material link in sequence —
+  // meant to be sent straight to the teacher as a same-day reminder.
+  const [dayCopied, setDayCopied] = useState(false);
+  const copyDayForTeacher = () => {
+    const teacherId = course.teacherId;
+    const daySessions = [];
+    enrollments.forEach(enr => {
+      const c = courses.find(x=>x.id===enr.courseId);
+      if (!c || c.teacherId !== teacherId) return;
+      (enr.scheduledDates||[]).forEach(s => {
+        if (s.date !== date) return;
+        const sStart = s.customStart || getCourseStartForDay(c, s.dayIndex);
+        daySessions.push({ course:c, enrollment:enr, start:sStart });
+      });
+    });
+    daySessions.sort((a,b)=>a.start.localeCompare(b.start));
+
+    const dObj = new Date(date+"T00:00:00");
+    const dayName = dObj.toLocaleDateString("en-US", {weekday:"long"});
+    const dateFmt = `${dObj.getFullYear()}/${dObj.getMonth()+1}/${dObj.getDate()}`;
+    const lines = [dayName, dateFmt];
+    daySessions.forEach(sl => {
+      const stu = users.find(u=>u.id===sl.course.studentId);
+      const sEnd = addMins(sl.start, sl.course.duration);
+      lines.push(`${sl.start}-${sEnd}`);
+      lines.push(stu?.name || "");
+      lines.push(sl.course.meetingUrl || "");
+      materials.filter(m=>m.courseId===sl.course.id && m.date===date).forEach(m => {
+        lines.push("Material");
+        lines.push(m.url || "");
+      });
+    });
+    const text = lines.join("\n");
+    navigator.clipboard?.writeText(text).then(()=>{
+      setDayCopied(true); setTimeout(()=>setDayCopied(false), 2000);
+    }).catch(()=>{
+      const ta = document.createElement("textarea");
+      ta.value = text; document.body.appendChild(ta);
+      ta.select(); document.execCommand("copy"); document.body.removeChild(ta);
+      setDayCopied(true); setTimeout(()=>setDayCopied(false), 2000);
+    });
+  };
 
   const cardOpacity = isAbsent?0.55:isPast?0.5:1;
   const cardBg = isAbsent?"#F5F5F5":col.bg;
@@ -2089,6 +2183,14 @@ function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, ma
             {isOngoing&&<span style={{fontSize:10,background:"rgba(76,175,80,0.15)",color:"#4CAF50",borderRadius:4,padding:"1px 6px"}}>{lang==="zh"?"進行中":"Live"}</span>}
             <span style={{fontSize:12,color:textCol,opacity:0.9,whiteSpace:"nowrap"}}>{start}–{endTime}·{course.duration}m</span>
             <button onClick={()=>setShowDetail(true)} style={{background:"transparent",border:`1px solid ${textCol}44`,borderRadius:4,color:textCol,fontSize:11,padding:"1px 6px",cursor:"pointer",opacity:0.7}}>ℹ</button>
+            {/* Small, deliberately low-key — copies THIS teacher's whole day
+                (all their sessions today, not just this card) as one block
+                to paste straight to them */}
+            {(isAdmin||isAssistant)&&(
+              <button onClick={copyDayForTeacher} title={lang==="zh"?"複製老師當日課表":"Copy teacher's schedule for today"} style={{background:"transparent",border:"none",color:textCol,fontSize:9,padding:"1px 3px",cursor:"pointer",opacity:0.4}}>
+                {dayCopied?"✓":"📋"}
+              </button>
+            )}
             {/* Admin session edit button — all sessions, all times */}
             {isAdmin&&<button onClick={()=>setShowAdminEdit(true)} title={t.adminSessionEdit} style={{background:attRec?"rgba(26,107,138,0.1)":"transparent",border:`1px solid ${attRec?"#1A6B8A":"#CFD8DC"}`,borderRadius:4,color:attRec?"#1A6B8A":"#9E9E9E",fontSize:11,padding:"1px 6px",cursor:"pointer",fontWeight:attRec?600:400}}>📝</button>}
           </div>
@@ -3564,7 +3666,9 @@ function CourseManager({ users, courses, setCourses, lang, setToast, materials, 
                           ) : (
                             <>
                               <button onClick={()=>unarchive(c.id)} style={{fontSize:12,padding:"5px 11px",borderRadius:5,border:"0.5px solid #2E7D32",background:"transparent",color:"#2E7D32",cursor:"pointer"}}>↩ {lang==="zh"?"恢復為進行中":"Restore"}</button>
-                              <button onClick={()=>del(c.id)} style={{fontSize:12,padding:"5px 11px",borderRadius:5,border:"0.5px solid #C0392B",background:"transparent",color:"#D32F2F",cursor:"pointer"}}>🗑 {lang==="zh"?"永久刪除":"Delete Permanently"}</button>
+                              {!hasHistory(c.id) && (
+                                <button onClick={()=>del(c.id)} style={{fontSize:12,padding:"5px 11px",borderRadius:5,border:"0.5px solid #C0392B",background:"transparent",color:"#D32F2F",cursor:"pointer"}}>🗑 {lang==="zh"?"永久刪除":"Delete Permanently"}</button>
+                              )}
                             </>
                           )}
                         </div>
@@ -3810,6 +3914,60 @@ function TeacherStats({ users, courses, absences, attendance, enrollments, lang 
   }).sort((a,b)=> sortOldFirst ? (a.date.localeCompare(b.date)||a.start.localeCompare(b.start)) : (b.date.localeCompare(a.date)||b.start.localeCompare(a.start)));
 
   const completedCount = allSessions.filter(s=>s.status==="completed").length;
+  // ── Duration tallies — how many 25-min vs 50-min sessions were actually
+  // completed, which is what payroll usually keys off of (25-min classes
+  // often pay differently than 50-min ones).
+  const completed25 = allSessions.filter(s=>s.status==="completed" && s.duration===25).length;
+  const completed50 = allSessions.filter(s=>s.status==="completed" && s.duration===50).length;
+
+  // ── Salary notification text — admin-only (this whole page already is).
+  // Two ready-to-send phrasings, generated from whatever teacher/date-range
+  // is currently selected, with the amount/account left blank for admin to
+  // fill in by hand before sending. Always in English regardless of the
+  // admin's own UI language, since this is what actually gets sent to the
+  // teacher, not a UI string.
+  const [salaryCopied, setSalaryCopied] = useState(null); // "long" | "short" | null
+  const selectedTeacher = teachers.find(te=>te.id===selId);
+  const greetingWord = () => { const h=new Date().getHours(); return h<12?"morning":h<18?"afternoon":"evening"; };
+  const fmtEnDate = (ds) => new Date(ds+"T00:00:00").toLocaleDateString("en-US",{month:"long",day:"numeric"});
+  const periodLabel = allTime ? "your full teaching record" : `${fmtEnDate(dateFrom)}–${fmtEnDate(dateTo)}`;
+  const lessonBreakdown = () => {
+    const parts = [];
+    if (completed25>0) parts.push(`${completed25}×25min`);
+    if (completed50>0) parts.push(`${completed50}×50min`);
+    return parts.join("; ") || "0 lessons";
+  };
+  const salaryTextLong = () =>
+`Good ${greetingWord()}, Teacher ${selectedTeacher?.name||""}!
+
+We've calculated your salary for the period of ${periodLabel}. In total, you taught ${completedCount} lesson${completedCount===1?"":"s"} (${lessonBreakdown()}).
+
+We'll be sending $_____ to your account (_____). Please confirm this is correct.
+
+Thank you!`;
+  const salaryTextShort = () =>
+`Hi ${selectedTeacher?.name||""}! Quick salary summary for ${periodLabel}: ${completedCount} lesson${completedCount===1?"":"s"} total (${lessonBreakdown()}). Sending $_____ to account _____ — please confirm. Thanks!`;
+  const copySalaryText = (which) => {
+    const text = which==="long" ? salaryTextLong() : salaryTextShort();
+    const doCopy = () => { setSalaryCopied(which); setTimeout(()=>setSalaryCopied(null),2000); };
+    navigator.clipboard?.writeText(text).then(doCopy).catch(()=>{
+      const ta=document.createElement("textarea"); ta.value=text; document.body.appendChild(ta);
+      ta.select(); document.execCommand("copy"); document.body.removeChild(ta); doCopy();
+    });
+  };
+
+  // ── Group everything by student — makes it much easier to cross-check one
+  // student's record at a time instead of scanning one long mixed list.
+  const sessionsByStudent = {};
+  allSessions.forEach(s => {
+    const sid = s.course.studentId;
+    if (!sessionsByStudent[sid]) sessionsByStudent[sid] = [];
+    sessionsByStudent[sid].push(s);
+  });
+  const studentIds = Object.keys(sessionsByStudent).sort((a,b)=>getName(a).localeCompare(getName(b)));
+  const [collapsedStudents, setCollapsedStudents] = useState(new Set());
+  const toggleStudent = (sid) => setCollapsedStudents(prev=>{const n=new Set(prev); n.has(sid)?n.delete(sid):n.add(sid); return n;});
+
   const csvExport = () => {
     const header = lang==="zh" ? "日期,星期,時間,課程,學生,狀態,備註" : "Date,Day,Time,Course,Student,Status,Note";
     const rows = allSessions.map(s => [
@@ -3867,7 +4025,7 @@ function TeacherStats({ users, courses, absences, attendance, enrollments, lang 
       {/* ── Full date/time ledger — every session, exact date+time, for payroll reconciliation ── */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:"1.5rem",marginBottom:8,flexWrap:"wrap",gap:8}}>
         <div style={{fontSize:13,color:"#546E7A",fontWeight:500}}>
-          {lang==="zh"?"完課與請假逐筆明細":"Session-by-Session Ledger"}
+          {lang==="zh"?"完課與請假逐筆明細（依學生分區）":"Session-by-Session Ledger (grouped by student)"}
           <span style={{fontSize:11,color:"#9E9E9E",fontWeight:400,marginLeft:8}}>
             ({lang==="zh"?`共 ${allSessions.length} 筆，完課 ${completedCount} 堂`:`${allSessions.length} entries, ${completedCount} completed`})
           </span>
@@ -3883,35 +4041,95 @@ function TeacherStats({ users, courses, absences, attendance, enrollments, lang 
           )}
         </div>
       </div>
+
+      {/* Duration tally — how many 25-min vs 50-min sessions were actually
+          completed, since payroll usually keys off that directly */}
+      {completedCount>0 && (
+        <div style={{display:"flex",gap:10,marginBottom:12,flexWrap:"wrap"}}>
+          <div style={{background:"#E3F2FD",border:"0.5px solid #90CAF9",borderRadius:8,padding:"8px 16px",fontSize:13,color:"#0D47A1"}}>
+            <strong style={{fontSize:18}}>{completed25}</strong> {lang==="zh"?"堂 · 25分鐘":"× 25min sessions"}
+          </div>
+          <div style={{background:"#E8F5E9",border:"0.5px solid #A5D6A7",borderRadius:8,padding:"8px 16px",fontSize:13,color:"#1B5E20"}}>
+            <strong style={{fontSize:18}}>{completed50}</strong> {lang==="zh"?"堂 · 50分鐘":"× 50min sessions"}
+          </div>
+        </div>
+      )}
+
+      {/* Salary notification text — admin only (this whole page already is
+          admin-exclusive). Two ready-to-send phrasings; amount/account are
+          left as blanks for you to fill in after pasting. */}
+      {completedCount>0 && (
+        <div style={{background:"#FAFAFA",border:"0.5px solid #E0E0E0",borderRadius:8,padding:"10px 14px",marginBottom:16}}>
+          <div style={{fontSize:12,fontWeight:600,color:"#172F39",marginBottom:8}}>
+            💰 {lang==="zh"?"薪資通知文字（自動帶入目前選擇的老師與區間）":"Salary Notification Text (uses the teacher/date-range currently selected)"}
+          </div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            <button onClick={()=>copySalaryText("long")} style={{fontSize:12,padding:"7px 14px",borderRadius:6,background:salaryCopied==="long"?"#4CAF50":"#1A6B8A",border:"none",color:"#fff",cursor:"pointer",fontWeight:500,transition:"background 0.2s"}}>
+              {salaryCopied==="long" ? `✓ ${lang==="zh"?"已複製":"Copied"}` : `📋 ${lang==="zh"?"複製（完整版）":"Copy (Detailed)"}`}
+            </button>
+            <button onClick={()=>copySalaryText("short")} style={{fontSize:12,padding:"7px 14px",borderRadius:6,background:salaryCopied==="short"?"#4CAF50":"transparent",border:`1px solid ${salaryCopied==="short"?"#4CAF50":"#1A6B8A"}`,color:salaryCopied==="short"?"#fff":"#1A6B8A",cursor:"pointer",fontWeight:500,transition:"background 0.2s"}}>
+              {salaryCopied==="short" ? `✓ ${lang==="zh"?"已複製":"Copied"}` : `📋 ${lang==="zh"?"複製（簡短版）":"Copy (Short)"}`}
+            </button>
+          </div>
+          <div style={{fontSize:10,color:"#9E9E9E",marginTop:6,lineHeight:1.5}}>
+            {lang==="zh"?"金額跟帳號欄位會留白，貼上後自行填寫。":"Amount and account number are left blank — fill them in after pasting."}
+          </div>
+        </div>
+      )}
+
       {allSessions.length===0 ? (
         <p style={{color:"#9E9E9E",fontSize:13,textAlign:"center",padding:"1.5rem 0"}}>—</p>
       ) : (
-        <div style={{maxHeight:480,overflowY:"auto",border:"0.5px solid #E0E0E0",borderRadius:8}}>
-          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-            <thead style={{background:"#F5F5F5",position:"sticky",top:0}}>
-              <tr>
-                {[lang==="zh"?"日期":"Date", lang==="zh"?"時間":"Time", lang==="zh"?"課程／學生":"Course / Student", lang==="zh"?"狀態":"Status", lang==="zh"?"備註":"Note"].map((h,i)=>(
-                  <th key={i} style={{textAlign:"left",padding:"8px 10px",color:"#546E7A",fontWeight:600,borderBottom:"0.5px solid #E0E0E0"}}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {allSessions.map((s,i)=>{
-                const meta = STATUS_META[s.status]||STATUS_META.upcoming;
-                return (
-                  <tr key={i} style={{borderBottom:"0.5px solid #F0F0F0"}}>
-                    <td style={{padding:"7px 10px",color:"#172F39",whiteSpace:"nowrap"}}>{s.date} ({T[lang].days[s.dayIndex]})</td>
-                    <td style={{padding:"7px 10px",color:"#546E7A",whiteSpace:"nowrap"}}>{s.start}–{addMins(s.start,s.duration)}</td>
-                    <td style={{padding:"7px 10px",color:"#172F39"}}>{s.course.subject}<span style={{color:"#9E9E9E"}}> · {s.student}</span></td>
-                    <td style={{padding:"7px 10px"}}><span style={{background:meta.bg,color:meta.color,borderRadius:4,padding:"2px 8px",fontWeight:600,whiteSpace:"nowrap"}}>{meta.label}</span></td>
-                    <td style={{padding:"7px 10px",color:"#9E9E9E"}}>{s.note||"—"}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <div style={{display:"flex",gap:6,marginBottom:10}}>
+          <button onClick={()=>setCollapsedStudents(new Set(studentIds))} style={{fontSize:11,padding:"4px 10px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>{lang==="zh"?"全部收合":"Collapse all"}</button>
+          <button onClick={()=>setCollapsedStudents(new Set())} style={{fontSize:11,padding:"4px 10px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>{lang==="zh"?"全部展開":"Expand all"}</button>
         </div>
       )}
+      {allSessions.length>0 && studentIds.map(sid => {
+        const items = sessionsByStudent[sid];
+        const collapsed = collapsedStudents.has(sid);
+        const studentDone = items.filter(s=>s.status==="completed").length;
+        const student25 = items.filter(s=>s.status==="completed"&&s.duration===25).length;
+        const student50 = items.filter(s=>s.status==="completed"&&s.duration===50).length;
+        return (
+          <div key={sid} style={{border:"0.5px solid #E0E0E0",borderRadius:8,overflow:"hidden",marginBottom:8}}>
+            <button onClick={()=>toggleStudent(sid)} style={{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"9px 14px",background:"#F5F5F5",border:"none",cursor:"pointer",textAlign:"left"}}>
+              <span style={{fontSize:11,color:"#546E7A",transform:collapsed?"rotate(-90deg)":"rotate(0deg)",transition:"transform 0.15s",display:"inline-block"}}>▼</span>
+              <span style={{fontWeight:600,fontSize:13,color:"#172F39"}}>{getName(sid)}</span>
+              <span style={{fontSize:11,color:"#9E9E9E"}}>({items.length}{lang==="zh"?" 筆，完課 ":" entries, "}{studentDone}{lang==="zh"?" 堂":" done"})</span>
+              <div style={{marginLeft:"auto",display:"flex",gap:6}}>
+                {student25>0&&<span style={{fontSize:10,background:"rgba(21,101,192,0.1)",color:"#0D47A1",borderRadius:4,padding:"1px 7px"}}>25{lang==="zh"?"分":"m"}×{student25}</span>}
+                {student50>0&&<span style={{fontSize:10,background:"rgba(27,94,32,0.1)",color:"#1B5E20",borderRadius:4,padding:"1px 7px"}}>50{lang==="zh"?"分":"m"}×{student50}</span>}
+              </div>
+            </button>
+            {!collapsed && (
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                <thead style={{background:"#FAFAFA"}}>
+                  <tr>
+                    {[lang==="zh"?"日期":"Date", lang==="zh"?"時間":"Time", lang==="zh"?"課程":"Course", lang==="zh"?"狀態":"Status", lang==="zh"?"備註":"Note"].map((h,i)=>(
+                      <th key={i} style={{textAlign:"left",padding:"7px 10px",color:"#546E7A",fontWeight:600,borderBottom:"0.5px solid #E0E0E0"}}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((s,i)=>{
+                    const meta = STATUS_META[s.status]||STATUS_META.upcoming;
+                    return (
+                      <tr key={i} style={{borderBottom:"0.5px solid #F0F0F0"}}>
+                        <td style={{padding:"7px 10px",color:"#172F39",whiteSpace:"nowrap"}}>{s.date} ({T[lang].days[s.dayIndex]})</td>
+                        <td style={{padding:"7px 10px",color:"#546E7A",whiteSpace:"nowrap"}}>{s.start}–{addMins(s.start,s.duration)} <span style={{color:"#B0B0B0"}}>({s.duration}{lang==="zh"?"分":"m"})</span></td>
+                        <td style={{padding:"7px 10px",color:"#172F39"}}>{s.course.subject}{s.course.isTrial&&<span style={{marginLeft:5,fontSize:10,background:"#FFFDE7",color:"#F57F17",borderRadius:4,padding:"1px 6px"}}>Trial</span>}</td>
+                        <td style={{padding:"7px 10px"}}><span style={{background:meta.bg,color:meta.color,borderRadius:4,padding:"2px 8px",fontWeight:600,whiteSpace:"nowrap"}}>{meta.label}</span></td>
+                        <td style={{padding:"7px 10px",color:"#9E9E9E"}}>{s.note||"—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -4054,6 +4272,44 @@ function buildSchedule(course, startDateStr, totalSessions, excusedDates=[]) {
   return results;
 }
 
+// When a session gets marked excused/teacher_leave ("順延"), the excused
+// date itself STAYS in scheduledDates — it must still show up on the
+// calendar (with its leave/faded styling) instead of silently vanishing. A
+// separate compensating make-up session gets appended, continuing the
+// course's regular weekly pattern, so the student doesn't lose a paid
+// session. This replaces the old approach of regenerating the whole
+// schedule via buildSchedule(), which fully REMOVED the excused date from
+// scheduledDates — that was the actual bug: an excused/admin-recorded leave
+// session couldn't be shown on the schedule because it no longer existed in
+// the data at all, not because of any display logic.
+function deferExcusedSession(course, enrollment, excusedDate) {
+  const existingDates = new Set((enrollment.scheduledDates||[]).map(s=>s.date));
+  const days = getCourseDays(course);
+  if (!days.length) return enrollment.scheduledDates||[];
+  const lastDate = [...existingDates].sort().reverse()[0] || enrollment.startDate || excusedDate;
+  let d = new Date(lastDate+"T00:00:00");
+  let compDate = null, compDayIndex = null;
+  for (let i=0; i<3650; i++) { // ~10yr safety cap
+    d.setDate(d.getDate()+1);
+    const dow = (d.getDay()+6)%7;
+    if (days.includes(dow)) {
+      const ds = fmtYMD(d);
+      if (!existingDates.has(ds)) { compDate = ds; compDayIndex = dow; break; }
+    }
+  }
+  if (!compDate) return enrollment.scheduledDates||[]; // couldn't find a slot — leave schedule untouched
+  const maxNo = Math.max(0, ...(enrollment.scheduledDates||[]).map(s=>s.sessionNo||0));
+  return [...(enrollment.scheduledDates||[]), {date:compDate, dayIndex:compDayIndex, sessionNo:maxNo+1, rescheduledFrom:excusedDate}];
+}
+// Reverting a session FROM excused/teacher_leave back to normal: the excused
+// date's own entry was never removed in the first place (see above), so
+// there's nothing to "re-add" there — just remove the compensating make-up
+// session that was created for THIS specific excused date, if any.
+function undoDeferExcusedSession(enrollment, excusedDate) {
+  return (enrollment.scheduledDates||[]).filter(s => s.rescheduledFrom !== excusedDate);
+}
+
+
 // ─── Enrollment Manager ───────────────────────────────────────────────────────
 function EnrollmentManager({ users, courses, enrollments, setEnrollments, attendance, setAttendance, lang, setToast }) {
   const t = T[lang];
@@ -4155,21 +4411,28 @@ function EnrollmentManager({ users, courses, enrollments, setEnrollments, attend
 
     // Build next attendance state first so deferred rebuild uses it
     const existingIdx = attendance.findIndex(a=>a.enrollmentId===enrollment.id&&a.date===sessionEntry.date&&a.dayIndex===sessionEntry.dayIndex);
+    const wasAlreadyDeferred = existingIdx>=0 && (attendance[existingIdx].type==="excused"||attendance[existingIdx].type==="teacher_leave");
     const nextAttendance = existingIdx>=0
       ? attendance.map((a,i)=>i===existingIdx?{...a,type,note,recordedAt:new Date().toISOString()}:a)
       : [...attendance, newAttRecord];
     setAttendance(nextAttendance);
 
-    // If excused/teacher leave → rebuild schedule skipping ALL excused dates (including new one)
-    if (type==="excused"||type==="teacher_leave") {
-      const excusedDates = nextAttendance
-        .filter(a=>a.courseId===enrollment.courseId&&(a.type==="excused"||a.type==="teacher_leave"))
-        .map(a=>a.date);
+    // Newly marked excused/teacher_leave (wasn't already) → keep this date
+    // visible on the schedule and append one compensating make-up session,
+    // instead of the old approach of regenerating the whole schedule (which
+    // deleted the excused date from scheduledDates entirely).
+    if ((type==="excused"||type==="teacher_leave") && !wasAlreadyDeferred) {
       const course = allCourses.find(c=>c.id===enrollment.courseId);
       if (course) {
-        const newSched = buildSchedule(course, enrollment.startDate, enrollment.totalSessions, excusedDates);
+        const newSched = deferExcusedSession(course, enrollment, sessionEntry.date);
         setEnrollments(es=>es.map(e=>e.id===enrollment.id?{...e,scheduledDates:newSched}:e));
       }
+    }
+    // Changed FROM excused/teacher_leave TO something else → remove the
+    // compensating make-up session added for it
+    if (wasAlreadyDeferred && type!=="excused" && type!=="teacher_leave") {
+      const newSched = undoDeferExcusedSession(enrollment, sessionEntry.date);
+      setEnrollments(es=>es.map(e=>e.id===enrollment.id?{...e,scheduledDates:newSched}:e));
     }
     setAttTarget(null);
     setToast(t.attendanceSaved);
