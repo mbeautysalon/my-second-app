@@ -3079,11 +3079,43 @@ function BatchMaterialModal({ users, courses, materials, setMaterials, lang, set
     if (!m) return null;
     return `${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`;
   };
+  // Excel/Google Sheets wrap a cell in double-quotes whenever its content has
+  // a newline or tab inside it (e.g. a two-line bilingual title) — the naive
+  // "split on every newline" approach was the bug: it cut a quoted,
+  // multi-line title in half, mangling that row and silently dropping the
+  // orphaned second line entirely. This tokenizes the WHOLE pasted block
+  // properly instead: a field starting with " keeps absorbing characters —
+  // including tabs and newlines — until its matching closing quote, exactly
+  // like Excel/Sheets' own paste format.
+  const parseTSVBlock = (text) => {
+    const rows = [];
+    let row = [], field = "", inQuotes = false, i = 0;
+    const n = text.length;
+    while (i < n) {
+      const c = text[i];
+      if (inQuotes) {
+        if (c === '"') {
+          if (text[i+1] === '"') { field += '"'; i += 2; continue; }
+          inQuotes = false; i++; continue;
+        }
+        field += c; i++; continue;
+      }
+      if (c === '"' && field === "") { inQuotes = true; i++; continue; }
+      if (c === '\t') { row.push(field); field = ""; i++; continue; }
+      if (c === '\r') { i++; continue; }
+      if (c === '\n') { row.push(field); rows.push(row); row = []; field = ""; i++; continue; }
+      field += c; i++;
+    }
+    if (field !== "" || row.length > 0) { row.push(field); rows.push(row); }
+    return rows
+      .map(r => r.map(c => c.trim()))
+      .filter(r => r.some(c => c !== ""));
+  };
+
   const parsePastedMaterials = () => {
-    const lines = pasteMatText.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+    const tsvRows = parseTSVBlock(pasteMatText);
     const raw = [];
-    lines.forEach(line=>{
-      const cells = line.split("\t").map(c=>c.trim());
+    tsvRows.forEach(cells=>{
       if (cells.length<=1) return; // not enough columns to be a real row
       if (cells.some(c=>/^(date|material|title|material title|url)$/i.test(c))) return; // header row
       let date="", url="", title="";
