@@ -3073,44 +3073,9 @@ function BatchMaterialModal({ users, courses, materials, setMaterials, lang, set
   // afterward). A header row is detected and skipped automatically.
   const [showPasteMat, setShowPasteMat] = useState(false);
   const [pasteMatText, setPasteMatText] = useState("");
-  const normalizeDate = (raw) => {
-    const s = (raw||"").trim();
-    const m = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
-    if (!m) return null;
-    return `${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`;
-  };
-  // Excel/Google Sheets wrap a cell in double-quotes whenever its content has
-  // a newline or tab inside it (e.g. a two-line bilingual title) — the naive
-  // "split on every newline" approach was the bug: it cut a quoted,
-  // multi-line title in half, mangling that row and silently dropping the
-  // orphaned second line entirely. This tokenizes the WHOLE pasted block
-  // properly instead: a field starting with " keeps absorbing characters —
-  // including tabs and newlines — until its matching closing quote, exactly
-  // like Excel/Sheets' own paste format.
-  const parseTSVBlock = (text) => {
-    const rows = [];
-    let row = [], field = "", inQuotes = false, i = 0;
-    const n = text.length;
-    while (i < n) {
-      const c = text[i];
-      if (inQuotes) {
-        if (c === '"') {
-          if (text[i+1] === '"') { field += '"'; i += 2; continue; }
-          inQuotes = false; i++; continue;
-        }
-        field += c; i++; continue;
-      }
-      if (c === '"' && field === "") { inQuotes = true; i++; continue; }
-      if (c === '\t') { row.push(field); field = ""; i++; continue; }
-      if (c === '\r') { i++; continue; }
-      if (c === '\n') { row.push(field); rows.push(row); row = []; field = ""; i++; continue; }
-      field += c; i++;
-    }
-    if (field !== "" || row.length > 0) { row.push(field); rows.push(row); }
-    return rows
-      .map(r => r.map(c => c.trim()))
-      .filter(r => r.some(c => c !== ""));
-  };
+  // normalizeDate is a top-level shared helper (see near parseTSVBlock)
+  // parseTSVBlock is a top-level shared helper (see near buildSchedule) —
+  // reused here and by the batch-import feature in the student overview page.
 
   const parsePastedMaterials = () => {
     const tsvRows = parseTSVBlock(pasteMatText);
@@ -3528,6 +3493,32 @@ function CourseManager({ users, courses, setCourses, lang, setToast, materials, 
     return { course:c, lastDate, daysSince };
   }).filter(Boolean).sort((a,b)=>b.daysSince-a.daysSince);
 
+  // ── Duplicate booking detector — the same teacher+student pair ending up
+  // with TWO OR MORE scheduled sessions on the exact same date and time
+  // (whether from the same course record with a stray extra entry, or from
+  // two separate course records that happen to collide). This can slip in
+  // from data edited before the reschedule collision-guard existed, or from
+  // any other path that adds a scheduledDates entry without checking for a
+  // clash. Detection only — nothing is auto-removed, since deciding WHICH
+  // duplicate to drop needs a human to look at it.
+  const [showDupes, setShowDupes] = useState(true);
+  const duplicateBookings = (() => {
+    const seen = {}; // `${teacherId}_${studentId}_${date}_${time}` -> [{course, sessionNo}]
+    enrollments.forEach(enr => {
+      const c = courses.find(x=>x.id===enr.courseId);
+      if (!c || c.status==="archived") return;
+      (enr.scheduledDates||[]).forEach(s => {
+        const start = s.customStart || getCourseStartForDay(c, s.dayIndex);
+        const key = `${c.teacherId}_${c.studentId}_${s.date}_${start}`;
+        if (!seen[key]) seen[key] = [];
+        seen[key].push({ course:c, enrollment:enr, date:s.date, dayIndex:s.dayIndex, start, sessionNo:s.sessionNo });
+      });
+    });
+    return Object.values(seen)
+      .filter(entries => entries.length > 1)
+      .sort((a,b)=>a[0].date.localeCompare(b[0].date));
+  })();
+
   return (
     <div>
       {confirmDelCourseId && <ConfirmModal title={lang==="zh"?"刪除課程":"Delete Course"} message={lang==="zh"?"確認要刪除此課程？此操作無法復原，相關教材紀錄也將失效。":"Delete this course? This cannot be undone."} confirmLabel={lang==="zh"?"確認刪除":"Delete"} onConfirm={doDelCourse} onCancel={()=>setConfirmDelCourseId(null)} danger/>}
@@ -3608,6 +3599,43 @@ function CourseManager({ users, courses, setCourses, lang, setToast, materials, 
       {staleCourses.length > 0 && !showStaleCourses && (
         <button onClick={()=>setShowStaleCourses(true)} style={{display:"flex",alignItems:"center",gap:6,background:"#F3E5F5",border:"1px solid #CE93D8",borderRadius:7,color:"#6A1B9A",padding:"6px 12px",fontSize:12,cursor:"pointer",marginBottom:16,fontWeight:600}}>
           🔍 {lang==="zh"?`${staleCourses.length} 堂課可能已無實際任教關係（點擊展開）`:`${staleCourses.length} possibly-inactive course(s) (click to expand)`}
+        </button>
+      )}
+
+      {/* ── Duplicate booking alert — same teacher+student, same date+time, more than one scheduled entry ── */}
+      {duplicateBookings.length > 0 && showDupes && (
+        <div style={{background:"#FFEBEE",border:"1.5px solid #E57373",borderRadius:10,padding:"12px 16px",marginBottom:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:8}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:18}}>🚨</span>
+              <span style={{fontSize:14,fontWeight:700,color:"#C62828"}}>
+                {lang==="zh"?`偵測到 ${duplicateBookings.length} 組同一時間重複排課`:`${duplicateBookings.length} duplicate booking group(s) detected`}
+              </span>
+            </div>
+            <button onClick={()=>setShowDupes(false)} style={{background:"transparent",border:"none",color:"#C62828",cursor:"pointer",fontSize:16,padding:"2px 6px"}}>×</button>
+          </div>
+          <div style={{fontSize:11,color:"#C62828",marginBottom:8,opacity:0.85}}>
+            {lang==="zh"?"同一位老師跟同一位學生，在同一天同一時間出現超過一筆排課。請到「付費與排課」確認哪一筆是多餘的並手動調整，系統不會自動刪除任何一筆。":"The same teacher and student have more than one session landing on the exact same date and time. Check \"Payments & Enrollment\" to see which entry is extra and adjust it manually — nothing gets auto-deleted."}
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {duplicateBookings.map((group,i)=>(
+              <div key={i} style={{background:"#FFFFFF",borderRadius:7,padding:"9px 12px"}}>
+                <div style={{fontSize:12,color:"#172F39",marginBottom:4}}>
+                  <strong>{group[0].date}</strong> ({T[lang].days[group[0].dayIndex]}) · {group[0].start} · {getName(group[0].course.teacherId)} → {getName(group[0].course.studentId)}
+                </div>
+                {group.map((entry,j)=>(
+                  <div key={j} style={{fontSize:11,color:"#9E9E9E",paddingLeft:10,lineHeight:1.7}}>
+                    · {entry.course.subject} (#{entry.sessionNo}){entry.course.id===group[0].course.id?"":`　[${lang==="zh"?"不同課程":"different course"}]`}
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {duplicateBookings.length > 0 && !showDupes && (
+        <button onClick={()=>setShowDupes(true)} style={{display:"flex",alignItems:"center",gap:6,background:"#FFEBEE",border:"1px solid #EF9A9A",borderRadius:7,color:"#C62828",padding:"6px 12px",fontSize:12,cursor:"pointer",marginBottom:16,fontWeight:600}}>
+          🚨 {lang==="zh"?`偵測到 ${duplicateBookings.length} 組重複排課（點擊展開）`:`${duplicateBookings.length} duplicate booking(s) detected (click to expand)`}
         </button>
       )}
       <div style={{display:"flex",gap:8,marginBottom:"1rem",flexWrap:"wrap"}}>
@@ -3749,7 +3777,7 @@ function UserManager({ users, setUsers, lang, setToast, onImpersonate }) {
       const { hash, salt } = await hashPassword(editing.newPwd);
       pwdPatch = { passwordHash: hash, passwordSalt: salt, password: undefined };
     }
-    setUsers(users.map(u=>u.id!==editing.id?u:{...u,name:editing.name,username:editing.username,...pwdPatch,...(u.role!=="admin"?{role:editing.role}:{}),canAssist:editing.role==="teacher"?!!editing.canAssist:undefined}));
+    setUsers(users.map(u=>u.id!==editing.id?u:{...u,name:editing.name,username:editing.username,...pwdPatch,...(u.role!=="admin"?{role:editing.role}:{}),canAssist:editing.role==="teacher"?!!editing.canAssist:undefined,canUseStudentOverview:editing.role==="teacher"?!!editing.canUseStudentOverview:undefined}));
     setEditing(null); setToast(t.userUpdated);
   };
 
@@ -3789,6 +3817,12 @@ function UserManager({ users, setUsers, lang, setToast, onImpersonate }) {
             <label style={{display:"flex",alignItems:"center",gap:7,marginTop:12,fontSize:12,color:"#172F39",cursor:"pointer"}}>
               <input type="checkbox" checked={!!editing.canAssist} onChange={e=>setEditing(v=>({...v,canAssist:e.target.checked}))}/>
               🛠 {lang==="zh"?"同時具備助教權限（側邊欄會多一個「助教工具」入口）":"Also grant assistant access (adds an \"Assistant Tools\" sidebar item)"}
+            </label>
+          )}
+          {editing.role==="teacher" && (
+            <label style={{display:"flex",alignItems:"center",gap:7,marginTop:8,fontSize:12,color:"#172F39",cursor:"pointer"}}>
+              <input type="checkbox" checked={!!editing.canUseStudentOverview} onChange={e=>setEditing(v=>({...v,canUseStudentOverview:e.target.checked}))}/>
+              📊 {lang==="zh"?"開放「任教學生總覽」（測試階段功能，側邊欄會多一個入口）":"Enable \"Student Overview\" (test-phase feature, adds a sidebar item)"}
             </label>
           )}
           <div style={{display:"flex",gap:8,marginTop:14}}>
@@ -4314,6 +4348,47 @@ function buildSchedule(course, startDateStr, totalSessions, excusedDates=[]) {
 // scheduledDates — that was the actual bug: an excused/admin-recorded leave
 // session couldn't be shown on the schedule because it no longer existed in
 // the data at all, not because of any display logic.
+// Excel/Google Sheets wrap a cell in double-quotes whenever its content has a
+// newline or tab inside it (e.g. a two-line bilingual title) — naively
+// splitting on every newline cuts a quoted, multi-line field in half. This
+// tokenizes the WHOLE pasted block properly: a field starting with " keeps
+// absorbing characters — including tabs and newlines — until its matching
+// closing quote, exactly like Excel/Sheets' own paste format. Shared by the
+// batch-material-paste feature and the student-overview batch importer.
+// "YYYY/M/D" or "YYYY-M-D" (any digit-count month/day) → strict "YYYY-MM-DD".
+// Shared by the batch-material-paste feature and the student-overview batch importer.
+function normalizeDate(raw) {
+  const s = (raw||"").trim();
+  const m = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+  if (!m) return null;
+  return `${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`;
+}
+
+function parseTSVBlock(text) {
+  const rows = [];
+  let row = [], field = "", inQuotes = false, i = 0;
+  const n = text.length;
+  while (i < n) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i+1] === '"') { field += '"'; i += 2; continue; }
+        inQuotes = false; i++; continue;
+      }
+      field += c; i++; continue;
+    }
+    if (c === '"' && field === "") { inQuotes = true; i++; continue; }
+    if (c === '\t') { row.push(field); field = ""; i++; continue; }
+    if (c === '\r') { i++; continue; }
+    if (c === '\n') { row.push(field); rows.push(row); row = []; field = ""; i++; continue; }
+    field += c; i++;
+  }
+  if (field !== "" || row.length > 0) { row.push(field); rows.push(row); }
+  return rows
+    .map(r => r.map(c => c.trim()))
+    .filter(r => r.some(c => c !== ""));
+}
+
 function deferExcusedSession(course, enrollment, excusedDate) {
   const existingDates = new Set((enrollment.scheduledDates||[]).map(s=>s.date));
   const days = getCourseDays(course);
@@ -4343,7 +4418,154 @@ function undoDeferExcusedSession(enrollment, excusedDate) {
 
 
 // ─── Enrollment Manager ───────────────────────────────────────────────────────
-function EnrollmentManager({ users, courses, enrollments, setEnrollments, attendance, setAttendance, lang, setToast }) {
+// Adjust a student's schedule GOING FORWARD only — every already-happened
+// session stays exactly as it is (same date, time, any reschedule history),
+// only sessions on or after the chosen effective date get regenerated using
+// the new day/time. This is the safe alternative to "編輯排課", which
+// rebuilds the ENTIRE schedule from scratch and would silently rewrite
+// history for a student who already has real sessions behind them.
+function AdjustFutureScheduleModal({ enrollment, course, users, setEnrollments, lang, setToast, onClose }) {
+  const t = T[lang];
+  const teacher = users.find(u=>u.id===course?.teacherId);
+  const student = users.find(u=>u.id===course?.studentId);
+  const today = new Date().toISOString().slice(0,10);
+  const currentDayIndex = (course?.days && course.days[0]!==undefined) ? course.days[0] : (course?.schedule?.[0]?.dayIndex ?? 0);
+  const currentStart = course?.start || course?.schedule?.[0]?.start || "09:00";
+
+  const [newDayIndex, setNewDayIndex] = useState(currentDayIndex);
+  const [newTime, setNewTime] = useState(currentStart);
+  const [effectiveDate, setEffectiveDate] = useState(today);
+  const [preview, setPreview] = useState(null);
+
+  if (!course) return null;
+
+  // Bug fix: a session that's ALREADY HAPPENED must stay kept even if its
+  // date happens to equal (or, through some clock skew, exceed) the chosen
+  // effective date — e.g. admin runs this in the evening after a session
+  // that was held earlier that same day. Filtering purely on date<effectiveDate
+  // would silently drop that already-real session from the schedule.
+  const keptEntries = (enrollment.scheduledDates||[]).filter(s => {
+    const start = s.customStart || getCourseStartForDay(course, s.dayIndex);
+    return isSessionOver(s.date, start, course.duration) || s.date < effectiveDate;
+  });
+  const remainingCount = enrollment.totalSessions - keptEntries.length;
+
+  const buildPreview = () => {
+    if (remainingCount <= 0) { setPreview([]); return; }
+    const keptDates = new Set(keptEntries.map(s=>s.date));
+    const newDates = [];
+    let d = new Date(effectiveDate+"T00:00:00");
+    d.setDate(d.getDate()-1);
+    let sessionNo = Math.max(0, ...keptEntries.map(s=>s.sessionNo||0)) + 1;
+    for (let i=0; i<3650 && newDates.length<remainingCount; i++) {
+      d.setDate(d.getDate()+1);
+      const dow = (d.getDay()+6)%7;
+      const ds = fmtYMD(d);
+      if (dow===newDayIndex && !keptDates.has(ds)) {
+        // customStart is set explicitly on every new entry — its displayed
+        // time is then fully self-contained and never depends on the
+        // course's own schedule pattern, which is deliberately left
+        // untouched (see confirmAdjust below) so nothing here can ever
+        // retroactively affect how past sessions resolve their time.
+        newDates.push({date:ds, dayIndex:newDayIndex, sessionNo:sessionNo++, customStart:newTime});
+      }
+    }
+    setPreview(newDates);
+  };
+
+  const confirmAdjust = () => {
+    if (!preview) return;
+    const newSchedule = [...keptEntries, ...preview];
+    setEnrollments(es=>es.map(e=>e.id===enrollment.id?{...e, scheduledDates:newSchedule}:e));
+    // Deliberately NOT touching the course record's own schedule/days/start
+    // here. Past (kept) entries have no customStart of their own — their
+    // displayed time is computed live from the course's pattern — so
+    // changing that pattern would retroactively change how already-happened
+    // sessions show their time, even though their raw data was untouched.
+    // The new entries above carry an explicit customStart instead, which
+    // makes this whole adjustment self-contained without needing to touch
+    // the course at all. (If this course is also used to set up a brand new
+    // future enrollment, its own "編輯課程" form can be updated separately.)
+    setToast(lang==="zh"?`已調整未來時段，${keptEntries.length} 堂過去紀錄維持不變`:`Future schedule updated — ${keptEntries.length} past session(s) left untouched`);
+    onClose();
+  };
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9300,padding:"1rem"}}>
+      <div style={{background:"#FFFFFF",borderRadius:16,width:"100%",maxWidth:520,boxSizing:"border-box",maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 8px 36px rgba(23,47,57,0.2)",overflow:"hidden"}}>
+        <div style={{background:"#172F39",padding:"13px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+          <span style={{fontSize:14,fontWeight:600,color:"#fff"}}>🔄 {lang==="zh"?"調整未來時段":"Adjust Future Time Slot"}</span>
+          <button onClick={onClose} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",color:"#fff",fontSize:16}}>×</button>
+        </div>
+        <div style={{padding:"18px",overflowY:"auto",flex:1,minHeight:0}}>
+          <div style={{fontSize:12,color:"#546E7A",marginBottom:14,lineHeight:1.6}}>
+            {lang==="zh"
+              ? <>老師：<strong>{teacher?.name}</strong>　學生：<strong>{student?.name}</strong><br/>此功能只會調整「還沒發生」的堂次，已經上過的 <strong>{keptEntries.length}</strong> 堂完全不會被更動。</>
+              : <>Teacher: <strong>{teacher?.name}</strong>　Student: <strong>{student?.name}</strong><br/>This only changes sessions that haven't happened yet — the <strong>{keptEntries.length}</strong> already-held session(s) stay exactly as they are.</>}
+          </div>
+          <div style={{fontSize:11,color:"#9E9E9E",marginBottom:14,lineHeight:1.6}}>
+            {lang==="zh"
+              ? "（這不會更動課程本身預設的星期/時間；如果之後要用同一堂課建立全新的一期排課，記得另外到「課程管理」把課程本身的時段也一起更新。）"
+              : "(This doesn't change the course's own default day/time. If you later create a brand-new enrollment period for this same course, update the course's own schedule separately via Course Management.)"}
+          </div>
+
+          <label style={{fontSize:12,color:"#546E7A",display:"block",marginBottom:5}}>{lang==="zh"?"生效日期（此日期起套用新時段）":"Effective date (new time applies from this date on)"}</label>
+          <input type="date" min={today} value={effectiveDate} onChange={e=>{setEffectiveDate(e.target.value);setPreview(null);}} style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",fontSize:13,marginBottom:14}}/>
+
+          <label style={{fontSize:12,color:"#546E7A",display:"block",marginBottom:5}}>{lang==="zh"?"新的星期幾":"New day of week"}</label>
+          <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:14}}>
+            {T[lang].days.map((d,idx)=>(
+              <button key={idx} onClick={()=>{setNewDayIndex(idx);setPreview(null);}} style={{padding:"7px 12px",borderRadius:6,border:newDayIndex===idx?"none":"0.5px solid #CFD8DC",background:newDayIndex===idx?"#1A6B8A":"transparent",color:newDayIndex===idx?"#fff":"#546E7A",fontSize:12,cursor:"pointer"}}>{d}</button>
+            ))}
+          </div>
+
+          <label style={{fontSize:12,color:"#546E7A",display:"block",marginBottom:5}}>{lang==="zh"?"新的時間":"New time"}</label>
+          <div style={{display:"flex",gap:5,alignItems:"center",marginBottom:16}}>
+            <select value={newTime.split(":")[0]} onChange={e=>{setNewTime(`${e.target.value}:${newTime.split(":")[1]}`);setPreview(null);}} style={{padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",fontSize:13}}>
+              {HOUR_OPTIONS.map(h=><option key={h} value={h}>{h}</option>)}
+            </select>
+            <span style={{color:"#9E9E9E"}}>:</span>
+            <select value={newTime.split(":")[1]} onChange={e=>{setNewTime(`${newTime.split(":")[0]}:${e.target.value}`);setPreview(null);}} style={{padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",fontSize:13}}>
+              {MIN_OPTIONS.map(m=><option key={m} value={m}>{m}</option>)}
+            </select>
+          </div>
+
+          {remainingCount<=0 && (
+            <div style={{background:"#FFF3E0",borderRadius:7,padding:"9px 12px",fontSize:12,color:"#E65100",marginBottom:12}}>
+              {lang==="zh"?"這個生效日期之後已經沒有剩餘堂數可以調整了，請確認總堂數或生效日期。":"There are no remaining sessions to schedule after this effective date — check the total session count or the effective date."}
+            </div>
+          )}
+
+          {!preview ? (
+            <button onClick={buildPreview} disabled={remainingCount<=0} style={{width:"100%",padding:"9px",borderRadius:7,border:"1px solid #4A9FD4",background:"transparent",color:"#1A6B8A",fontSize:13,cursor:remainingCount<=0?"not-allowed":"pointer",opacity:remainingCount<=0?0.5:1}}>
+              🔍 {lang==="zh"?"預覽新排程":"Preview New Schedule"}
+            </button>
+          ) : (
+            <div style={{background:"#E8F5E9",border:"1px solid #A5D6A7",borderRadius:8,padding:"12px 14px"}}>
+              <div style={{fontSize:12,fontWeight:600,color:"#2E7D32",marginBottom:6}}>✓ {lang==="zh"?`預覽（${preview.length} 堂新排程）`:`Preview (${preview.length} new session(s))`}</div>
+              <div style={{fontSize:11,color:"#172F39",maxHeight:150,overflowY:"auto",lineHeight:1.8}}>
+                {preview.map((s,i)=>(<div key={i}>{s.date} ({T[lang].days[s.dayIndex]}) {newTime} · #{s.sessionNo}</div>))}
+              </div>
+              <button onClick={()=>setPreview(null)} style={{marginTop:8,fontSize:11,padding:"4px 10px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>
+                {lang==="zh"?"重新調整":"Adjust again"}
+              </button>
+            </div>
+          )}
+        </div>
+        <div style={{display:"flex",gap:8,padding:"12px 18px 16px",borderTop:"0.5px solid #E0E0E0",flexShrink:0}}>
+          <button onClick={confirmAdjust} disabled={!preview || preview.length===0} style={{flex:1,padding:"10px",borderRadius:7,background:(preview&&preview.length>0)?"#4CAF50":"#E0E0E0",border:"none",color:(preview&&preview.length>0)?"#fff":"#9E9E9E",fontSize:13,fontWeight:600,cursor:(preview&&preview.length>0)?"pointer":"not-allowed"}}>
+            ✓ {lang==="zh"?"確認並套用":"Confirm & Apply"}
+          </button>
+          <button onClick={onClose} style={{padding:"10px 16px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>
+            {t.cancel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollments, attendance, setAttendance, lang, setToast }) {
   const t = T[lang];
   const students = users.filter(u=>u.role==="student");
   const getName = id => users.find(u=>u.id===id)?.name||id;
@@ -4364,6 +4586,7 @@ function EnrollmentManager({ users, courses, enrollments, setEnrollments, attend
   // ── Attendance recording state ──
   const [attTarget, setAttTarget] = useState(null); // {enrollment, sessionEntry}
   const [confirmDelEnrollId, setConfirmDelEnrollId] = useState(null);
+  const [adjustTarget, setAdjustTarget] = useState(null);
 
   // ── Search / grouping / collapse state (display only — never touches enrollment data) ──
   const [searchQuery, setSearchQuery] = useState("");
@@ -4527,6 +4750,16 @@ function EnrollmentManager({ users, courses, enrollments, setEnrollments, attend
           onCancel={()=>setConfirmDelEnrollId(null)}
           danger/>;
       })()}
+      {adjustTarget && (
+        <AdjustFutureScheduleModal
+          enrollment={adjustTarget}
+          course={courses.find(c=>c.id===adjustTarget.courseId)}
+          users={users}
+          setEnrollments={setEnrollments}
+          lang={lang} setToast={setToast}
+          onClose={()=>setAdjustTarget(null)}
+        />
+      )}
       {/* Attendance recording modal */}
       {attTarget && (
         <AttendanceModal
@@ -4724,7 +4957,8 @@ function EnrollmentManager({ users, courses, enrollments, setEnrollments, attend
                       )}
 
                       <div style={{display:"flex",gap:6}}>
-                        <button onClick={()=>startEdit(enr)} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>{lang==="zh"?"編輯排課":"Edit"}</button>
+                        <button onClick={()=>setAdjustTarget(enr)} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"1px solid #4A9FD4",background:"transparent",color:"#1A6B8A",cursor:"pointer",fontWeight:500}}>🔄 {lang==="zh"?"調整未來時段":"Adjust Future Time"}</button>
+                        <button onClick={()=>startEdit(enr)} title={lang==="zh"?"⚠️ 會重新產生整份排課表，含已上過的堂次也會被覆蓋——調整未來時段請改用左邊按鈕":"⚠️ Regenerates the ENTIRE schedule, including already-happened sessions — use the button on the left to adjust just future sessions"} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>{lang==="zh"?"編輯排課":"Edit"}</button>
                         <button onClick={()=>deleteEnrollment(enr.id)} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"0.5px solid #C0392B",background:"transparent",color:"#D32F2F",cursor:"pointer"}}>{t.deleteCourse}</button>
                       </div>
                     </div>
@@ -5885,6 +6119,7 @@ function SalaryModal({ teacherEntry, users, lang, setToast, onClose }) {
   const [records, setRecords] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(new Date().toISOString().slice(0,10));
   const [note, setNote] = useState("");
@@ -5908,11 +6143,20 @@ function SalaryModal({ teacherEntry, users, lang, setToast, onClose }) {
   const addRecord = () => {
     const amt = parseFloat(amount);
     if (!amt || amt<=0 || !date) return;
-    const rec = { id:genId(), teacherEntryId:teacherEntry.id, amount:amt, date, note:note.trim(), recordedAt:new Date().toISOString() };
-    saveAll([...records, rec]);
-    setAmount(""); setNote(""); setShowAdd(false);
-    setToast(t.salaryAdded);
+    if (editingId) {
+      saveAll(records.map(r=>r.id===editingId?{...r,amount:amt,date,note:note.trim(),editedAt:new Date().toISOString()}:r));
+      setToast(lang==="zh"?"已更新薪資紀錄":"Payment record updated");
+    } else {
+      const rec = { id:genId(), teacherEntryId:teacherEntry.id, amount:amt, date, note:note.trim(), recordedAt:new Date().toISOString() };
+      saveAll([...records, rec]);
+      setToast(t.salaryAdded);
+    }
+    setAmount(""); setNote(""); setShowAdd(false); setEditingId(null);
   };
+  const startEdit = (r) => {
+    setEditingId(r.id); setAmount(String(r.amount)); setDate(r.date); setNote(r.note||""); setShowAdd(true);
+  };
+  const cancelForm = () => { setShowAdd(false); setEditingId(null); setAmount(""); setNote(""); };
 
   const doDelete = () => {
     saveAll(records.filter(r=>r.id!==confirmDelId));
@@ -5939,13 +6183,14 @@ function SalaryModal({ teacherEntry, users, lang, setToast, onClose }) {
             <div style={{fontSize:30,fontWeight:800,color:"#2E7D32"}}>{total.toLocaleString()}</div>
           </div>
 
-          {/* Add form */}
+          {/* Add / Edit form */}
           {!showAdd ? (
             <button onClick={()=>setShowAdd(true)} style={{width:"100%",padding:"9px",borderRadius:7,background:"#1A6B8A",border:"none",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer",marginBottom:14}}>
               ＋ {t.salaryAdd}
             </button>
           ) : (
             <div style={{background:"#F5F5F5",borderRadius:10,padding:"12px 14px",marginBottom:14,border:"0.5px solid #E0E0E0"}}>
+              <div style={{fontSize:12,fontWeight:600,color:"#172F39",marginBottom:2}}>{editingId?(lang==="zh"?"✏️ 編輯薪資紀錄":"✏️ Edit Payment Record"):(lang==="zh"?"新增薪資紀錄":"New Payment Record")}</div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                 <div>
                   <label style={lStyle}>{t.salaryAmount}</label>
@@ -5960,9 +6205,9 @@ function SalaryModal({ teacherEntry, users, lang, setToast, onClose }) {
               <input style={iStyle} value={note} onChange={e=>setNote(e.target.value)} placeholder={lang==="zh"?"例：6月份薪資":"e.g. June salary"}/>
               <div style={{display:"flex",gap:8,marginTop:12}}>
                 <button onClick={addRecord} disabled={!amount||parseFloat(amount)<=0} style={{flex:1,padding:"8px",borderRadius:6,background:(amount&&parseFloat(amount)>0)?"#2E7D32":"#E0E0E0",border:"none",color:(amount&&parseFloat(amount)>0)?"#fff":"#9E9E9E",fontSize:13,fontWeight:600,cursor:(amount&&parseFloat(amount)>0)?"pointer":"not-allowed"}}>
-                  ✓ {t.salarySave}
+                  ✓ {editingId?(lang==="zh"?"儲存修改":"Save Changes"):t.salarySave}
                 </button>
-                <button onClick={()=>{setShowAdd(false);setAmount("");setNote("");}} style={{padding:"8px 14px",borderRadius:6,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>
+                <button onClick={cancelForm} style={{padding:"8px 14px",borderRadius:6,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>
                   {t.cancel}
                 </button>
               </div>
@@ -5977,8 +6222,9 @@ function SalaryModal({ teacherEntry, users, lang, setToast, onClose }) {
             <div key={r.id} style={{display:"flex",alignItems:"center",gap:10,background:"#FAFAFA",border:"0.5px solid #E0E0E0",borderRadius:8,padding:"9px 12px",marginBottom:6}}>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:13,fontWeight:600,color:"#172F39"}}>{parseFloat(r.amount).toLocaleString()}</div>
-                <div style={{fontSize:11,color:"#9E9E9E"}}>{r.date}{r.note?` · ${r.note}`:""}</div>
+                <div style={{fontSize:11,color:"#9E9E9E"}}>{r.date}{r.note?` · ${r.note}`:""}{r.editedAt?` · ${lang==="zh"?"已修改":"edited"}`:""}</div>
               </div>
+              <button onClick={()=>startEdit(r)} style={{fontSize:11,padding:"4px 9px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"transparent",color:"#1A6B8A",cursor:"pointer",flexShrink:0}}>✏️</button>
               <button onClick={()=>setConfirmDelId(r.id)} style={{fontSize:11,padding:"4px 9px",borderRadius:5,border:"0.5px solid #FFCDD2",background:"transparent",color:"#D32F2F",cursor:"pointer",flexShrink:0}}>✕</button>
             </div>
           ))}
@@ -6829,17 +7075,20 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
   const pendingFbCount = (feedback||[]).filter(f=>f.status==="pending").length;
   const pendingChangeCount = (profileChanges||[]).filter(c=>c.status==="pending").length;
   const pendingTrialCount = (trialApplications||[]).filter(a=>a.status==="pending").length;
+  const pendingMatEditCount = (materials||[]).filter(m=>m.pendingEdit).length;
   const tabs = [
     {key:"courses", label:t.courses},
     {key:"enroll",  label:t.enrollments},
     {key:"leave",   label:t.leaveReview},
     {key:"feedback",label:t.feedbackCenterTitle, badge:pendingFbCount},
+    {key:"matedit", label:lang==="zh"?"教材編輯審核":"Material Edit Review", badge:pendingMatEditCount},
     {key:"availability", label:t.availability},
     {key:"peopledir", label:t.peopleDir, badge:pendingChangeCount},
     {key:"trial", label:lang==="zh"?"試聽申請":"Trial Applications", badge:pendingTrialCount},
     {key:"users",   label:t.manageUsers},
     {key:"tstats",  label:t.teacherStats},
     {key:"sstats",  label:t.studentStats},
+    {key:"studentOverview", label:lang==="zh"?"任教學生總覽":"Student Overview"},
     {key:"settings",label:lang==="zh"?"網站設定":"Site Settings"},
   ];
   return (
@@ -6854,15 +7103,17 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
         ))}
       </div>
       {tab==="courses"&&<CourseManager users={users} courses={courses} setCourses={setCourses} lang={lang} setToast={setToast} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} absences={absences}/>}
-      {tab==="enroll" &&<EnrollmentManager users={users} courses={courses} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} lang={lang} setToast={setToast}/>}
+      {tab==="enroll" &&<EnrollmentManager users={users} courses={courses} setCourses={setCourses} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} lang={lang} setToast={setToast}/>}
       {tab==="leave"  &&<LeaveReview users={users} courses={courses} absences={absences} setAbsences={setAbsences} attendance={attendance} setAttendance={setAttendance} enrollments={enrollments} setEnrollments={setEnrollments} lang={lang} setToast={setToast}/>}
-      {tab==="feedback"&&<FeedbackCenter users={users} courses={courses} enrollments={enrollments} attendance={attendance} feedback={feedback||[]} setFeedback={setFeedback} lang={lang} setToast={setToast} currentUser={currentUser} materials={materials} setMaterials={setMaterials}/>}
+      {tab==="feedback"&&<FeedbackCenter users={users} courses={courses} enrollments={enrollments} attendance={attendance} absences={absences} feedback={feedback||[]} setFeedback={setFeedback} lang={lang} setToast={setToast} currentUser={currentUser} materials={materials} setMaterials={setMaterials}/>}
+      {tab==="matedit"&&<MaterialEditReview courses={courses} materials={materials||[]} setMaterials={setMaterials} users={users} lang={lang} setToast={setToast}/>}
       {tab==="availability"&&<AdminTeacherAvailability users={users} courses={courses} availability={teacherAvailability||[]} setAvailability={setTeacherAvailability} overrides={availabilityOverrides||[]} setOverrides={setAvailabilityOverrides} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang} setToast={setToast}/>}
       {tab==="peopledir" &&<PeopleDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses} profileChanges={profileChanges} setProfileChanges={setProfileChanges}/>}
       {tab==="trial" &&<TrialApplicationsPanel users={users} setUsers={setUsers} lang={lang} setToast={setToast} trialApplications={trialApplications||[]} setTrialApplications={setTrialApplications} englishLevels={englishLevels||[]} setEnglishLevels={setEnglishLevels} learningPurposes={learningPurposes||[]} setLearningPurposes={setLearningPurposes}/>}
       {tab==="users"  &&<UserManager users={users} setUsers={setUsers} lang={lang} setToast={setToast} onImpersonate={onImpersonate}/>}
       {tab==="tstats" &&<TeacherStats users={users} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang}/>}
       {tab==="sstats" &&<StudentStats users={users} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang}/>}
+      {tab==="studentOverview" &&<AdminStudentOverview currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} materials={materials} setMaterials={setMaterials} feedback={feedback} setFeedback={setFeedback} attendance={attendance} absences={absences} lang={lang} setToast={setToast}/>}
       {tab==="settings"&&<SiteSettings introText={introText} setIntroText={setIntroText} lang={lang} setToast={setToast}/>}
     </div>
   );
@@ -6884,6 +7135,7 @@ function AssistantPanel({ users, setUsers, courses, setCourses, materials, setMa
     {key:"availability", label:t.availability},
     {key:"peopledir", label:t.peopleDir},
     {key:"trial", label:lang==="zh"?"試聽申請":"Trial Applications", badge:pendingTrialCount},
+    {key:"studentOverview", label:lang==="zh"?"任教學生總覽":"Student Overview"},
   ];
   return (
     <div>
@@ -6897,10 +7149,11 @@ function AssistantPanel({ users, setUsers, courses, setCourses, materials, setMa
         ))}
       </div>
       {tab==="courses"&&<CourseManager users={users} courses={courses} setCourses={setCourses} lang={lang} setToast={setToast} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} absences={absences}/>}
-      {tab==="feedback"&&<FeedbackCenter users={users} courses={courses} enrollments={enrollments} attendance={attendance} feedback={feedback||[]} setFeedback={setFeedback} lang={lang} setToast={setToast} currentUser={currentUser} materials={materials} setMaterials={setMaterials}/>}
+      {tab==="feedback"&&<FeedbackCenter users={users} courses={courses} enrollments={enrollments} attendance={attendance} absences={absences} feedback={feedback||[]} setFeedback={setFeedback} lang={lang} setToast={setToast} currentUser={currentUser} materials={materials} setMaterials={setMaterials}/>}
       {tab==="availability"&&<AdminTeacherAvailability users={users} courses={courses} availability={teacherAvailability||[]} setAvailability={setTeacherAvailability} overrides={availabilityOverrides||[]} setOverrides={setAvailabilityOverrides} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang} setToast={setToast} readOnly/>}
       {tab==="peopledir" &&<PeopleDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses} hideSalary readOnly/>}
       {tab==="trial" &&<TrialApplicationsPanel users={users} setUsers={setUsers} lang={lang} setToast={setToast} trialApplications={trialApplications||[]} setTrialApplications={setTrialApplications} englishLevels={englishLevels||[]} learningPurposes={learningPurposes||[]} hideOptions/>}
+      {tab==="studentOverview" &&<AdminStudentOverview currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} materials={materials} setMaterials={setMaterials} feedback={feedback} setFeedback={setFeedback} attendance={attendance} absences={absences} lang={lang} setToast={setToast}/>}
     </div>
   );
 }
@@ -6910,7 +7163,7 @@ function AssistantPanel({ users, setUsers, courses, setCourses, materials, setMa
 // one click to Approve (becomes visible to the student) or Reject.
 // Compute completed sessions that have no feedback entry at all yet (excludes
 // sessions marked absent/excused/teacher_leave, since feedback isn't expected there)
-function computeMissingFeedback(courses, enrollments, feedback, attendance) {
+function computeMissingFeedback(courses, enrollments, feedback, attendance, absences) {
   const missing = [];
   (enrollments||[]).forEach(enr => {
     const course = courses.find(c=>c.id===enr.courseId);
@@ -6918,7 +7171,12 @@ function computeMissingFeedback(courses, enrollments, feedback, attendance) {
     (enr.scheduledDates||[]).forEach(s => {
       if (!isSessionOver(s.date, resolveSessionStart(course, s), course.duration)) return;
       const attRec = (attendance||[]).find(a=>a.enrollmentId===enr.id && a.date===s.date);
-      if (attRec && attRec.type!=="other") return; // absent/excused/teacher_leave — feedback not expected
+      if (attRec && attRec.type!=="other") return; // absent/excused/teacher_leave (admin-recorded) — feedback not expected
+      // Self-reported leave (student/teacher via AbsenceModal) only ever
+      // creates an `absences` entry, never an `attendance` one — checking
+      // attRec alone missed every self-reported leave.
+      const absRec = (absences||[]).find(a=>a.courseId===course.id && a.dateStr===s.date);
+      if (absRec) return;
       const hasFeedback = (feedback||[]).some(f=>f.enrollmentId===enr.id && f.date===s.date);
       if (!hasFeedback) missing.push({ course, enrollment: enr, date: s.date, dayIndex: s.dayIndex, sessionNo: s.sessionNo });
     });
@@ -6934,7 +7192,7 @@ function getMondayKey(dateStr) {
   return fmtYMD(d);
 }
 
-function FeedbackCenter({ users, courses, enrollments, attendance, feedback, setFeedback, lang, setToast, currentUser, materials, setMaterials }) {
+function FeedbackCenter({ users, courses, enrollments, attendance, absences, feedback, setFeedback, lang, setToast, currentUser, materials, setMaterials }) {
   const t = T[lang];
   const isAssistant = currentUser?.role === "assistant";
   // Assistants can help fill in feedback (tracking tab) and browse it
@@ -7097,7 +7355,7 @@ function FeedbackCenter({ users, courses, enrollments, attendance, feedback, set
   };
 
   // ── Missing-feedback tracking, grouped by week (most recent first) ──
-  const missing = computeMissingFeedback(courses, enrollments, feedback, attendance);
+  const missing = computeMissingFeedback(courses, enrollments, feedback, attendance, absences);
   const missingByWeek = {};
   missing.forEach(m => {
     const wk = getMondayKey(m.date);
@@ -9098,7 +9356,7 @@ function StudentSettingsPanel({ currentUser, users, setUsers, dirEntries, saveDi
 // down to sessions still missing feedback, grouped by week. Both let the
 // teacher write/edit feedback directly via the same FeedbackModal used from
 // the schedule view.
-function TeacherFeedbackPanel({ currentUser, users, courses, enrollments, attendance, feedback, setFeedback, lang, setToast }) {
+function TeacherFeedbackPanel({ currentUser, users, courses, enrollments, attendance, absences, feedback, setFeedback, lang, setToast }) {
   const t = T[lang];
   const [subTab, setSubTab] = useState("missing"); // missing | overview — missing-first, since that's the actionable one
   const [sortOldFirst, setSortOldFirst] = useState(true); // default: old → new, top to bottom
@@ -9133,6 +9391,12 @@ function TeacherFeedbackPanel({ currentUser, users, courses, enrollments, attend
             course, enrollment: enr, date: s.date, dayIndex: s.dayIndex, sessionNo: s.sessionNo, start,
             feedbackRec: (feedback||[]).find(f=>f.enrollmentId===enr.id && f.date===s.date) || null,
             attRec: (attendance||[]).find(a=>a.enrollmentId===enr.id && a.date===s.date) || null,
+            // Self-reported leave (student/teacher via AbsenceModal) only
+            // ever creates an `absences` entry, never an `attendance` one —
+            // checking attRec alone was the bug, it silently missed every
+            // self-reported leave and kept nagging for feedback on classes
+            // that were already excused.
+            absRec: (absences||[]).find(a=>a.courseId===course.id && a.dateStr===s.date) || null,
           };
         });
     });
@@ -9143,8 +9407,8 @@ function TeacherFeedbackPanel({ currentUser, users, courses, enrollments, attend
   });
 
   // Sessions where feedback is genuinely expected but missing (absent/excused/
-  // teacher_leave sessions don't need feedback)
-  const missingSessions = sorted.filter(s => (!s.attRec || s.attRec.type==="other") && !s.feedbackRec);
+  // teacher_leave — whether admin-recorded OR self-reported — don't need feedback)
+  const missingSessions = sorted.filter(s => (!s.attRec || s.attRec.type==="other") && !s.absRec && !s.feedbackRec);
   const missingByWeek = {};
   missingSessions.forEach(s => {
     const wk = getMondayKey(s.date);
@@ -9335,6 +9599,476 @@ function TeacherFeedbackPanel({ currentUser, users, courses, enrollments, attend
   );
 }
 
+// ─── 任教學生總覽 (Teacher Student Overview) ──────────────────────────────────
+// A per-student, spreadsheet-style consolidated view: every session's date/
+// time/materials/feedback in one place, button-switcher between students
+// (never a dropdown, per spec). Shares the exact same underlying feedback
+// data as the regular "課後回饋" tab — a session filled in over there shows
+// here read-only (color-coded by status) with an "edit" unlock; a session
+// not yet filled uses this page as the primary entry point. Material
+// completion status (YES/沿用教材/指定範圍) now lives on the material
+// itself, not the feedback record, since one session can have 1-3 materials
+// each needing their own answer. Only shown to teachers admin has switched
+// on for (currentUser.canUseStudentOverview) — a test-phase feature.
+// Admin/assistant entry point for the same overview — pick a teacher first
+// (dropdown here is fine; the "buttons only, no dropdown" rule was specific
+// to a teacher's OWN small roster, not admin/assistant picking among
+// potentially many teachers), then reuse the exact same component teachers
+// see for their own roster.
+// Admin-only review queue for teacher-submitted material content edits
+// (title/URL/description). Approving promotes the pending draft into the
+// live fields (what students see); rejecting just discards the draft and
+// leaves the current material untouched — the teacher can always resubmit.
+function MaterialEditReview({ courses, materials, setMaterials, users, lang, setToast }) {
+  const t = T[lang];
+  const pendingEdits = materials.filter(m => m.pendingEdit).sort((a,b)=>(a.pendingEdit.submittedAt||"").localeCompare(b.pendingEdit.submittedAt||""));
+
+  const approve = (m) => {
+    setMaterials(prev => prev.map(x => x.id===m.id ? {
+      ...x, title: m.pendingEdit.title, url: m.pendingEdit.url, desc: m.pendingEdit.desc, pendingEdit: null,
+    } : x));
+    setToast(lang==="zh"?"已核准，教材已更新":"Approved — material updated");
+  };
+  const reject = (m) => {
+    setMaterials(prev => prev.map(x => x.id===m.id ? {...x, pendingEdit: null} : x));
+    setToast(lang==="zh"?"已退回，維持原教材內容":"Rejected — material kept as-is");
+  };
+
+  return (
+    <div style={{padding:"1.25rem"}}>
+      <h3 style={{fontSize:15,fontWeight:600,color:"#172F39",margin:"0 0 3px"}}>{lang==="zh"?"教材編輯審核":"Material Edit Review"}</h3>
+      <p style={{fontSize:12,color:"#9E9E9E",margin:"0 0 14px"}}>{lang==="zh"?"老師透過「任教學生總覽」提出的教材修改，核准後才會更新到學生看到的版本":"Material edits teachers submitted via the Student Overview page — approving updates what students actually see"}</p>
+      {pendingEdits.length===0 ? (
+        <div style={{textAlign:"center",padding:"2.5rem 0",color:"#9E9E9E"}}><div style={{fontSize:28,marginBottom:8}}>🎉</div><div style={{fontSize:13}}>{lang==="zh"?"目前沒有待審核的教材修改":"No material edits pending"}</div></div>
+      ) : pendingEdits.map(m=>{
+        const course = courses.find(c=>c.id===m.courseId);
+        const submitter = users.find(u=>u.id===m.pendingEdit.submittedBy);
+        return (
+          <div key={m.id} style={{background:"#FFFFFF",border:"1px solid #FFCC80",borderRadius:10,padding:"14px 16px",marginBottom:10}}>
+            <div style={{fontSize:12,color:"#172F39",fontWeight:600}}>{course?.subject||"—"}</div>
+            <div style={{fontSize:11,color:"#9E9E9E",marginBottom:10}}>
+              {m.date} · {lang==="zh"?"提交者":"Submitted by"}: {submitter?.name||"—"}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+              <div style={{background:"#F5F5F5",borderRadius:7,padding:"8px 10px"}}>
+                <div style={{fontSize:10,color:"#9E9E9E",fontWeight:600,marginBottom:4}}>{lang==="zh"?"目前版本":"Current"}</div>
+                <div style={{fontSize:12,color:"#172F39"}}>{m.title||"—"}</div>
+                {m.url && <div style={{fontSize:10,color:"#1A6B8A",wordBreak:"break-all",marginTop:2}}>{m.url}</div>}
+              </div>
+              <div style={{background:"#EEF6FB",borderRadius:7,padding:"8px 10px"}}>
+                <div style={{fontSize:10,color:"#1A6B8A",fontWeight:600,marginBottom:4}}>{lang==="zh"?"提議修改為":"Proposed change"}</div>
+                <div style={{fontSize:12,color:"#172F39"}}>{m.pendingEdit.title||"—"}</div>
+                {m.pendingEdit.url && <div style={{fontSize:10,color:"#1A6B8A",wordBreak:"break-all",marginTop:2}}>{m.pendingEdit.url}</div>}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>approve(m)} style={{flex:1,background:"#2E7D32",border:"none",borderRadius:6,color:"#fff",padding:"7px",fontSize:12,fontWeight:600,cursor:"pointer"}}>✓ {lang==="zh"?"核准":"Approve"}</button>
+              <button onClick={()=>reject(m)} style={{flex:1,background:"transparent",border:"1px solid #D32F2F",borderRadius:6,color:"#D32F2F",padding:"7px",fontSize:12,fontWeight:600,cursor:"pointer"}}>✕ {lang==="zh"?"退回":"Reject"}</button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function AdminStudentOverview({ currentUser, users, courses, enrollments, materials, setMaterials, feedback, setFeedback, attendance, absences, lang, setToast }) {
+  const t = T[lang];
+  const teachersWithActiveCourses = users.filter(u=>u.role==="teacher" && courses.some(c=>c.teacherId===u.id && c.status!=="archived"));
+  const [viewTeacherId, setViewTeacherId] = useState(teachersWithActiveCourses[0]?.id || "");
+  if (!teachersWithActiveCourses.length) {
+    return <div style={{padding:"1.25rem",textAlign:"center",color:"#9E9E9E",fontSize:13}}>{lang==="zh"?"目前沒有任教中的老師":"No teachers with active students"}</div>;
+  }
+  return (
+    <div>
+      <div style={{padding:"1.25rem 1.25rem 0"}}>
+        <label style={{fontSize:12,color:"#546E7A",display:"block",marginBottom:5}}>{lang==="zh"?"選擇老師":"Select Teacher"}</label>
+        <select value={viewTeacherId} onChange={e=>setViewTeacherId(e.target.value)} style={{padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13,minWidth:220}}>
+          {teachersWithActiveCourses.map(te=><option key={te.id} value={te.id}>{te.name}</option>)}
+        </select>
+      </div>
+      <TeacherStudentOverview currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} materials={materials} setMaterials={setMaterials} feedback={feedback} setFeedback={setFeedback} attendance={attendance} absences={absences} lang={lang} setToast={setToast} viewTeacherId={viewTeacherId}/>
+    </div>
+  );
+}
+
+function TeacherStudentOverview({ currentUser, users, courses, enrollments, materials, setMaterials, feedback, setFeedback, attendance, absences, lang, setToast, viewTeacherId }) {
+  const t = T[lang];
+  // Teachers always view their own roster; admin/assistant pass in a
+  // specific teacherId to look at (via the picker in AdminStudentOverview).
+  const teacherId = viewTeacherId || currentUser.id;
+  const isAdmin = currentUser.role==="admin";
+  const myCourses = courses.filter(c => c.teacherId===teacherId && c.status!=="archived");
+  const myStudentIds = [...new Set(myCourses.map(c=>c.studentId))];
+  const [selectedStudentId, setSelectedStudentId] = useState(myStudentIds[0] || "");
+  useEffect(() => { setSelectedStudentId(myStudentIds[0] || ""); }, [teacherId]);
+  const [showOlder, setShowOlder] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [importText, setImportText] = useState("");
+
+  const studentCourseIds = new Set(myCourses.filter(c=>c.studentId===selectedStudentId).map(c=>c.id));
+  const allSessions = enrollments
+    .filter(enr => studentCourseIds.has(enr.courseId))
+    .flatMap(enr => {
+      const course = myCourses.find(c=>c.id===enr.courseId);
+      if (!course) return [];
+      // Every scheduled session from the paid enrollment shows up here, not
+      // just ones that already happened — upcoming ones pre-populate their
+      // date/time straight from the paid arrangement, just without
+      // materials/feedback to fill in yet since they haven't occurred.
+      return (enr.scheduledDates||[])
+        .map(s => {
+          const start = s.customStart || getCourseStartForDay(course, s.dayIndex);
+          return {
+            course, enrollment: enr, date: s.date, dayIndex: s.dayIndex, sessionNo: s.sessionNo, start,
+            isFuture: !isSessionOver(s.date, start, course.duration),
+            sessionMaterials: materials.filter(m=>m.courseId===course.id && m.date===s.date),
+            feedbackRec: (feedback||[]).find(f=>f.enrollmentId===enr.id && f.date===s.date) || null,
+            attRec: (attendance||[]).find(a=>a.enrollmentId===enr.id && a.date===s.date) || null,
+            absRec: (absences||[]).find(a=>a.courseId===course.id && a.dateStr===s.date) || null,
+          };
+        });
+    })
+    .sort((a,b) => a.date.localeCompare(b.date) || a.start.localeCompare(b.start)); // oldest → newest (far to near), matching the original Excel sheet's row order
+
+  // Already-happened sessions default to showing just the last month;
+  // anything older auto-collapses. Future (not-yet-happened) sessions are
+  // never collapsed — they're the upcoming schedule, always relevant.
+  const oneMoAgo = new Date(); oneMoAgo.setMonth(oneMoAgo.getMonth()-1);
+  const cutoff = fmtYMD(oneMoAgo);
+  const recentSessions = allSessions.filter(s=>s.isFuture || s.date>=cutoff);
+  const olderSessions = allSessions.filter(s=>!s.isFuture && s.date<cutoff);
+
+  // Drafts: feedback text keyed by session, material completion keyed by materialId
+  const [fbDrafts, setFbDrafts] = useState({});   // sessionKey -> {text, editing}
+  const [matDrafts, setMatDrafts] = useState({}); // materialId -> {status, note}
+  const sKey = (s) => `${s.enrollment.id}_${s.date}`;
+  const fbDraftFor = (s) => fbDrafts[sKey(s)] || {text:s.feedbackRec?.text||"", editing:!s.feedbackRec};
+  const matDraftFor = (m) => matDrafts[m.id] || {status:m.completionStatus||"", note:m.completionNote||""};
+
+  // Editing a material's actual content (title/url/desc) — unlike
+  // completion status, this needs admin approval before it's visible to the
+  // student. The live title/url/desc are never touched directly; the edit
+  // goes into `pendingEdit` and only gets promoted once admin approves it,
+  // so the student keeps seeing the current version in the meantime.
+  const [editingMatId, setEditingMatId] = useState(null);
+  const [matEditDraft, setMatEditDraft] = useState({title:"",url:"",desc:""});
+  const startEditMaterial = (m) => {
+    setEditingMatId(m.id);
+    setMatEditDraft({title:m.title||"", url:m.url||"", desc:m.desc||""});
+  };
+  const submitMaterialEdit = () => {
+    if (!matEditDraft.title.trim() && !matEditDraft.url.trim()) return;
+    setMaterials(prev => prev.map(m => m.id===editingMatId ? {
+      ...m,
+      pendingEdit: { title:matEditDraft.title.trim(), url:matEditDraft.url.trim(), desc:matEditDraft.desc.trim(), submittedBy:currentUser.id, submittedAt:new Date().toISOString() },
+    } : m));
+    setEditingMatId(null);
+    setToast(lang==="zh"?"已送出教材修改，待管理員審核":"Material edit submitted — pending admin review");
+  };
+
+  const sessionIsValid = (s) => {
+    const fd = fbDraftFor(s);
+    if (!fd.text?.trim()) return false;
+    return s.sessionMaterials.every(m => {
+      const md = matDraftFor(m);
+      return md.status && (md.status!=="no_scope" || md.note?.trim());
+    });
+  };
+
+  const saveSession = (s) => {
+    if (!sessionIsValid(s)) return;
+    const fd = fbDraftFor(s);
+    const now = new Date().toISOString();
+    const source = currentUser.role==="assistant" ? "assistant" : "teacher";
+    const rec = {
+      id: s.feedbackRec?.id || genId(),
+      enrollmentId: s.enrollment.id, courseId: s.course.id,
+      studentId: s.course.studentId, teacherId: s.course.teacherId,
+      date: s.date, dayIndex: s.dayIndex, sessionNo: s.sessionNo,
+      text: fd.text.trim(), status: "pending", source,
+      createdAt: s.feedbackRec?.createdAt || now, updatedAt: now, reviewedAt: "", reviewedBy: "",
+    };
+    setFeedback(prev => s.feedbackRec ? prev.map(f=>f.id===rec.id?rec:f) : [...(prev||[]), rec]);
+    if (s.sessionMaterials.length) {
+      setMaterials(prev => prev.map(m => {
+        const md = matDrafts[m.id];
+        if (!md || !studentCourseIds.has(m.courseId) || m.date!==s.date) return m;
+        return {...m, completionStatus: md.status, completionNote: md.status==="no_scope"?(md.note||"").trim():"", completionSetBy: currentUser.id, completionSetAt: now};
+      }));
+    }
+    setFbDrafts(d => { const n={...d}; delete n[sKey(s)]; return n; });
+    setToast(lang==="zh"?"已儲存，待管理員審核":"Saved — pending review");
+  };
+
+  // ── Batch paste-import legacy Excel-style records (admin only) — for
+  // backfilling the old spreadsheet-tracking history into this system. One
+  // row per session: Date / Time / Material URL / Material Title / Finished?
+  // (Yes or No) / Classes Title / Lesson Link / Comments. A row only lands
+  // if its date matches an EXISTING scheduled session for the selected
+  // student (across any of this teacher's courses with them) — nothing gets
+  // invented into the schedule itself, since that's a separate, more
+  // consequential action than backfilling notes onto sessions that already
+  // exist. Comments become an auto-approved feedback record (admin is the
+  // one entering it, same rule as the existing batch-feedback-input tool);
+  // materials + their completion status get attached directly, same as any
+  // other admin material write.
+  const runImport = () => {
+    const rows = parseTSVBlock(importText);
+    let matched = 0, skipped = 0;
+    const newMaterials = [];
+    const newFeedback = [];
+    const updatedFeedbackById = {};
+    const now = new Date().toISOString();
+    rows.forEach(cells => {
+      if (cells.length < 2) return;
+      if (cells.some(c=>/^(date|time|material|material title|finished|finished the material\??|classes title|lesson link|comments?)$/i.test(c))) return; // header row
+      const [dateRaw, , matUrl, matTitle, finishedRaw, , , comments] = cells;
+      const date = normalizeDate(dateRaw);
+      if (!date) { skipped++; return; }
+      let found = null;
+      for (const enr of enrollments) {
+        if (!studentCourseIds.has(enr.courseId)) continue;
+        const sEntry = (enr.scheduledDates||[]).find(x=>x.date===date);
+        if (sEntry) { found = { enr, sEntry, course: myCourses.find(c=>c.id===enr.courseId) }; break; }
+      }
+      if (!found) { skipped++; return; }
+      matched++;
+      const { enr, sEntry, course } = found;
+      if ((matUrl||"").trim() || (matTitle||"").trim()) {
+        newMaterials.push({
+          id: genId(), courseId: course.id, date, dayIndex: sEntry.dayIndex,
+          title: (matTitle||"").trim(), url: (matUrl||"").trim(),
+          completionStatus: /^y/i.test((finishedRaw||"").trim()) ? "yes" : ((finishedRaw||"").trim() ? "no_continue" : ""),
+          addedBy: currentUser.id, addedAt: now,
+        });
+      }
+      if ((comments||"").trim()) {
+        const existing = (feedback||[]).find(f=>f.enrollmentId===enr.id && f.date===date);
+        const rec = {
+          id: existing?.id || genId(), enrollmentId: enr.id, courseId: course.id,
+          studentId: course.studentId, teacherId: course.teacherId,
+          date, dayIndex: sEntry.dayIndex, sessionNo: sEntry.sessionNo,
+          text: (comments||"").trim(), status: "approved", source: "admin",
+          createdAt: existing?.createdAt || now, updatedAt: now, reviewedAt: now, reviewedBy: "admin",
+        };
+        if (existing) updatedFeedbackById[rec.id] = rec;
+        else newFeedback.push(rec);
+      }
+    });
+    if (newMaterials.length) setMaterials(prev => [...(prev||[]), ...newMaterials]);
+    if (newFeedback.length || Object.keys(updatedFeedbackById).length) {
+      setFeedback(prev => [...(prev||[]).map(f=>updatedFeedbackById[f.id]||f), ...newFeedback]);
+    }
+    setToast(lang==="zh"
+      ? `已匯入 ${matched} 筆${skipped>0?`，${skipped} 筆因找不到對應排課日期而跳過`:""}`
+      : `Imported ${matched} row(s)${skipped>0?`, ${skipped} skipped (no matching scheduled date)`:""}`);
+    setImportText(""); setShowImport(false);
+  };
+
+  const STATUS_META = {
+    pending:  {label:t.feedbackStatusPending,  color:"#E65100", bg:"#FFF3E0"},
+    approved: {label:t.feedbackStatusApproved, color:"#2E7D32", bg:"#E8F5E9"},
+    rejected: {label:t.feedbackStatusRejected, color:"#D32F2F", bg:"#FFEBEE"},
+  };
+  const taStyle = {width:"100%",boxSizing:"border-box",minHeight:50,padding:"7px 9px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:12,fontFamily:"inherit",resize:"vertical"};
+
+  const renderMaterialStatus = (m, editing) => {
+    const md = matDraftFor(m);
+    if (!editing) {
+      if (!m.completionStatus) return <span style={{fontSize:10,color:"#B0B0B0"}}>—</span>;
+      const label = m.completionStatus==="yes"?"YES":m.completionStatus==="no_continue"?(lang==="zh"?"NO・沿用":"NO・Reuse"):(lang==="zh"?"NO・指定範圍":"NO・New topic");
+      return <span style={{fontSize:10,background:m.completionStatus==="yes"?"#E8F5E9":"#FFF3E0",color:m.completionStatus==="yes"?"#2E7D32":"#E65100",borderRadius:4,padding:"2px 7px",fontWeight:600}}>{label}{m.completionStatus==="no_scope"&&m.completionNote?`：${m.completionNote}`:""}</span>;
+    }
+    return (
+      <div style={{display:"flex",flexDirection:"column",gap:3,marginTop:3}}>
+        {[["yes","YES"],["no_continue",lang==="zh"?"NO・沿用教材":"NO・Reuse"],["no_scope",lang==="zh"?"NO・指定範圍":"NO・New topic"]].map(([k,l])=>(
+          <label key={k} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,cursor:"pointer"}}>
+            <input type="radio" checked={md.status===k} onChange={()=>setMatDrafts(d=>({...d,[m.id]:{...matDraftFor(m),status:k}}))}/>
+            {l}
+          </label>
+        ))}
+        {md.status==="no_scope" && (
+          <input value={md.note} onChange={e=>setMatDrafts(d=>({...d,[m.id]:{...matDraftFor(m),note:e.target.value}}))} placeholder={lang==="zh"?"下次主題…":"Next topic…"} style={{fontSize:11,padding:"4px 6px",borderRadius:4,border:"0.5px solid #CFD8DC"}}/>
+        )}
+      </div>
+    );
+  };
+
+  const renderRow = (s, i) => {
+    const meta = s.feedbackRec ? STATUS_META[s.feedbackRec.status] : null;
+    const isExcused = (s.attRec && s.attRec.type!=="other") || s.absRec;
+    const fd = fbDraftFor(s);
+    const editing = fd.editing && !s.isFuture; // can't give feedback for a class that hasn't happened yet
+    const cellStyle = {padding:"10px 12px",verticalAlign:"top",borderRight:"0.5px solid #E8E8E8",borderBottom:"0.5px solid #E8E8E8"};
+    return (
+      <tr key={i} style={{background:meta?meta.bg+"22":s.isFuture?"#FAFBFC":"#FFFFFF",opacity:isExcused?0.55:1}}>
+        <td style={cellStyle}>
+          <div style={{fontSize:12,color:"#172F39"}}>{s.date}</div>
+          <div style={{fontSize:10,color:"#9E9E9E"}}>{T[lang].days[s.dayIndex]}</div>
+          {s.isFuture && !isExcused && <div style={{fontSize:9,color:"#9E9E9E",marginTop:2}}>{lang==="zh"?"尚未上課":"Upcoming"}</div>}
+        </td>
+        <td style={cellStyle}><span style={{fontSize:12,color:"#546E7A"}}>{s.start}–{addMins(s.start,s.course.duration)}</span></td>
+        <td style={cellStyle}>
+          {isExcused ? (
+            <span style={{fontSize:11,color:"#9E9E9E"}}>{lang==="zh"?"（已請假）":"(excused)"}</span>
+          ) : s.sessionMaterials.length===0 ? (
+            <span style={{fontSize:11,color:"#B0B0B0"}}>{lang==="zh"?"無教材":"No material"}</span>
+          ) : s.sessionMaterials.map(m=>(
+            <div key={m.id} style={{marginBottom:6}}>
+              {editingMatId===m.id ? (
+                <div style={{background:"#F5F5F5",borderRadius:6,padding:"7px 8px"}}>
+                  <input value={matEditDraft.title} onChange={e=>setMatEditDraft(d=>({...d,title:e.target.value}))} placeholder={lang==="zh"?"教材標題":"Title"} style={{width:"100%",boxSizing:"border-box",fontSize:11,padding:"4px 6px",borderRadius:4,border:"0.5px solid #CFD8DC",marginBottom:4}}/>
+                  <input value={matEditDraft.url} onChange={e=>setMatEditDraft(d=>({...d,url:e.target.value}))} placeholder={lang==="zh"?"教材連結":"URL"} style={{width:"100%",boxSizing:"border-box",fontSize:11,padding:"4px 6px",borderRadius:4,border:"0.5px solid #CFD8DC",marginBottom:4}}/>
+                  <div style={{display:"flex",gap:5}}>
+                    <button onClick={submitMaterialEdit} style={{fontSize:10,padding:"3px 9px",borderRadius:4,background:"#1A6B8A",border:"none",color:"#fff",cursor:"pointer"}}>{lang==="zh"?"送出審核":"Submit for review"}</button>
+                    <button onClick={()=>setEditingMatId(null)} style={{fontSize:10,padding:"3px 9px",borderRadius:4,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",cursor:"pointer"}}>{t.cancel}</button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div style={{fontSize:11,color:"#172F39",fontWeight:500}}>{m.title}</div>
+                  {m.url && <a href={m.url} target="_blank" rel="noreferrer" style={{fontSize:10,color:"#1A6B8A",wordBreak:"break-all"}}>{m.url}</a>}
+                  {m.pendingEdit && (
+                    <div style={{fontSize:10,background:"#FFF3E0",color:"#E65100",borderRadius:4,padding:"2px 6px",marginTop:2,display:"inline-block"}}>
+                      ⏳ {lang==="zh"?"修改待審核":"Edit pending review"}
+                    </div>
+                  )}
+                  {renderMaterialStatus(m, editing && !isExcused)}
+                  {editing && !isExcused && !m.pendingEdit && (
+                    <button onClick={()=>startEditMaterial(m)} style={{fontSize:10,padding:"2px 8px",borderRadius:4,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer",marginTop:3}}>
+                      ✏️ {lang==="zh"?"編輯教材":"Edit material"}
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          ))}
+        </td>
+        <td style={{...cellStyle,borderRight:"none"}}>
+          {isExcused ? (
+            <span style={{fontSize:11,color:"#9E9E9E"}}>—</span>
+          ) : s.isFuture ? (
+            <span style={{fontSize:11,color:"#B0B0B0"}}>{lang==="zh"?"尚未上課，無法填寫反饋":"Not yet held — feedback isn't available until after class"}</span>
+          ) : !editing ? (
+            <div>
+              {meta && <span style={{fontSize:10,background:meta.bg,color:meta.color,borderRadius:4,padding:"2px 8px",fontWeight:600,marginBottom:4,display:"inline-block"}}>● {meta.label}</span>}
+              <div style={{fontSize:12,color:"#172F39",lineHeight:1.6,whiteSpace:"pre-wrap"}}>{s.feedbackRec?.text}</div>
+              <button onClick={()=>setFbDrafts(d=>({...d,[sKey(s)]:{text:s.feedbackRec.text,editing:true}}))} style={{fontSize:10,padding:"3px 9px",borderRadius:5,border:"0.5px solid #7B1FA2",background:"transparent",color:"#7B1FA2",cursor:"pointer",marginTop:5}}>
+                ✏️ {t.feedbackEdit}
+              </button>
+            </div>
+          ) : (
+            <div>
+              <textarea value={fd.text} onChange={e=>setFbDrafts(d=>({...d,[sKey(s)]:{...fd,text:e.target.value}}))} style={taStyle} placeholder={lang==="zh"?"課後反饋…":"Feedback…"}/>
+              <div style={{display:"flex",gap:6,marginTop:5}}>
+                <button onClick={()=>saveSession(s)} disabled={!sessionIsValid(s)} style={{fontSize:11,padding:"5px 12px",borderRadius:5,background:sessionIsValid(s)?"#1A6B8A":"#E0E0E0",border:"none",color:sessionIsValid(s)?"#fff":"#9E9E9E",cursor:sessionIsValid(s)?"pointer":"not-allowed",fontWeight:500}}>
+                  ✓ {lang==="zh"?"儲存":"Save"}
+                </button>
+                {s.feedbackRec && (
+                  <button onClick={()=>setFbDrafts(d=>{const n={...d};delete n[sKey(s)];return n;})} style={{fontSize:11,padding:"5px 12px",borderRadius:5,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",cursor:"pointer"}}>
+                    {t.cancel}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </td>
+      </tr>
+    );
+  };
+
+  if (!myStudentIds.length) {
+    return <div style={{padding:"1.25rem",textAlign:"center",color:"#9E9E9E",fontSize:13}}>{lang==="zh"?"目前沒有任教學生":"No students yet"}</div>;
+  }
+
+  return (
+    <div style={{padding:"1.25rem"}}>
+      <h3 style={{fontSize:15,fontWeight:600,color:"#172F39",margin:"0 0 3px"}}>{lang==="zh"?"任教學生總覽":"Student Overview"}</h3>
+      <p style={{fontSize:12,color:"#9E9E9E",margin:"0 0 12px"}}>{lang==="zh"?"逐堂整合檢視：日期、教材、完成度、反饋，一次看完":"Every session's date, materials, completion status and feedback in one place"}</p>
+
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,flexWrap:"wrap",marginBottom:14}}>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {myStudentIds.map(sid=>{
+            const stu = users.find(u=>u.id===sid);
+            return (
+              <button key={sid} onClick={()=>setSelectedStudentId(sid)} style={{padding:"8px 16px",borderRadius:8,border:selectedStudentId===sid?"none":"0.5px solid #CFD8DC",background:selectedStudentId===sid?"#1A6B8A":"transparent",color:selectedStudentId===sid?"#fff":"#546E7A",fontSize:13,fontWeight:selectedStudentId===sid?600:400,cursor:"pointer"}}>
+                {stu?.name||"—"}
+              </button>
+            );
+          })}
+        </div>
+        {isAdmin && selectedStudentId && (
+          <button onClick={()=>setShowImport(v=>!v)} style={{fontSize:12,padding:"7px 14px",borderRadius:7,border:"1px solid #4A9FD4",background:showImport?"#EEF6FB":"transparent",color:"#1A6B8A",cursor:"pointer",whiteSpace:"nowrap"}}>
+            📋 {lang==="zh"?"批次貼上匯入舊資料":"Batch Import Legacy Data"}
+          </button>
+        )}
+      </div>
+
+      {isAdmin && showImport && (
+        <div style={{background:"#F5F5F5",borderRadius:8,padding:"12px 14px",marginBottom:16}}>
+          <div style={{fontSize:11,color:"#546E7A",marginBottom:6,lineHeight:1.6}}>
+            {lang==="zh"
+              ? "從舊 Excel 表格複製整個範圍貼上，欄位順序：日期、時間、教材連結、教材標題、Finished(Yes/No)、Classes Title、Lesson Link、Comments。只有日期能對到這位學生已存在的排課紀錄，資料才會被匯入；找不到對應日期的列會被跳過，不會自動新增排課。"
+              : "Paste a full range copied from the old Excel sheet. Column order: Date, Time, Material URL, Material Title, Finished (Yes/No), Classes Title, Lesson Link, Comments. Only rows whose date matches an existing scheduled session for this student get imported — non-matching rows are skipped, nothing gets added to the schedule itself."}
+          </div>
+          <textarea
+            value={importText}
+            onChange={e=>setImportText(e.target.value)}
+            placeholder={"2026/05/26\t20:30-20:55\thttps://reurl.cc/GanvxA\t16. What Is Your City Like?\tNo\tES English Study\thttps://meet.google.com/oox-tuai-yop\tJohn: showed good speaking ability"}
+            style={{width:"100%",boxSizing:"border-box",minHeight:110,padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:12,fontFamily:"monospace",resize:"vertical"}}
+          />
+          <div style={{display:"flex",gap:8,marginTop:8}}>
+            <button onClick={runImport} disabled={!importText.trim()} style={{padding:"7px 16px",borderRadius:6,background:importText.trim()?"#1A6B8A":"#E0E0E0",border:"none",color:importText.trim()?"#fff":"#9E9E9E",fontSize:12,cursor:importText.trim()?"pointer":"not-allowed",fontWeight:600}}>
+              📥 {lang==="zh"?"匯入":"Import"}
+            </button>
+            <button onClick={()=>{setShowImport(false);setImportText("");}} style={{padding:"7px 16px",borderRadius:6,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:12,cursor:"pointer"}}>
+              {t.cancel}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {olderSessions.length>0 && (
+        <div style={{marginBottom:10}}>
+          <button onClick={()=>setShowOlder(v=>!v)} style={{fontSize:12,padding:"6px 14px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>
+            {showOlder ? (lang==="zh"?"收合較舊紀錄":"Collapse older records") : (lang==="zh"?`顯示更早的 ${olderSessions.length} 筆`:`Show ${olderSessions.length} earlier record(s)`)}
+          </button>
+          {showOlder && (
+            <div style={{border:"0.5px solid #E0E0E0",borderRadius:8,overflow:"hidden",marginTop:8}}>
+              <table style={{width:"100%",borderCollapse:"collapse",tableLayout:"fixed"}}>
+                <colgroup><col style={{width:110}}/><col style={{width:90}}/><col style={{width:"38%"}}/><col/></colgroup>
+                <tbody>
+                  {olderSessions.map(renderRow)}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={{border:"0.5px solid #E0E0E0",borderRadius:8,overflow:"hidden"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",tableLayout:"fixed"}}>
+          <colgroup><col style={{width:110}}/><col style={{width:90}}/><col style={{width:"38%"}}/><col/></colgroup>
+          <thead>
+            <tr style={{background:"#F5F5F5"}}>
+              {[lang==="zh"?"日期":"Date", lang==="zh"?"時間":"Time", lang==="zh"?"教材":"Materials", lang==="zh"?"反饋":"Feedback"].map((h,i)=>(
+                <th key={i} style={{textAlign:"left",padding:"8px 12px",fontSize:11,fontWeight:600,color:"#546E7A",borderRight:i<3?"0.5px solid #E8E8E8":"none",borderBottom:"1px solid #DDD"}}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {recentSessions.length===0 && olderSessions.length===0 && (
+              <tr><td colSpan={4} style={{padding:"1.5rem",textAlign:"center",color:"#9E9E9E",fontSize:13}}>—</td></tr>
+            )}
+            {recentSessions.map(renderRow)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function StudentTeacherIntroPanel({ currentUser, users, courses, teacherDirEntries, dirLoaded, lang }) {
   const t = T[lang];
 
@@ -9416,6 +10150,7 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, setCourse
     : [
         { key:"students",      icon:"👥", zh:"任教學生", en:"My Students" },
         { key:"teacherFeedback",icon:"💬", zh:"課後回饋", en:"Post-Class Feedback" },
+        ...(currentUser.canUseStudentOverview ? [{ key:"studentOverview", icon:"📊", zh:"任教學生總覽", en:"Student Overview" }] : []),
         { key:"availability",  icon:"🗓", zh:"可安排時段", en:"Availability" },
         ...(currentUser.canAssist ? [{ key:"assistantTools", icon:"🛠", zh:"助教工具", en:"Assistant Tools" }] : []),
         { key:"settings",      icon:"⚙️", zh:"基本資訊與設定", en:"Basic Info & Settings" },
@@ -9525,7 +10260,9 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, setCourse
             : isTeacher && sideTab==="students"
               ? <TeacherStudentsPanel currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} attendance={attendance} lang={lang} dirEntries={dirEntries}/>
             : isTeacher && sideTab==="teacherFeedback"
-              ? <TeacherFeedbackPanel currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} attendance={attendance} feedback={feedback} setFeedback={setFeedback} lang={lang} setToast={setToast}/>
+              ? <TeacherFeedbackPanel currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} attendance={attendance} absences={absences} feedback={feedback} setFeedback={setFeedback} lang={lang} setToast={setToast}/>
+            : isTeacher && currentUser.canUseStudentOverview && sideTab==="studentOverview"
+              ? <TeacherStudentOverview currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} materials={materials} setMaterials={setMaterials} feedback={feedback} setFeedback={setFeedback} attendance={attendance} absences={absences} lang={lang} setToast={setToast}/>
             : isTeacher && sideTab==="availability"
               ? <TeacherAvailabilityPanel currentUser={currentUser} users={users} availability={teacherAvailability} setAvailability={setTeacherAvailability} overrides={availabilityOverrides} setOverrides={setAvailabilityOverrides} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang} setToast={setToast}/>
             : isTeacher && currentUser.canAssist && sideTab==="assistantTools"
@@ -9679,6 +10416,26 @@ export default function App() {
   const [enrollments,setEnrollments,eLoaded]=useStorage("cp3_enrollments",DEFAULT_ENROLLMENTS);
   const [attendance,setAttendance,attLoaded]=useStorage("cp3_attendance",DEFAULT_ATTENDANCE);
   const [feedback,setFeedback,fbLoaded]=useStorage("cp3_feedback",[]);
+  // One-time (idempotent) migration: "next lesson material status" used to
+  // live on the feedback record; it now lives on the material itself (a
+  // session can have 1-3 materials, each needing its own status). This only
+  // touches materials that don't already have their own completionStatus,
+  // so it's safe to run on every load — it naturally does nothing once the
+  // migration has already happened for a given material.
+  useEffect(() => {
+    if (!mLoaded || !fbLoaded) return;
+    const feedbackWithStatus = (feedback||[]).filter(f => f.nextMaterialStatus);
+    if (!feedbackWithStatus.length) return;
+    let changed = false;
+    const next = (materials||[]).map(m => {
+      if (m.completionStatus) return m;
+      const f = feedbackWithStatus.find(x => x.courseId===m.courseId && x.date===m.date);
+      if (!f) return m;
+      changed = true;
+      return {...m, completionStatus:f.nextMaterialStatus, completionNote:f.nextMaterialNote||"", completionSetBy:"migrated", completionSetAt:f.updatedAt||f.createdAt||""};
+    });
+    if (changed) setMaterials(next);
+  }, [mLoaded, fbLoaded]);
   const [teacherAvailability,setTeacherAvailability,taLoaded]=useStorage("cp3_teacher_availability",[]);
   const [availabilityOverrides,setAvailabilityOverrides,aoLoaded]=useStorage("cp3_availability_overrides",[]);
   const [profileChanges,setProfileChanges,pcLoaded]=useStorage("cp3_profile_changes",[]);
@@ -9733,7 +10490,7 @@ export default function App() {
   // regardless of what someone's currently looking at.
   const isTeacherRole = currentUser.role==="teacher";
   const globalMissingFeedback = (isTeacherRole||isAdmin||isAssistant)
-    ? computeMissingFeedback(courses, enrollments, feedback, attendance).filter(m => isTeacherRole ? m.course.teacherId===currentUser.id : true)
+    ? computeMissingFeedback(courses, enrollments, feedback, attendance, absences).filter(m => isTeacherRole ? m.course.teacherId===currentUser.id : true)
     : [];
   const goToFeedbackReminder = () => {
     if (isAdmin) { setActiveTab("admin"); setAdminInitialTab("feedback"); }
