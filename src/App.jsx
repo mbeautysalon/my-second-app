@@ -501,7 +501,7 @@ const TRIAL_COLOR = {bg:"#FFFDE7",border:"#F9A825",text:"#F57F17"};
 // Bumped whenever a meaningful set of changes ships. Shown low-key on the
 // login page so version can be confirmed at a glance; also called out
 // whenever a new file is delivered.
-const APP_VERSION = "v1.0.0";
+const APP_VERSION = "v1.0.1";
 
 const genId = () => "id_" + Math.random().toString(36).slice(2,9);
 
@@ -4394,9 +4394,31 @@ function parseTSVBlock(text) {
     .filter(r => r.some(c => c !== ""));
 }
 
+// What day(s)/time(s) is this enrollment CURRENTLY actually meeting on? This
+// prefers the pattern implied by its own upcoming (not-yet-happened)
+// scheduledDates entries — which reflect any "調整未來時段" adjustment,
+// since that feature deliberately never updates the course record itself —
+// falling back to the course's own declared schedule only if there are no
+// upcoming sessions to infer from (e.g. a brand new enrollment).
+function inferActivePattern(course, enrollment, excludeDate) {
+  const upcoming = (enrollment.scheduledDates||[]).filter(s => {
+    if (s.date === excludeDate) return false;
+    const start = s.customStart || getCourseStartForDay(course, s.dayIndex);
+    return !isSessionOver(s.date, start, course.duration);
+  });
+  const map = {};
+  if (upcoming.length) {
+    upcoming.forEach(s => { map[s.dayIndex] = s.customStart || getCourseStartForDay(course, s.dayIndex); });
+  } else {
+    getCourseSchedule(course).forEach(b => { map[b.dayIndex] = b.start; });
+  }
+  return map;
+}
+
 function deferExcusedSession(course, enrollment, excusedDate) {
   const existingDates = new Set((enrollment.scheduledDates||[]).map(s=>s.date));
-  const days = getCourseDays(course);
+  const patternMap = inferActivePattern(course, enrollment, excusedDate);
+  const days = Object.keys(patternMap).map(Number);
   if (!days.length) return enrollment.scheduledDates||[];
   const lastDate = [...existingDates].sort().reverse()[0] || enrollment.startDate || excusedDate;
   let d = new Date(lastDate+"T00:00:00");
@@ -4411,7 +4433,10 @@ function deferExcusedSession(course, enrollment, excusedDate) {
   }
   if (!compDate) return enrollment.scheduledDates||[]; // couldn't find a slot — leave schedule untouched
   const maxNo = Math.max(0, ...(enrollment.scheduledDates||[]).map(s=>s.sessionNo||0));
-  return [...(enrollment.scheduledDates||[]), {date:compDate, dayIndex:compDayIndex, sessionNo:maxNo+1, rescheduledFrom:excusedDate}];
+  // customStart carries the CURRENT time forward too — so if a third leave
+  // happens later, this compensating entry itself correctly feeds back into
+  // inferActivePattern rather than losing track of the adjusted time.
+  return [...(enrollment.scheduledDates||[]), {date:compDate, dayIndex:compDayIndex, sessionNo:maxNo+1, rescheduledFrom:excusedDate, customStart:patternMap[compDayIndex]}];
 }
 // Reverting a session FROM excused/teacher_leave back to normal: the excused
 // date's own entry was never removed in the first place (see above), so
@@ -4429,7 +4454,7 @@ function undoDeferExcusedSession(enrollment, excusedDate) {
 // the new day/time. This is the safe alternative to "編輯排課", which
 // rebuilds the ENTIRE schedule from scratch and would silently rewrite
 // history for a student who already has real sessions behind them.
-function AdjustFutureScheduleModal({ enrollment, course, users, setEnrollments, lang, setToast, onClose }) {
+function AdjustFutureScheduleModal({ enrollment, course, users, setEnrollments, lang, setToast, onClose, onApplied }) {
   const t = T[lang];
   const teacher = users.find(u=>u.id===course?.teacherId);
   const student = users.find(u=>u.id===course?.studentId);
@@ -4512,6 +4537,10 @@ function AdjustFutureScheduleModal({ enrollment, course, users, setEnrollments, 
   const confirmAdjust = () => {
     if (!preview) return;
     const newSchedule = [...keptEntries, ...preview];
+    // Capture what the schedule looked like right before this change, so
+    // the caller can offer a one-click undo if the admin picked the wrong
+    // day/time by mistake.
+    onApplied?.(enrollment, enrollment.scheduledDates||[]);
     setEnrollments(es=>es.map(e=>e.id===enrollment.id?{...e, scheduledDates:newSchedule}:e));
     // Deliberately NOT touching the course record's own schedule/days/start
     // here. Past (kept) entries have no customStart of their own — their
@@ -4522,7 +4551,7 @@ function AdjustFutureScheduleModal({ enrollment, course, users, setEnrollments, 
     // makes this whole adjustment self-contained without needing to touch
     // the course at all. (If this course is also used to set up a brand new
     // future enrollment, its own "編輯課程" form can be updated separately.)
-    setToast(lang==="zh"?`已調整未來時段，${keptEntries.length} 堂過去紀錄維持不變`:`Future schedule updated — ${keptEntries.length} past session(s) left untouched`);
+    setToast(lang==="zh"?`已調整未來時段，${keptEntries.length} 堂過去紀錄維持不變（可用復原按鈕還原）`:`Future schedule updated — ${keptEntries.length} past session(s) untouched (use Undo to revert)`);
     onClose();
   };
 
@@ -4656,6 +4685,17 @@ function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollm
   const [attTarget, setAttTarget] = useState(null); // {enrollment, sessionEntry}
   const [confirmDelEnrollId, setConfirmDelEnrollId] = useState(null);
   const [adjustTarget, setAdjustTarget] = useState(null);
+  // A single level of undo for "調整未來時段" — captured right before the
+  // change is applied, cleared once dismissed or a new adjustment is made.
+  // In-memory only (not persisted), so it covers the immediate "oops, wrong
+  // day/time" moment, not a long-term history.
+  const [lastAdjustSnapshot, setLastAdjustSnapshot] = useState(null);
+  const undoLastAdjust = () => {
+    if (!lastAdjustSnapshot) return;
+    setEnrollments(es=>es.map(e=>e.id===lastAdjustSnapshot.enrollmentId?{...e,scheduledDates:lastAdjustSnapshot.scheduledDates}:e));
+    setToast(lang==="zh"?"已復原上一次的時段調整":"Last schedule adjustment undone");
+    setLastAdjustSnapshot(null);
+  };
 
   // ── Search / grouping / collapse state (display only — never touches enrollment data) ──
   const [searchQuery, setSearchQuery] = useState("");
@@ -4808,6 +4848,19 @@ function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollm
 
   return (
     <div>
+      {lastAdjustSnapshot && (
+        <div style={{background:"#EEF6FB",border:"1px solid #4A9FD4",borderRadius:9,padding:"10px 14px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+          <span style={{fontSize:12,color:"#1A6B8A"}}>
+            🔄 {lang==="zh"?`已調整「${lastAdjustSnapshot.courseName}」的未來時段`:`Adjusted future schedule for "${lastAdjustSnapshot.courseName}"`}
+          </span>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={undoLastAdjust} style={{fontSize:12,padding:"5px 12px",borderRadius:6,background:"#1A6B8A",border:"none",color:"#fff",cursor:"pointer",fontWeight:500}}>
+              ↩️ {lang==="zh"?"復原這次調整":"Undo This Adjustment"}
+            </button>
+            <button onClick={()=>setLastAdjustSnapshot(null)} style={{fontSize:12,padding:"5px 10px",borderRadius:6,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",cursor:"pointer"}}>×</button>
+          </div>
+        </div>
+      )}
       {confirmDelEnrollId && (() => {
         const enr = enrollments.find(e=>e.id===confirmDelEnrollId);
         const course = courses.find(c=>c.id===enr?.courseId);
@@ -4827,6 +4880,13 @@ function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollm
           setEnrollments={setEnrollments}
           lang={lang} setToast={setToast}
           onClose={()=>setAdjustTarget(null)}
+          onApplied={(enr, previousScheduledDates)=>{
+            setLastAdjustSnapshot({
+              enrollmentId: enr.id,
+              scheduledDates: previousScheduledDates,
+              courseName: courses.find(c=>c.id===enr.courseId)?.subject || "",
+            });
+          }}
         />
       )}
       {/* Attendance recording modal */}
