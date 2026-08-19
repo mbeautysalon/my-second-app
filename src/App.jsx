@@ -501,7 +501,7 @@ const TRIAL_COLOR = {bg:"#FFFDE7",border:"#F9A825",text:"#F57F17"};
 // Bumped whenever a meaningful set of changes ships. Shown low-key on the
 // login page so version can be confirmed at a glance; also called out
 // whenever a new file is delivered.
-const APP_VERSION = "v1.0.1";
+const APP_VERSION = "v1.0.2";
 
 const genId = () => "id_" + Math.random().toString(36).slice(2,9);
 
@@ -4394,21 +4394,20 @@ function parseTSVBlock(text) {
     .filter(r => r.some(c => c !== ""));
 }
 
-// What day(s)/time(s) is this enrollment CURRENTLY actually meeting on? This
-// prefers the pattern implied by its own upcoming (not-yet-happened)
-// scheduledDates entries — which reflect any "調整未來時段" adjustment,
-// since that feature deliberately never updates the course record itself —
-// falling back to the course's own declared schedule only if there are no
-// upcoming sessions to infer from (e.g. a brand new enrollment).
-function inferActivePattern(course, enrollment, excludeDate) {
-  const upcoming = (enrollment.scheduledDates||[]).filter(s => {
-    if (s.date === excludeDate) return false;
-    const start = s.customStart || getCourseStartForDay(course, s.dayIndex);
-    return !isSessionOver(s.date, start, course.duration);
-  });
+// What day(s)/time(s) is this enrollment CURRENTLY actually meeting on?
+// Prefers `enrollment.currentPattern` — an explicit record of the pattern in
+// effect, set directly by "調整未來時段" whenever it's used — over trying to
+// GUESS from whichever dates happen to still be in scheduledDates. Guessing
+// from dates was the earlier bug: any leftover not-yet-happened session
+// still using the OLD pattern (e.g. one scheduled between "today" and a
+// future effective date, which correctly stays kept) would get counted
+// alongside the new pattern's days, silently reintroducing the old day into
+// the deferral logic. Falls back to the course's own declared schedule only
+// if this enrollment has never been adjusted at all.
+function inferActivePattern(course, enrollment) {
   const map = {};
-  if (upcoming.length) {
-    upcoming.forEach(s => { map[s.dayIndex] = s.customStart || getCourseStartForDay(course, s.dayIndex); });
+  if (enrollment.currentPattern && enrollment.currentPattern.length) {
+    enrollment.currentPattern.forEach(b => { map[b.dayIndex] = b.start; });
   } else {
     getCourseSchedule(course).forEach(b => { map[b.dayIndex] = b.start; });
   }
@@ -4417,7 +4416,7 @@ function inferActivePattern(course, enrollment, excludeDate) {
 
 function deferExcusedSession(course, enrollment, excusedDate) {
   const existingDates = new Set((enrollment.scheduledDates||[]).map(s=>s.date));
-  const patternMap = inferActivePattern(course, enrollment, excusedDate);
+  const patternMap = inferActivePattern(course, enrollment);
   const days = Object.keys(patternMap).map(Number);
   if (!days.length) return enrollment.scheduledDates||[];
   const lastDate = [...existingDates].sort().reverse()[0] || enrollment.startDate || excusedDate;
@@ -4433,9 +4432,6 @@ function deferExcusedSession(course, enrollment, excusedDate) {
   }
   if (!compDate) return enrollment.scheduledDates||[]; // couldn't find a slot — leave schedule untouched
   const maxNo = Math.max(0, ...(enrollment.scheduledDates||[]).map(s=>s.sessionNo||0));
-  // customStart carries the CURRENT time forward too — so if a third leave
-  // happens later, this compensating entry itself correctly feeds back into
-  // inferActivePattern rather than losing track of the adjusted time.
   return [...(enrollment.scheduledDates||[]), {date:compDate, dayIndex:compDayIndex, sessionNo:maxNo+1, rescheduledFrom:excusedDate, customStart:patternMap[compDayIndex]}];
 }
 // Reverting a session FROM excused/teacher_leave back to normal: the excused
@@ -4537,11 +4533,19 @@ function AdjustFutureScheduleModal({ enrollment, course, users, setEnrollments, 
   const confirmAdjust = () => {
     if (!preview) return;
     const newSchedule = [...keptEntries, ...preview];
+    // The new day/time pattern, recorded explicitly and reliably — this is
+    // what deferExcusedSession reads going forward for any future leave, so
+    // it always knows the CURRENT arrangement without having to guess from
+    // scattered dates in scheduledDates (which was the earlier bug: a
+    // leftover not-yet-happened old-pattern entry, still correctly kept
+    // because its date fell before the effective date, could get mistaken
+    // for part of the active pattern too).
+    const newPattern = activeDays.map(d => ({dayIndex:d, start:dayTimeMap[d]}));
     // Capture what the schedule looked like right before this change, so
     // the caller can offer a one-click undo if the admin picked the wrong
     // day/time by mistake.
     onApplied?.(enrollment, enrollment.scheduledDates||[]);
-    setEnrollments(es=>es.map(e=>e.id===enrollment.id?{...e, scheduledDates:newSchedule}:e));
+    setEnrollments(es=>es.map(e=>e.id===enrollment.id?{...e, scheduledDates:newSchedule, currentPattern:newPattern}:e));
     // Deliberately NOT touching the course record's own schedule/days/start
     // here. Past (kept) entries have no customStart of their own — their
     // displayed time is computed live from the course's pattern — so
@@ -4692,7 +4696,7 @@ function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollm
   const [lastAdjustSnapshot, setLastAdjustSnapshot] = useState(null);
   const undoLastAdjust = () => {
     if (!lastAdjustSnapshot) return;
-    setEnrollments(es=>es.map(e=>e.id===lastAdjustSnapshot.enrollmentId?{...e,scheduledDates:lastAdjustSnapshot.scheduledDates}:e));
+    setEnrollments(es=>es.map(e=>e.id===lastAdjustSnapshot.enrollmentId?{...e,scheduledDates:lastAdjustSnapshot.scheduledDates,currentPattern:lastAdjustSnapshot.currentPattern}:e));
     setToast(lang==="zh"?"已復原上一次的時段調整":"Last schedule adjustment undone");
     setLastAdjustSnapshot(null);
   };
@@ -4884,6 +4888,7 @@ function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollm
             setLastAdjustSnapshot({
               enrollmentId: enr.id,
               scheduledDates: previousScheduledDates,
+              currentPattern: enr.currentPattern || null,
               courseName: courses.find(c=>c.id===enr.courseId)?.subject || "",
             });
           }}
@@ -10668,6 +10673,7 @@ export default function App() {
         <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0,overflow:"hidden"}}>
           <span style={{fontSize:20,flexShrink:0}}>📚</span>
           <span className="es-header-title" style={{color:"#FFFFFF",fontWeight:500,fontSize:14,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>ES Platform</span>
+          <span style={{color:"rgba(255,255,255,0.3)",fontSize:10,flexShrink:0}}>{APP_VERSION}</span>
         </div>
         <div className="es-header-right" style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
           <button className="es-lang-toggle" onClick={()=>setLang(lang==="zh"?"en":"zh")} style={{background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.25)",color:"#FFFFFF",borderRadius:6,padding:"4px 12px",cursor:"pointer",fontSize:12,flexShrink:0}}>{t.langToggle}</button>
