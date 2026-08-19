@@ -498,6 +498,11 @@ const COLORS = [
 // the calendar/list at a glance instead of blending in with regular classes.
 const TRIAL_COLOR = {bg:"#FFFDE7",border:"#F9A825",text:"#F57F17"};
 
+// Bumped whenever a meaningful set of changes ships. Shown low-key on the
+// login page so version can be confirmed at a glance; also called out
+// whenever a new file is delivered.
+const APP_VERSION = "v1.0.0";
+
 const genId = () => "id_" + Math.random().toString(36).slice(2,9);
 
 const DEFAULT_USERS = [
@@ -4429,21 +4434,51 @@ function AdjustFutureScheduleModal({ enrollment, course, users, setEnrollments, 
   const teacher = users.find(u=>u.id===course?.teacherId);
   const student = users.find(u=>u.id===course?.studentId);
   const today = new Date().toISOString().slice(0,10);
-  const currentDayIndex = (course?.days && course.days[0]!==undefined) ? course.days[0] : (course?.schedule?.[0]?.dayIndex ?? 0);
-  const currentStart = course?.start || course?.schedule?.[0]?.start || "09:00";
 
-  const [newDayIndex, setNewDayIndex] = useState(currentDayIndex);
-  const [newTime, setNewTime] = useState(currentStart);
+  // Same "blocks" concept as the course-creation form — a student can meet on
+  // MULTIPLE different days, each potentially at its own different time, all
+  // as part of one adjustment. blocksFromCourse seeds the form with the
+  // course's current pattern as a starting point.
+  const blankBlock = () => ({ _bid: genId(), days:[0], start:"09:00" });
+  const blocksFromCourse = (c) => {
+    const sched = getCourseSchedule(c);
+    if (!sched.length) return [blankBlock()];
+    const byTime = {};
+    sched.forEach(s=>{ if(!byTime[s.start]) byTime[s.start]=[]; byTime[s.start].push(s.dayIndex); });
+    return Object.entries(byTime).map(([start,days])=>({_bid:genId(), days:days.sort((a,b)=>a-b), start}));
+  };
+
+  const [blocks, setBlocks] = useState(()=>blocksFromCourse(course));
   const [effectiveDate, setEffectiveDate] = useState(today);
   const [preview, setPreview] = useState(null);
 
+  const updateBlock = (bid, patch) => { setBlocks(bs=>bs.map(b=>b._bid===bid?{...b,...patch}:b)); setPreview(null); };
+  const toggleBlockDay = (bid, d) => {
+    setBlocks(bs=>bs.map(b=>{
+      if (b._bid!==bid) return b;
+      const cur = b.days||[];
+      const next = cur.includes(d) ? cur.filter(x=>x!==d) : [...cur,d].sort((a,b2)=>a-b2);
+      return {...b, days: next.length?next:[d]};
+    }));
+    setPreview(null);
+  };
+  const addBlock = () => { setBlocks(bs=>[...bs, blankBlock()]); setPreview(null); };
+  const removeBlock = (bid) => { setBlocks(bs=>bs.length>1?bs.filter(b=>b._bid!==bid):bs); setPreview(null); };
+
   if (!course) return null;
 
-  // Bug fix: a session that's ALREADY HAPPENED must stay kept even if its
-  // date happens to equal (or, through some clock skew, exceed) the chosen
+  // dayIndex -> start time, flattened across every block (a day can only
+  // belong to one block at a time in the UI, so this is unambiguous)
+  const dayTimeMap = {};
+  blocks.forEach(b => (b.days||[]).forEach(d => { dayTimeMap[d] = b.start; }));
+  const activeDays = Object.keys(dayTimeMap).map(Number);
+  const sessionsPerWeek = activeDays.length;
+
+  // Bug fix (kept from the single-day version): a session that's ALREADY
+  // HAPPENED must stay kept even if its date happens to equal the chosen
   // effective date — e.g. admin runs this in the evening after a session
-  // that was held earlier that same day. Filtering purely on date<effectiveDate
-  // would silently drop that already-real session from the schedule.
+  // held earlier that same day. Filtering purely on date<effectiveDate would
+  // silently drop that already-real session from the schedule.
   const keptEntries = (enrollment.scheduledDates||[]).filter(s => {
     const start = s.customStart || getCourseStartForDay(course, s.dayIndex);
     return isSessionOver(s.date, start, course.duration) || s.date < effectiveDate;
@@ -4451,7 +4486,7 @@ function AdjustFutureScheduleModal({ enrollment, course, users, setEnrollments, 
   const remainingCount = enrollment.totalSessions - keptEntries.length;
 
   const buildPreview = () => {
-    if (remainingCount <= 0) { setPreview([]); return; }
+    if (remainingCount <= 0 || activeDays.length===0) { setPreview([]); return; }
     const keptDates = new Set(keptEntries.map(s=>s.date));
     const newDates = [];
     let d = new Date(effectiveDate+"T00:00:00");
@@ -4461,13 +4496,14 @@ function AdjustFutureScheduleModal({ enrollment, course, users, setEnrollments, 
       d.setDate(d.getDate()+1);
       const dow = (d.getDay()+6)%7;
       const ds = fmtYMD(d);
-      if (dow===newDayIndex && !keptDates.has(ds)) {
-        // customStart is set explicitly on every new entry — its displayed
-        // time is then fully self-contained and never depends on the
-        // course's own schedule pattern, which is deliberately left
-        // untouched (see confirmAdjust below) so nothing here can ever
-        // retroactively affect how past sessions resolve their time.
-        newDates.push({date:ds, dayIndex:newDayIndex, sessionNo:sessionNo++, customStart:newTime});
+      if (activeDays.includes(dow) && !keptDates.has(ds)) {
+        // customStart is set explicitly on every new entry (using THAT
+        // day's own block time) — its displayed time is then fully
+        // self-contained and never depends on the course's own schedule
+        // pattern, which is deliberately left untouched (see confirmAdjust
+        // below) so nothing here can ever retroactively affect how past
+        // sessions resolve their time.
+        newDates.push({date:ds, dayIndex:dow, sessionNo:sessionNo++, customStart:dayTimeMap[dow]});
       }
     }
     setPreview(newDates);
@@ -4490,15 +4526,18 @@ function AdjustFutureScheduleModal({ enrollment, course, users, setEnrollments, 
     onClose();
   };
 
+  const iStyle = {width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13};
+  const lStyle = {display:"block",fontSize:12,color:"#546E7A",marginBottom:4,marginTop:12};
+
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9300,padding:"1rem"}}>
-      <div style={{background:"#FFFFFF",borderRadius:16,width:"100%",maxWidth:520,boxSizing:"border-box",maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 8px 36px rgba(23,47,57,0.2)",overflow:"hidden"}}>
+      <div style={{background:"#FFFFFF",borderRadius:16,width:"100%",maxWidth:560,boxSizing:"border-box",maxHeight:"88vh",display:"flex",flexDirection:"column",boxShadow:"0 8px 36px rgba(23,47,57,0.2)",overflow:"hidden"}}>
         <div style={{background:"#172F39",padding:"13px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
           <span style={{fontSize:14,fontWeight:600,color:"#fff"}}>🔄 {lang==="zh"?"調整未來時段":"Adjust Future Time Slot"}</span>
           <button onClick={onClose} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",color:"#fff",fontSize:16}}>×</button>
         </div>
         <div style={{padding:"18px",overflowY:"auto",flex:1,minHeight:0}}>
-          <div style={{fontSize:12,color:"#546E7A",marginBottom:14,lineHeight:1.6}}>
+          <div style={{fontSize:12,color:"#546E7A",marginBottom:10,lineHeight:1.6}}>
             {lang==="zh"
               ? <>老師：<strong>{teacher?.name}</strong>　學生：<strong>{student?.name}</strong><br/>此功能只會調整「還沒發生」的堂次，已經上過的 <strong>{keptEntries.length}</strong> 堂完全不會被更動。</>
               : <>Teacher: <strong>{teacher?.name}</strong>　Student: <strong>{student?.name}</strong><br/>This only changes sessions that haven't happened yet — the <strong>{keptEntries.length}</strong> already-held session(s) stay exactly as they are.</>}
@@ -4509,26 +4548,55 @@ function AdjustFutureScheduleModal({ enrollment, course, users, setEnrollments, 
               : "(This doesn't change the course's own default day/time. If you later create a brand-new enrollment period for this same course, update the course's own schedule separately via Course Management.)"}
           </div>
 
-          <label style={{fontSize:12,color:"#546E7A",display:"block",marginBottom:5}}>{lang==="zh"?"生效日期（此日期起套用新時段）":"Effective date (new time applies from this date on)"}</label>
-          <input type="date" min={today} value={effectiveDate} onChange={e=>{setEffectiveDate(e.target.value);setPreview(null);}} style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",fontSize:13,marginBottom:14}}/>
+          <label style={{...lStyle,marginTop:0}}>{lang==="zh"?"生效日期（此日期起套用新時段）":"Effective date (new time applies from this date on)"}</label>
+          <input type="date" min={today} value={effectiveDate} onChange={e=>{setEffectiveDate(e.target.value);setPreview(null);}} style={{...iStyle,marginBottom:6}}/>
 
-          <label style={{fontSize:12,color:"#546E7A",display:"block",marginBottom:5}}>{lang==="zh"?"新的星期幾":"New day of week"}</label>
-          <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:14}}>
-            {T[lang].days.map((d,idx)=>(
-              <button key={idx} onClick={()=>{setNewDayIndex(idx);setPreview(null);}} style={{padding:"7px 12px",borderRadius:6,border:newDayIndex===idx?"none":"0.5px solid #CFD8DC",background:newDayIndex===idx?"#1A6B8A":"transparent",color:newDayIndex===idx?"#fff":"#546E7A",fontSize:12,cursor:"pointer"}}>{d}</button>
-            ))}
-          </div>
-
-          <label style={{fontSize:12,color:"#546E7A",display:"block",marginBottom:5}}>{lang==="zh"?"新的時間":"New time"}</label>
-          <div style={{display:"flex",gap:5,alignItems:"center",marginBottom:16}}>
-            <select value={newTime.split(":")[0]} onChange={e=>{setNewTime(`${e.target.value}:${newTime.split(":")[1]}`);setPreview(null);}} style={{padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",fontSize:13}}>
-              {HOUR_OPTIONS.map(h=><option key={h} value={h}>{h}</option>)}
-            </select>
-            <span style={{color:"#9E9E9E"}}>:</span>
-            <select value={newTime.split(":")[1]} onChange={e=>{setNewTime(`${newTime.split(":")[0]}:${e.target.value}`);setPreview(null);}} style={{padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",fontSize:13}}>
-              {MIN_OPTIONS.map(m=><option key={m} value={m}>{m}</option>)}
-            </select>
-          </div>
+          {/* ── Time slots — same "add multiple, days & times can differ" pattern as course creation ── */}
+          <label style={lStyle}>{lang==="zh"?"新的上課時段（可新增多組，星期跟時間可各自不同）":"New Time Slots (add more — days & times can differ)"}</label>
+          {blocks.map((b,idx)=>{
+            const blockEnd = addMins(b.start, course.duration);
+            return (
+              <div key={b._bid} style={{background:"#F5F5F5",borderRadius:8,border:"0.5px solid #E0E0E0",padding:"10px 12px",marginBottom:8}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                  <span style={{fontSize:11,fontWeight:600,color:"#546E7A"}}>{lang==="zh"?`時段 ${idx+1}`:`Slot ${idx+1}`}</span>
+                  {blocks.length>1 && (
+                    <button type="button" onClick={()=>removeBlock(b._bid)} style={{fontSize:11,padding:"2px 8px",borderRadius:4,border:"0.5px solid #FFCDD2",background:"transparent",color:"#D32F2F",cursor:"pointer"}}>✕ {lang==="zh"?"移除":"Remove"}</button>
+                  )}
+                </div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:6}}>
+                  {T[lang].days.map((d,i)=>{
+                    const takenByOther = blocks.some(ob=>ob._bid!==b._bid && (ob.days||[]).includes(i));
+                    return (
+                      <button key={i} type="button" disabled={takenByOther} onClick={()=>toggleBlockDay(b._bid,i)} style={{padding:"5px 10px",borderRadius:5,fontSize:12,cursor:takenByOther?"not-allowed":"pointer",border:`1px solid ${b.days?.includes(i)?"#1A6B8A":"#CFD8DC"}`,background:b.days?.includes(i)?"#1A6B8A":"transparent",color:takenByOther?"#CFD8DC":b.days?.includes(i)?"#fff":"#546E7A",opacity:takenByOther?0.5:1}}>{d}</button>
+                    );
+                  })}
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                  <div>
+                    <label style={{...lStyle,marginTop:0}}>{t.startTime}</label>
+                    <div style={{display:"flex",gap:5,alignItems:"center"}}>
+                      <select style={{...iStyle,flex:1}} value={b.start.split(":")[0]} onChange={e=>updateBlock(b._bid,{start:`${e.target.value}:${b.start.split(":")[1]||"00"}`})}>
+                        {HOUR_OPTIONS.map(h=><option key={h} value={h}>{h}</option>)}
+                      </select>
+                      <span style={{color:"#9E9E9E"}}>:</span>
+                      <select style={{...iStyle,flex:1}} value={b.start.split(":")[1]} onChange={e=>updateBlock(b._bid,{start:`${b.start.split(":")[0]||"00"}:${e.target.value}`})}>
+                        {!MIN_OPTIONS.includes(b.start.split(":")[1]) && <option value={b.start.split(":")[1]}>{b.start.split(":")[1]}</option>}
+                        {MIN_OPTIONS.map(m=><option key={m} value={m}>{m}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label style={{...lStyle,marginTop:0}}>{t.endTime}</label>
+                    <div style={{...iStyle,background:"#FFFFFF",color:"#9E9E9E",borderStyle:"dashed",cursor:"not-allowed",display:"flex",alignItems:"center"}}>{blockEnd}</div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          <button type="button" onClick={addBlock} style={{width:"100%",padding:"8px",borderRadius:6,border:"1px dashed #1A6B8A",background:"transparent",color:"#1A6B8A",fontSize:12,cursor:"pointer",marginBottom:6}}>
+            + {lang==="zh"?"新增時段（可設定不同星期與時間）":"Add Time Slot (different day/time)"}
+          </button>
+          <div style={{fontSize:11,color:"#9E9E9E",marginBottom:14}}>{t.sessionsPerWeek}: <strong style={{color:"#172F39"}}>{sessionsPerWeek}</strong> {lang==="zh"?"堂/週":"sessions/week"}</div>
 
           {remainingCount<=0 && (
             <div style={{background:"#FFF3E0",borderRadius:7,padding:"9px 12px",fontSize:12,color:"#E65100",marginBottom:12}}>
@@ -4537,14 +4605,14 @@ function AdjustFutureScheduleModal({ enrollment, course, users, setEnrollments, 
           )}
 
           {!preview ? (
-            <button onClick={buildPreview} disabled={remainingCount<=0} style={{width:"100%",padding:"9px",borderRadius:7,border:"1px solid #4A9FD4",background:"transparent",color:"#1A6B8A",fontSize:13,cursor:remainingCount<=0?"not-allowed":"pointer",opacity:remainingCount<=0?0.5:1}}>
+            <button onClick={buildPreview} disabled={remainingCount<=0||sessionsPerWeek===0} style={{width:"100%",padding:"9px",borderRadius:7,border:"1px solid #4A9FD4",background:"transparent",color:"#1A6B8A",fontSize:13,cursor:(remainingCount<=0||sessionsPerWeek===0)?"not-allowed":"pointer",opacity:(remainingCount<=0||sessionsPerWeek===0)?0.5:1}}>
               🔍 {lang==="zh"?"預覽新排程":"Preview New Schedule"}
             </button>
           ) : (
             <div style={{background:"#E8F5E9",border:"1px solid #A5D6A7",borderRadius:8,padding:"12px 14px"}}>
               <div style={{fontSize:12,fontWeight:600,color:"#2E7D32",marginBottom:6}}>✓ {lang==="zh"?`預覽（${preview.length} 堂新排程）`:`Preview (${preview.length} new session(s))`}</div>
               <div style={{fontSize:11,color:"#172F39",maxHeight:150,overflowY:"auto",lineHeight:1.8}}>
-                {preview.map((s,i)=>(<div key={i}>{s.date} ({T[lang].days[s.dayIndex]}) {newTime} · #{s.sessionNo}</div>))}
+                {preview.map((s,i)=>(<div key={i}>{s.date} ({T[lang].days[s.dayIndex]}) {s.customStart} · #{s.sessionNo}</div>))}
               </div>
               <button onClick={()=>setPreview(null)} style={{marginTop:8,fontSize:11,padding:"4px 10px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>
                 {lang==="zh"?"重新調整":"Adjust again"}
@@ -4564,6 +4632,7 @@ function AdjustFutureScheduleModal({ enrollment, course, users, setEnrollments, 
     </div>
   );
 }
+
 
 function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollments, attendance, setAttendance, lang, setToast }) {
   const t = T[lang];
@@ -8138,6 +8207,7 @@ function LoginPage({ onLogin, lang, setLang, users, setUsers, introText, trialAp
           </button>
         </>
       )}
+      <div style={{position:"fixed",bottom:10,right:14,color:"rgba(255,255,255,0.25)",fontSize:10,letterSpacing:0.3}}>{APP_VERSION}</div>
     </div>
   );
 }
