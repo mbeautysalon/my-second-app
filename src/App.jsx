@@ -501,7 +501,7 @@ const TRIAL_COLOR = {bg:"#FFFDE7",border:"#F9A825",text:"#F57F17"};
 // Bumped whenever a meaningful set of changes ships. Shown low-key on the
 // login page so version can be confirmed at a glance; also called out
 // whenever a new file is delivered.
-const APP_VERSION = "v1.0.2";
+const APP_VERSION = "v1.1.1";
 
 const genId = () => "id_" + Math.random().toString(36).slice(2,9);
 
@@ -977,6 +977,45 @@ function ConfirmModal({ title, message, confirmLabel, onConfirm, onCancel, dange
   );
 }
 
+// ─── Discontinue enrollment (admin) — a safe alternative to delete for a
+// student who genuinely can't continue. Explicitly spells out what's kept
+// vs removed so there's no ambiguity like there was with "delete". ────────────
+function DiscontinueModal({ course, student, futureCount, lang, onConfirm, onCancel }) {
+  const [reason, setReason] = useState("");
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:99999,padding:"1rem"}}>
+      <div style={{background:"#FFFFFF",borderRadius:12,width:"100%",maxWidth:420,boxSizing:"border-box",boxShadow:"0 8px 32px rgba(23,47,57,0.18)",overflow:"hidden"}}>
+        <div style={{background:"#172F39",padding:"13px 18px"}}>
+          <span style={{fontSize:14,fontWeight:600,color:"#FFFFFF"}}>⛔ {lang==="zh"?"中斷課程":"Discontinue Course"}</span>
+        </div>
+        <div style={{padding:"18px 18px 16px"}}>
+          <p style={{margin:"0 0 10px",fontSize:13,color:"#172F39",lineHeight:1.6}}>
+            {lang==="zh"
+              ? <>確認中斷「<strong>{course?.subject||""}</strong>」（學生：{student?.name||"—"}）？</>
+              : <>Discontinue "<strong>{course?.subject||""}</strong>" (student: {student?.name||"—"})?</>}
+          </p>
+          <div style={{background:"#E8F5E9",borderRadius:8,padding:"9px 12px",marginBottom:8,fontSize:12,color:"#2E7D32",lineHeight:1.6}}>
+            ✓ {lang==="zh"?"所有已發生的出席、完課、反饋、教材紀錄完全保留，不會受影響":"All past attendance, completion, feedback, and material records stay exactly as they are"}
+          </div>
+          <div style={{background:"#FFF3E0",borderRadius:8,padding:"9px 12px",marginBottom:14,fontSize:12,color:"#E65100",lineHeight:1.6}}>
+            ⛔ {lang==="zh"?`將移除 ${futureCount} 堂尚未發生的未來排課，學生不會再出現在未來課表上`:`Will remove ${futureCount} not-yet-happened future session(s) — the student won't appear on the future schedule anymore`}
+          </div>
+          <label style={{fontSize:12,color:"#546E7A",display:"block",marginBottom:5}}>{lang==="zh"?"中斷原因（選填）":"Reason (optional)"}</label>
+          <textarea value={reason} onChange={e=>setReason(e.target.value)} rows={3} placeholder={lang==="zh"?"例如：搬家、時間無法配合…":"e.g. moved away, schedule conflict…"} style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:7,border:"0.5px solid #CFD8DC",fontSize:13,fontFamily:"inherit",resize:"vertical",marginBottom:16}}/>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <button onClick={onCancel} style={{padding:"8px 18px",borderRadius:7,border:"0.5px solid #CFD8DC",background:"#F5F5F5",color:"#546E7A",fontSize:13,cursor:"pointer"}}>
+              {lang==="zh"?"取消":"Cancel"}
+            </button>
+            <button onClick={()=>onConfirm(reason)} style={{padding:"8px 18px",borderRadius:7,border:"none",background:"#E65100",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+              ⛔ {lang==="zh"?"確認中斷":"Confirm Discontinue"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Material Panel (modal — full course, all sessions) ──────────────────────
 // Shows ALL materials for a course, optionally pre-filtered to a specific day.
 // Each entry stores: courseId, dayIndex (0-6), date (YYYY-MM-DD), title, url, desc
@@ -1320,7 +1359,7 @@ function MaterialPanel({ course, initialDate, users, lang, currentUser, material
 }
 
 // ─── Course Detail Modal ──────────────────────────────────────────────────────
-function CourseDetailModal({ course, dayIndex, date, users, lang, materials, setMaterials, onClose, currentUser, enrollments, setToast }) {
+function CourseDetailModal({ course, dayIndex, date, users, lang, materials, setMaterials, onClose, currentUser, enrollments, attendance, absences, setToast }) {
   const t = T[lang];
   const teacher = users.find(u=>u.id===course.teacherId);
   const student  = users.find(u=>u.id===course.studentId);
@@ -1343,10 +1382,34 @@ function CourseDetailModal({ course, dayIndex, date, users, lang, materials, set
   // Admin/assistant only: if this session has no material yet, show the
   // most recent PAST session's material as a muted reference, with a
   // one-click way to just reuse it here instead of having to retype it.
+  //
+  // Bug fix: this used to just grab whichever material had the closest
+  // earlier date for this course — no check that the date actually
+  // corresponded to a real, ACTUALLY-TAUGHT session. That could surface a
+  // material that was only ever pre-assigned to a class that got excused/
+  // cancelled before it was used, or (if the course had a gap between
+  // enrollment periods) a stale material from an unrelated, much-earlier
+  // stretch. Now it walks backward through this course's real scheduled
+  // sessions (across any enrollment period), skips any that were excused/
+  // absent, and returns the material from the first ACTUALLY-TAUGHT one
+  // that has a material at all.
   const canSeePrevMat = currentUser?.role==="admin" || currentUser?.role==="assistant";
-  const prevMat = (canSeePrevMat && dayMats.length===0 && date)
-    ? [...materials].filter(m=>m.courseId===course.id && m.date && m.date<date).sort((a,b)=>b.date.localeCompare(a.date))[0] || null
-    : null;
+  const prevMat = (() => {
+    if (!canSeePrevMat || dayMats.length!==0 || !date) return null;
+    const priorSessions = (enrollments||[])
+      .filter(e => e.courseId===course.id)
+      .flatMap(e => (e.scheduledDates||[]).map(s => ({...s, enrollmentId:e.id})))
+      .filter(s => s.date && s.date < date)
+      .sort((a,b) => b.date.localeCompare(a.date)); // most recent first
+    for (const s of priorSessions) {
+      const attRec = (attendance||[]).find(a=>a.enrollmentId===s.enrollmentId && a.date===s.date);
+      const absRec = (absences||[]).find(a=>a.courseId===course.id && a.dateStr===s.date);
+      if ((attRec && attRec.type!=="other") || absRec) continue; // that session was excused/absent — not really taught, skip it
+      const mat = materials.find(m=>m.courseId===course.id && m.date===s.date);
+      if (mat) return mat;
+    }
+    return null;
+  })();
   const continuePrevMat = () => {
     if (!prevMat || !date) return;
     setMaterials(prev => [...(prev||[]), {
@@ -1573,7 +1636,9 @@ function SlotCalendarView({ slots, users, lang, currentUser, absences, materials
       (enr.scheduledDates||[]).forEach(s => {
         if (s.date !== date) return;
         const sStart = s.customStart || getCourseStartForDay(c, s.dayIndex);
-        daySessions.push({ course:c, start:sStart });
+        const attRec = (attendance||[]).find(a=>a.enrollmentId===enr.id && a.date===date);
+        const absRec = (absences||[]).find(a=>a.courseId===c.id && a.dateStr===date);
+        daySessions.push({ course:c, start:sStart, isExcused: (attRec && attRec.type!=="other") || !!absRec });
       });
     });
     daySessions.sort((a,b)=>a.start.localeCompare(b.start));
@@ -1586,6 +1651,12 @@ function SlotCalendarView({ slots, users, lang, currentUser, absences, materials
       const sEnd = addMins(sl.start, sl.course.duration);
       lines.push(`${sl.start}-${sEnd}`);
       lines.push(stu?.name || "");
+      if (sl.isExcused) {
+        // On leave — no point sending the material/meeting link for a class
+        // that isn't actually happening.
+        lines.push(lang==="zh"?"（請假）":"(On Leave)");
+        return;
+      }
       lines.push(sl.course.meetingUrl || "");
       materials.filter(m=>m.courseId===sl.course.id && m.date===date).forEach(m => {
         lines.push("Material");
@@ -1607,7 +1678,7 @@ function SlotCalendarView({ slots, users, lang, currentUser, absences, materials
   return (
     <div style={{overflowX:"auto"}}>
       {matTarget&&<MaterialPanel course={matTarget.course} initialDate={matTarget.date} users={users} lang={lang} currentUser={currentUser} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setMatTarget(null)} enrollments={enrollments}/>}
-      {detTarget&&<CourseDetailModal course={detTarget.course} dayIndex={detTarget.dayIndex} date={detTarget.date} users={users} lang={lang} materials={materials} setMaterials={setMaterials} onClose={()=>setDetTarget(null)} currentUser={currentUser} enrollments={enrollments} setToast={setToast}/>}
+      {detTarget&&<CourseDetailModal course={detTarget.course} dayIndex={detTarget.dayIndex} date={detTarget.date} users={users} lang={lang} materials={materials} setMaterials={setMaterials} onClose={()=>setDetTarget(null)} currentUser={currentUser} enrollments={enrollments} attendance={attendance} absences={absences} setToast={setToast}/>}
       {adminEditTarget&&<AdminSessionModal slot={adminEditTarget} users={users} lang={lang} attendance={attendance||[]} setAttendance={setAttendance} enrollments={enrollments||[]} setEnrollments={setEnrollments} courses={courses||[]} setToast={setToast} onClose={()=>setAdminEditTarget(null)}/>}
       {fbTarget&&<FeedbackModal slot={fbTarget} currentUser={currentUser} users={users} lang={lang} feedback={feedback||[]} setFeedback={setFeedback} setToast={setToast} onClose={()=>setFbTarget(null)} readOnly={isStudent}/>}
       <div style={{minWidth:520}}>
@@ -2117,7 +2188,9 @@ function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, ma
       (enr.scheduledDates||[]).forEach(s => {
         if (s.date !== date) return;
         const sStart = s.customStart || getCourseStartForDay(c, s.dayIndex);
-        daySessions.push({ course:c, enrollment:enr, start:sStart });
+        const attRec = (attendance||[]).find(a=>a.enrollmentId===enr.id && a.date===date);
+        const absRec = (absences||[]).find(a=>a.courseId===c.id && a.dateStr===date);
+        daySessions.push({ course:c, enrollment:enr, start:sStart, isExcused: (attRec && attRec.type!=="other") || !!absRec });
       });
     });
     daySessions.sort((a,b)=>a.start.localeCompare(b.start));
@@ -2131,6 +2204,10 @@ function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, ma
       const sEnd = addMins(sl.start, sl.course.duration);
       lines.push(`${sl.start}-${sEnd}`);
       lines.push(stu?.name || "");
+      if (sl.isExcused) {
+        lines.push(lang==="zh"?"（請假）":"(On Leave)");
+        return;
+      }
       lines.push(sl.course.meetingUrl || "");
       materials.filter(m=>m.courseId===sl.course.id && m.date===date).forEach(m => {
         lines.push("Material");
@@ -2173,7 +2250,7 @@ function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, ma
 
   return (
     <>
-      {showDetail&&<CourseDetailModal course={course} dayIndex={dayIndex} date={date} users={users} lang={lang} materials={materials} setMaterials={setMaterials} onClose={()=>setShowDetail(false)} currentUser={currentUser} enrollments={enrollments} setToast={setToast}/>}
+      {showDetail&&<CourseDetailModal course={course} dayIndex={dayIndex} date={date} users={users} lang={lang} materials={materials} setMaterials={setMaterials} onClose={()=>setShowDetail(false)} currentUser={currentUser} enrollments={enrollments} attendance={attendance} absences={absences} setToast={setToast}/>}
       {showMat&&<MaterialPanel course={course} initialDate={matInitDate} users={users} lang={lang} currentUser={currentUser} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setShowMat(false)} enrollments={enrollments}/>}
       {showAdminEdit&&<AdminSessionModal slot={slot} users={users} lang={lang} attendance={attendance||[]} setAttendance={setAttendance} enrollments={enrollments||[]} setEnrollments={setEnrollments} courses={courses||[]} setToast={setToast} onClose={()=>setShowAdminEdit(false)}/>}
       {showFeedback&&<FeedbackModal slot={slot} currentUser={currentUser} users={users} lang={lang} feedback={feedback||[]} setFeedback={setFeedback} setToast={setToast} onClose={()=>setShowFeedback(false)} readOnly={isStudent}/>}
@@ -4765,6 +4842,37 @@ function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollm
     setConfirmDelEnrollId(null);
   };
 
+  // "中斷課程" — for when a student genuinely can't continue. Unlike delete,
+  // this NEVER touches anything that already happened: every past session
+  // (and its attendance/feedback/material records, none of which live on
+  // the enrollment itself) stays exactly as it was. Only scheduledDates
+  // entries that haven't happened yet get dropped, so the student simply
+  // stops showing up on the future schedule. If this was the course's last
+  // still-active enrollment, the course itself gets archived too, so
+  // 課程管理 and 付費與排課 agree on the course's state instead of drifting
+  // out of sync.
+  const [discontinueTarget, setDiscontinueTarget] = useState(null); // enrollment being discontinued
+  const doDiscontinue = (reason) => {
+    const enr = discontinueTarget;
+    if (!enr) return;
+    const today = new Date().toISOString().slice(0,10);
+    const keptDates = (enr.scheduledDates||[]).filter(s => s.date < today);
+    const removedCount = (enr.scheduledDates||[]).length - keptDates.length;
+    setEnrollments(es => es.map(e => e.id===enr.id ? {
+      ...e,
+      scheduledDates: keptDates,
+      status: "discontinued",
+      discontinuedAt: today,
+      discontinuedReason: (reason||"").trim(),
+    } : e));
+    const stillActiveElsewhere = enrollments.some(e => e.id!==enr.id && e.courseId===enr.courseId && e.status!=="discontinued");
+    if (!stillActiveElsewhere) {
+      setCourses(cs => cs.map(c => c.id===enr.courseId ? {...c, status:"archived", archivedAt: new Date().toISOString()} : c));
+    }
+    setToast(lang==="zh"?`已中斷課程，移除了 ${removedCount} 堂尚未發生的排課，歷史紀錄完整保留`:`Course discontinued — removed ${removedCount} not-yet-happened session(s), all history preserved`);
+    setDiscontinueTarget(null);
+  };
+
   const startEdit = (enr) => {
     setForm({courseId:enr.courseId,payDate:enr.payDate,totalSessions:enr.totalSessions,startDate:enr.startDate});
     setEditingId(enr.id);
@@ -4868,13 +4976,23 @@ function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollm
       {confirmDelEnrollId && (() => {
         const enr = enrollments.find(e=>e.id===confirmDelEnrollId);
         const course = courses.find(c=>c.id===enr?.courseId);
+        const pastCount = (enr?.scheduledDates||[]).filter(s=>s.date < new Date().toISOString().slice(0,10)).length;
         return <ConfirmModal
           title={lang==="zh"?"刪除排課紀錄":"Delete Enrollment"}
-          message={lang==="zh"?`確認刪除「${course?.subject||""}」的排課紀錄？所有出缺勤記錄也將一併刪除，此操作無法復原。`:`Delete enrollment for "${course?.subject||""}"? All attendance records will also be deleted.`}
+          message={lang==="zh"
+            ? `確認刪除「${course?.subject||""}」的排課紀錄？${pastCount>0?`這堂課已經有 ${pastCount} 堂完成紀錄，將`:"將"}連同所有出缺勤記錄一併永久刪除，此操作無法復原。若學生只是因故無法繼續上課，建議改用「中斷課程」——那個功能會保留所有已完成的紀錄。`
+            : `Delete enrollment for "${course?.subject||""}"? ${pastCount>0?`This has ${pastCount} completed session(s) — they'll`:"This will"} be permanently deleted along with all attendance records, and cannot be undone. If the student simply can't continue, use "Discontinue" instead — it preserves all completed records.`}
           confirmLabel={lang==="zh"?"確認刪除":"Delete"}
           onConfirm={doDelEnrollment}
           onCancel={()=>setConfirmDelEnrollId(null)}
           danger/>;
+      })()}
+      {discontinueTarget && (() => {
+        const course = courses.find(c=>c.id===discontinueTarget.courseId);
+        const student = users.find(u=>u.id===discontinueTarget.studentId);
+        const today = new Date().toISOString().slice(0,10);
+        const futureCount = (discontinueTarget.scheduledDates||[]).filter(s=>s.date>=today).length;
+        return <DiscontinueModal course={course} student={student} futureCount={futureCount} lang={lang} onConfirm={doDiscontinue} onCancel={()=>setDiscontinueTarget(null)}/>;
       })()}
       {adjustTarget && (
         <AdjustFutureScheduleModal
@@ -5034,10 +5152,17 @@ function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollm
                   const stats = getStats(enr);
                   const cardExpanded = expandedCards.has(enr.id);
                   return (
-                    <div key={enr.id} style={{background:"#FFFFFF",border:"0.5px solid #E0E0E0",borderRadius:12,padding:"14px 16px",marginBottom:10}}>
+                    <div key={enr.id} style={{background:enr.status==="discontinued"?"#FAFAFA":"#FFFFFF",border:enr.status==="discontinued"?"0.5px solid #FFCCBC":"0.5px solid #E0E0E0",borderRadius:12,padding:"14px 16px",marginBottom:10}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:8,marginBottom:cardExpanded?10:0}}>
                         <div>
-                          <div style={{fontWeight:500,fontSize:14,color:"#172F39"}}>{course?.subject||"—"}</div>
+                          <div style={{fontWeight:500,fontSize:14,color:"#172F39",display:"flex",alignItems:"center",gap:6}}>
+                            {course?.subject||"—"}
+                            {enr.status==="discontinued" && (
+                              <span title={enr.discontinuedReason||""} style={{fontSize:10,background:"#FFF3E0",color:"#E65100",borderRadius:5,padding:"2px 8px",fontWeight:600}}>
+                                ⛔ {lang==="zh"?`已中斷 ${enr.discontinuedAt||""}`:`Discontinued ${enr.discontinuedAt||""}`}
+                              </span>
+                            )}
+                          </div>
                           <div style={{fontSize:12,color:"#546E7A",marginTop:2}}>
                             {t.payDate}: {enr.payDate} · {t.startDate}: {enr.startDate}
                           </div>
@@ -5090,10 +5215,13 @@ function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollm
                         </div>
                       )}
 
-                      <div style={{display:"flex",gap:6}}>
+                      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                         <button onClick={()=>setAdjustTarget(enr)} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"1px solid #4A9FD4",background:"transparent",color:"#1A6B8A",cursor:"pointer",fontWeight:500}}>🔄 {lang==="zh"?"調整未來時段":"Adjust Future Time"}</button>
                         <button onClick={()=>startEdit(enr)} title={lang==="zh"?"⚠️ 會重新產生整份排課表，含已上過的堂次也會被覆蓋——調整未來時段請改用左邊按鈕":"⚠️ Regenerates the ENTIRE schedule, including already-happened sessions — use the button on the left to adjust just future sessions"} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>{lang==="zh"?"編輯排課":"Edit"}</button>
-                        <button onClick={()=>deleteEnrollment(enr.id)} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"0.5px solid #C0392B",background:"transparent",color:"#D32F2F",cursor:"pointer"}}>{t.deleteCourse}</button>
+                        {enr.status!=="discontinued" && (
+                          <button onClick={()=>setDiscontinueTarget(enr)} title={lang==="zh"?"保留所有已發生的出席/完課紀錄，只移除尚未發生的未來排課":"Keeps all past attendance/completion records — only removes sessions that haven't happened yet"} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"1px solid #E65100",background:"transparent",color:"#E65100",cursor:"pointer",fontWeight:500}}>⛔ {lang==="zh"?"中斷課程":"Discontinue"}</button>
+                        )}
+                        <button onClick={()=>deleteEnrollment(enr.id)} title={lang==="zh"?"⚠️ 會連同已發生的出缺勤紀錄一起完全刪除，無法復原——學生因故無法繼續請改用「中斷課程」":"⚠️ Fully deletes past attendance history too, cannot be undone — for a student who can't continue, use \"Discontinue\" instead"} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"0.5px solid #C0392B",background:"transparent",color:"#D32F2F",cursor:"pointer"}}>{t.deleteCourse}</button>
                       </div>
                     </div>
                   );
@@ -10551,12 +10679,16 @@ export default function App() {
   const [enrollments,setEnrollments,eLoaded]=useStorage("cp3_enrollments",DEFAULT_ENROLLMENTS);
   const [attendance,setAttendance,attLoaded]=useStorage("cp3_attendance",DEFAULT_ATTENDANCE);
   const [feedback,setFeedback,fbLoaded]=useStorage("cp3_feedback",[]);
-  // One-time (idempotent) migration: "next lesson material status" used to
-  // live on the feedback record; it now lives on the material itself (a
-  // session can have 1-3 materials, each needing its own status). This only
-  // touches materials that don't already have their own completionStatus,
-  // so it's safe to run on every load — it naturally does nothing once the
-  // migration has already happened for a given material.
+  // One-time-per-material (idempotent) migration/sync: "next lesson material
+  // status" used to live on the feedback record; it now lives on the
+  // material itself (a session can have 1-3 materials, each needing its own
+  // status). This only touches materials that don't already have their own
+  // completionStatus, so it's safe to run repeatedly — it does nothing once
+  // a given material already has its status set. Depends on `feedback` (not
+  // just the load flags) so it also catches NEW feedback submitted during
+  // the session, not just what already existed when the app first loaded —
+  // otherwise a teacher's fresh submission would never reach
+  // TeacherStudentOverview's material tracking until the next full reload.
   useEffect(() => {
     if (!mLoaded || !fbLoaded) return;
     const feedbackWithStatus = (feedback||[]).filter(f => f.nextMaterialStatus);
@@ -10570,7 +10702,7 @@ export default function App() {
       return {...m, completionStatus:f.nextMaterialStatus, completionNote:f.nextMaterialNote||"", completionSetBy:"migrated", completionSetAt:f.updatedAt||f.createdAt||""};
     });
     if (changed) setMaterials(next);
-  }, [mLoaded, fbLoaded]);
+  }, [mLoaded, fbLoaded, feedback]);
   const [teacherAvailability,setTeacherAvailability,taLoaded]=useStorage("cp3_teacher_availability",[]);
   const [availabilityOverrides,setAvailabilityOverrides,aoLoaded]=useStorage("cp3_availability_overrides",[]);
   const [profileChanges,setProfileChanges,pcLoaded]=useStorage("cp3_profile_changes",[]);
