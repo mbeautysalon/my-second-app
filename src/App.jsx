@@ -501,7 +501,7 @@ const TRIAL_COLOR = {bg:"#FFFDE7",border:"#F9A825",text:"#F57F17"};
 // Bumped whenever a meaningful set of changes ships. Shown low-key on the
 // login page so version can be confirmed at a glance; also called out
 // whenever a new file is delivered.
-const APP_VERSION = "v1.1.1";
+const APP_VERSION = "v1.2.0";
 
 const genId = () => "id_" + Math.random().toString(36).slice(2,9);
 
@@ -4873,6 +4873,34 @@ function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollm
     setDiscontinueTarget(null);
   };
 
+  // "恢復課程" — undoes a discontinue. The kept (past) sessions were never
+  // touched, so those are safe; what's regenerated is the future portion —
+  // built fresh from today using the course's normal weekly pattern, picking
+  // session numbering back up where it left off, out to the enrollment's
+  // original contracted total. If discontinuing had auto-archived the
+  // course, restoring un-archives it too, so the two screens stay in sync
+  // both ways.
+  const restoreEnrollment = (enr) => {
+    const course = courses.find(c => c.id === enr.courseId);
+    if (!course) { setToast(lang==="zh"?"找不到對應課程，無法恢復":"Course not found — can't restore"); return; }
+    const pastCount = (enr.scheduledDates||[]).length;
+    const remainingNeeded = Math.max(0, (parseInt(enr.totalSessions)||0) - pastCount);
+    const today = new Date().toISOString().slice(0,10);
+    const newFutureDates = buildSchedule(course, today, remainingNeeded, [])
+      .map((s,i) => ({...s, sessionNo: pastCount + i + 1}));
+    setEnrollments(es => es.map(e => e.id===enr.id ? {
+      ...e,
+      scheduledDates: [...(enr.scheduledDates||[]), ...newFutureDates],
+      status: "active",
+      discontinuedAt: "",
+      discontinuedReason: "",
+    } : e));
+    if (course.status === "archived") {
+      setCourses(cs => cs.map(c => c.id===course.id ? {...c, status:"active"} : c));
+    }
+    setToast(lang==="zh"?`已恢復課程，重新排入 ${newFutureDates.length} 堂未來課程`:`Course restored — ${newFutureDates.length} future session(s) re-scheduled`);
+  };
+
   const startEdit = (enr) => {
     setForm({courseId:enr.courseId,payDate:enr.payDate,totalSessions:enr.totalSessions,startDate:enr.startDate});
     setEditingId(enr.id);
@@ -5216,10 +5244,14 @@ function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollm
                       )}
 
                       <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                        <button onClick={()=>setAdjustTarget(enr)} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"1px solid #4A9FD4",background:"transparent",color:"#1A6B8A",cursor:"pointer",fontWeight:500}}>🔄 {lang==="zh"?"調整未來時段":"Adjust Future Time"}</button>
-                        <button onClick={()=>startEdit(enr)} title={lang==="zh"?"⚠️ 會重新產生整份排課表，含已上過的堂次也會被覆蓋——調整未來時段請改用左邊按鈕":"⚠️ Regenerates the ENTIRE schedule, including already-happened sessions — use the button on the left to adjust just future sessions"} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>{lang==="zh"?"編輯排課":"Edit"}</button>
-                        {enr.status!=="discontinued" && (
-                          <button onClick={()=>setDiscontinueTarget(enr)} title={lang==="zh"?"保留所有已發生的出席/完課紀錄，只移除尚未發生的未來排課":"Keeps all past attendance/completion records — only removes sessions that haven't happened yet"} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"1px solid #E65100",background:"transparent",color:"#E65100",cursor:"pointer",fontWeight:500}}>⛔ {lang==="zh"?"中斷課程":"Discontinue"}</button>
+                        {enr.status!=="discontinued" ? (
+                          <>
+                            <button onClick={()=>setAdjustTarget(enr)} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"1px solid #4A9FD4",background:"transparent",color:"#1A6B8A",cursor:"pointer",fontWeight:500}}>🔄 {lang==="zh"?"調整未來時段":"Adjust Future Time"}</button>
+                            <button onClick={()=>startEdit(enr)} title={lang==="zh"?"⚠️ 會重新產生整份排課表，含已上過的堂次也會被覆蓋——調整未來時段請改用左邊按鈕":"⚠️ Regenerates the ENTIRE schedule, including already-happened sessions — use the button on the left to adjust just future sessions"} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>{lang==="zh"?"編輯排課":"Edit"}</button>
+                            <button onClick={()=>setDiscontinueTarget(enr)} title={lang==="zh"?"保留所有已發生的出席/完課紀錄，只移除尚未發生的未來排課":"Keeps all past attendance/completion records — only removes sessions that haven't happened yet"} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"1px solid #E65100",background:"transparent",color:"#E65100",cursor:"pointer",fontWeight:500}}>⛔ {lang==="zh"?"中斷課程":"Discontinue"}</button>
+                          </>
+                        ) : (
+                          <button onClick={()=>restoreEnrollment(enr)} title={lang==="zh"?`依課程原本的固定排課規律，從今天開始重新排入剩餘堂數（原訂總堂數：${enr.totalSessions}）`:`Re-schedules the remaining sessions from today using the course's regular pattern (original total: ${enr.totalSessions})`} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"1px solid #2E7D32",background:"transparent",color:"#2E7D32",cursor:"pointer",fontWeight:500}}>↩ {lang==="zh"?"恢復課程":"Restore"}</button>
                         )}
                         <button onClick={()=>deleteEnrollment(enr.id)} title={lang==="zh"?"⚠️ 會連同已發生的出缺勤紀錄一起完全刪除，無法復原——學生因故無法繼續請改用「中斷課程」":"⚠️ Fully deletes past attendance history too, cannot be undone — for a student who can't continue, use \"Discontinue\" instead"} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"0.5px solid #C0392B",background:"transparent",color:"#D32F2F",cursor:"pointer"}}>{t.deleteCourse}</button>
                       </div>
