@@ -84,7 +84,7 @@ const T = {
     absentSendEmail:"發送 Email", absentSendFB:"發送 Facebook 訊息", absentSendLINE:"發送 LINE 訊息",
     confirmAbsent:"確認送出請假",
     notifySuccess:"✓ 已通知管理者", leaveRecord:"請假紀錄",
-    courseDetails:"課程明細", completedNote:"完課 = 總排課 − 請假數",
+    courseDetails:"課程明細", completedNote:"已完課 = 已發生且未請假的堂數；剩餘課程 = 尚未發生、未來還會上的堂數",
     absenceHistory:"請假紀錄", by:"by",
     // Materials
     materials:"教材管理", addMaterial:"新增教材", materialTitle:"教材名稱", materialUrl:"教材網址",
@@ -304,7 +304,7 @@ const T = {
     absentSendEmail:"Send Email", absentSendFB:"Send Facebook Message", absentSendLINE:"Send LINE Message",
     confirmAbsent:"Confirm Leave Request",
     notifySuccess:"✓ Admin notified", leaveRecord:"Leave Record",
-    courseDetails:"Course Details", completedNote:"Completed = Total − Absences",
+    courseDetails:"Course Details", completedNote:"Completed = past sessions with no leave; Remaining = future sessions still to come",
     absenceHistory:"Absence History", by:"by",
     // Materials
     materials:"Materials", addMaterial:"Add Material", materialTitle:"Title", materialUrl:"URL",
@@ -501,7 +501,7 @@ const TRIAL_COLOR = {bg:"#FFFDE7",border:"#F9A825",text:"#F57F17"};
 // Bumped whenever a meaningful set of changes ships. Shown low-key on the
 // login page so version can be confirmed at a glance; also called out
 // whenever a new file is delivered.
-const APP_VERSION = "v1.2.0";
+const APP_VERSION = "v1.2.4";
 
 const genId = () => "id_" + Math.random().toString(36).slice(2,9);
 
@@ -4147,7 +4147,8 @@ Thank you!`;
       {myCourses.length===0&&<p style={{color:"#9E9E9E",fontSize:13}}>—</p>}
       {myCourses.map(c=>{
         const courseEnrs = (enrollments||[]).filter(e=>e.courseId===c.id);
-        const totalSessions = courseEnrs.reduce((sum,e)=>(e.scheduledDates?.length||0)+sum, 0);
+        const allSessionEntries = courseEnrs.flatMap(e=>(e.scheduledDates||[]).map(s=>({...s, enr:e})));
+        const totalSessions = allSessionEntries.length;
         const cAbs = absences.filter(a=>{
           if(a.courseId!==c.id) return false;
           if(!allTime&&a.requestedAt){const d=a.requestedAt.slice(0,10);if((dateFrom&&d<dateFrom)||(dateTo&&d>dateTo))return false;}
@@ -4156,6 +4157,17 @@ Thank you!`;
         const attRecs=(attendance||[]).filter(a=>courseEnrs.some(e=>e.id===a.enrollmentId));
         const sAbs=cAbs.filter(a=>a.requesterRole!=="teacher").length + attRecs.filter(a=>a.type==="absent"||a.type==="excused").length;
         const tAbs=cAbs.filter(a=>a.requesterRole==="teacher").length + attRecs.filter(a=>a.type==="teacher_leave").length;
+        // Same fix as 學生統計 — this used to be a single "完課" number that
+        // was actually total (past+future) minus leaves, not genuinely
+        // "completed". Split into what's really happened vs what's left.
+        const doneSoFar = allSessionEntries.filter(s => {
+          if (!isSessionOver(s.date, resolveSessionStart(c, s), c.duration)) return false;
+          const attRec = (attendance||[]).find(a=>a.enrollmentId===s.enr.id && a.date===s.date);
+          if (attRec) return attRec.type!=="absent" && attRec.type!=="excused" && attRec.type!=="teacher_leave";
+          const selfAbs = (absences||[]).find(a=>a.courseId===c.id && a.dateStr===s.date);
+          return !selfAbs;
+        }).length;
+        const remaining = Math.max(0, totalSessions - doneSoFar - sAbs - tAbs);
         return (
           <div key={c.id} style={{background:"#FFFFFF",border:"0.5px solid #E0E0E0",borderRadius:8,padding:"10px 14px",marginBottom:8}}>
             <div style={{fontWeight:500,fontSize:13,color:"#172F39"}}>{c.subject}</div>
@@ -4164,7 +4176,8 @@ Thank you!`;
               <span style={{color:"#1565C0"}}>{lang==="zh"?"總排課":"Total"}: {totalSessions}</span>
               <span style={{color:"#880E4F"}}>{t.studentAbsent}: {sAbs}</span>
               <span style={{color:"#BF360C"}}>{t.teacherAbsent}: {tAbs}</span>
-              <span style={{color:"#2E7D32"}}>{lang==="zh"?"完課":"Done"}: {Math.max(0,totalSessions-sAbs-tAbs)}</span>
+              <span style={{color:"#2E7D32"}}>{lang==="zh"?"已完課":"Completed"}: {doneSoFar}</span>
+              <span style={{color:"#7B1FA2"}}>{lang==="zh"?"剩餘課程":"Remaining"}: {remaining}</span>
             </div>
           </div>
         );
@@ -4283,10 +4296,11 @@ Thank you!`;
 }
 
 // ─── Student stats ────────────────────────────────────────────────────────────
-function StudentStats({ users, courses, absences, attendance, enrollments, lang }) {
+function StudentStats({ users, courses, absences, attendance, enrollments, setEnrollments, lang }) {
   const t = T[lang];
   const students = users.filter(u=>u.role==="student");
   const [selId, setSelId] = useState(students[0]?.id||"");
+  const [viewMode, setViewMode] = useState("table"); // table (overview, default) | detail (single student drill-down)
   const [allTime, setAllTime] = useState(true);
   const today = new Date().toISOString().slice(0,10);
   const [dateFrom, setDateFrom] = useState(today.slice(0,7)+"-01");
@@ -4321,8 +4335,120 @@ function StudentStats({ users, courses, absences, attendance, enrollments, lang 
     return true;
   });
 
+  // ── Overview table — one row per enrollment cycle (a renewed student shows
+  // multiple rows, same as the reference spreadsheet), landing page for this
+  // whole tab. Clicking a row drills into the existing single-student detail
+  // view below.
+  const todayStr = new Date().toISOString().slice(0,10);
+  const overviewRows = enrollments
+    .map(enr => {
+      const student = users.find(u=>u.id===enr.studentId);
+      const course = courses.find(c=>c.id===enr.courseId);
+      if (!student || !course) return null;
+      const dir = dirEntries.find(d=>d.linkedUserId===student.id);
+      const dates = (enr.scheduledDates||[]).map(s=>s.date).filter(Boolean).sort();
+      const lastDate = dates[dates.length-1] || "";
+      const weeklySessions = (course.schedule?.length) || (course.days?.length) || 1;
+      // 首次登記購買日 — this student's EARLIEST payDate across ALL their
+      // enrollments (not just this one) — a per-student fact, so it repeats
+      // identically across all of that student's rows.
+      const studentEnrollments = enrollments.filter(e=>e.studentId===student.id);
+      const firstPurchaseDate = studentEnrollments.map(e=>e.payDate).filter(Boolean).sort()[0] || "";
+      // 期滿續課？— only meaningful once this cycle has actually ended;
+      // otherwise it's still in progress and the question doesn't apply yet.
+      let renewed = "";
+      if (lastDate && lastDate < todayStr) {
+        const hasLater = studentEnrollments.some(e => e.id!==enr.id && (e.startDate||e.payDate||"") > lastDate);
+        renewed = hasLater ? "yes" : "no";
+      }
+      return {
+        enr, student, course, dir,
+        nameCn: dir?.nameCn || "",
+        age: dir ? fmtAge(dir.age, dir.regYear, lang) : "",
+        firstPurchaseDate, renewed, lastDate, weeklySessions,
+      };
+    })
+    .filter(Boolean)
+    .sort((a,b) => getName(a.student.id).localeCompare(getName(b.student.id)) || (a.enr.startDate||"").localeCompare(b.enr.startDate||""));
+
+  const updateEnrollExtra = (enrId, key, val) => {
+    setEnrollments(es => es.map(e => e.id===enrId ? {...e, [key]:val} : e));
+  };
+
   return (
     <div>
+      {viewMode==="table" ? (
+        <>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
+            <h3 style={{fontSize:15,fontWeight:600,color:"#172F39",margin:0}}>{lang==="zh"?"學生總表":"Student Overview"}</h3>
+            <span style={{fontSize:12,color:"#9E9E9E"}}>{lang==="zh"?`共 ${overviewRows.length} 筆排課週期`:`${overviewRows.length} enrollment cycle(s)`}</span>
+          </div>
+          {overviewRows.length===0 ? (
+            <p style={{color:"#9E9E9E",fontSize:13,textAlign:"center",padding:"2rem 0"}}>—</p>
+          ) : (
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:1100}}>
+                <thead>
+                  <tr style={{borderBottom:"1.5px solid #E0E0E0"}}>
+                    {[
+                      lang==="zh"?"學生姓名":"Student", lang==="zh"?"中文姓名":"Chinese Name", lang==="zh"?"年齡":"Age",
+                      lang==="zh"?"首次登記購買日":"First Purchase", lang==="zh"?"正式上課日":"Start Date",
+                      lang==="zh"?"期滿續課?":"Renewed?", lang==="zh"?"結束課程時間":"End Date",
+                      lang==="zh"?"課程長度":"Duration", lang==="zh"?"週堂數":"Sessions/Wk", lang==="zh"?"付費堂數":"Paid Sessions",
+                      lang==="zh"?"老師":"Teacher", lang==="zh"?"介紹人":"Referrer", lang==="zh"?"學費收益(NTD)":"Revenue (NTD)",
+                    ].map((h,i)=><th key={i} style={{textAlign:"left",padding:"8px 10px",color:"#546E7A",fontWeight:600,whiteSpace:"nowrap"}}>{h}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {overviewRows.map(row=>(
+                    <tr key={row.enr.id} style={{borderBottom:"0.5px solid #F0F0F0"}}>
+                      <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}>
+                        <button onClick={()=>{setSelId(row.student.id);setViewMode("detail");}} style={{background:"transparent",border:"none",color:"#1A6B8A",cursor:"pointer",fontWeight:600,fontSize:12,padding:0,textDecoration:"underline"}}>
+                          {row.student.name}
+                        </button>
+                      </td>
+                      <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}>{row.nameCn||"—"}</td>
+                      <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}>{row.age||"—"}</td>
+                      <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}>{row.firstPurchaseDate||"—"}</td>
+                      <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}>{row.enr.startDate||"—"}</td>
+                      <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}>
+                        {row.renewed==="yes" && <span style={{color:"#2E7D32",fontWeight:600}}>Yes</span>}
+                        {row.renewed==="no" && <span style={{color:"#D32F2F",fontWeight:600}}>No</span>}
+                        {!row.renewed && <span style={{color:"#9E9E9E"}}>—</span>}
+                      </td>
+                      <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}>{row.lastDate||"—"}</td>
+                      <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}>{row.course.duration}min</td>
+                      <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}>{row.weeklySessions}</td>
+                      <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}>{row.enr.totalSessions}</td>
+                      <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}>{getName(row.course.teacherId)}</td>
+                      <td style={{padding:"4px 6px",whiteSpace:"nowrap"}}>
+                        <input
+                          defaultValue={row.enr.referrer||""}
+                          onBlur={e=>{ if(e.target.value!==(row.enr.referrer||"")) updateEnrollExtra(row.enr.id,"referrer",e.target.value); }}
+                          placeholder={lang==="zh"?"選填":"optional"}
+                          style={{width:80,boxSizing:"border-box",padding:"5px 7px",borderRadius:5,border:"0.5px solid #E0E0E0",background:"#FAFAFA",fontSize:12,color:"#172F39"}}
+                        />
+                      </td>
+                      <td style={{padding:"4px 6px",whiteSpace:"nowrap"}}>
+                        <input
+                          defaultValue={row.enr.tuitionRevenue||""}
+                          onBlur={e=>{ if(e.target.value!==(row.enr.tuitionRevenue||"")) updateEnrollExtra(row.enr.id,"tuitionRevenue",e.target.value); }}
+                          placeholder={lang==="zh"?"選填":"optional"}
+                          style={{width:80,boxSizing:"border-box",padding:"5px 7px",borderRadius:5,border:"0.5px solid #E0E0E0",background:"#FAFAFA",fontSize:12,color:"#172F39"}}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+      <button onClick={()=>setViewMode("table")} style={{display:"flex",alignItems:"center",gap:5,background:"transparent",border:"0.5px solid #CFD8DC",borderRadius:6,color:"#546E7A",padding:"5px 12px",fontSize:12,cursor:"pointer",marginBottom:14}}>
+        ← {lang==="zh"?"返回總表":"Back to Overview"}
+      </button>
       <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:"1.25rem",flexWrap:"wrap"}}>
         <div>
           <label style={{display:"block",fontSize:12,color:"#546E7A",marginBottom:4}}>{t.selectStudentStats}</label>
@@ -4339,7 +4465,8 @@ function StudentStats({ users, courses, absences, attendance, enrollments, lang 
       {myCourses.length===0&&<p style={{color:"#9E9E9E",fontSize:13}}>—</p>}
       {myCourses.map(c=>{
         const courseEnrs = (enrollments||[]).filter(e=>e.courseId===c.id);
-        const totalSessions = courseEnrs.reduce((sum,e)=>(e.scheduledDates?.length||0)+sum, 0);
+        const allSessionEntries = courseEnrs.flatMap(e=>(e.scheduledDates||[]).map(s=>({...s, enr:e})));
+        const totalSessions = allSessionEntries.length;
         const cAbs=absences.filter(a=>{
           if(a.courseId!==c.id) return false;
           if(!allTime&&a.requestedAt){const d=a.requestedAt.slice(0,10);if((dateFrom&&d<dateFrom)||(dateTo&&d>dateTo))return false;}
@@ -4348,7 +4475,19 @@ function StudentStats({ users, courses, absences, attendance, enrollments, lang 
         const attRecs=(attendance||[]).filter(a=>courseEnrs.some(e=>e.id===a.enrollmentId));
         const sAbs=cAbs.filter(a=>a.requesterRole!=="teacher").length + attRecs.filter(a=>a.type==="absent"||a.type==="excused").length;
         const tAbs=cAbs.filter(a=>a.requesterRole==="teacher").length + attRecs.filter(a=>a.type==="teacher_leave").length;
-        const done = totalSessions - sAbs - tAbs;
+        // 已完課 — sessions that have GENUINELY already happened (past) and
+        // weren't excused/absent. This used to be miscalled "完課" while
+        // actually counting past+future combined; now it's the real thing.
+        const doneSoFar = allSessionEntries.filter(s => {
+          if (!isSessionOver(s.date, resolveSessionStart(c, s), c.duration)) return false;
+          const attRec = (attendance||[]).find(a=>a.enrollmentId===s.enr.id && a.date===s.date);
+          if (attRec) return attRec.type!=="absent" && attRec.type!=="excused" && attRec.type!=="teacher_leave";
+          const selfAbs = (absences||[]).find(a=>a.courseId===c.id && a.dateStr===s.date);
+          return !selfAbs;
+        }).length;
+        // 剩餘課程 — everything else: not yet happened, and not already
+        // excused (so it's still genuinely coming up).
+        const remaining = Math.max(0, totalSessions - doneSoFar - sAbs - tAbs);
         return (
           <div key={c.id} style={{background:"#FFFFFF",border:"0.5px solid #E0E0E0",borderRadius:8,padding:"10px 14px",marginBottom:8}}>
             <div style={{fontWeight:500,fontSize:13,color:"#172F39"}}>{c.subject}</div>
@@ -4357,7 +4496,8 @@ function StudentStats({ users, courses, absences, attendance, enrollments, lang 
               <span style={{color:"#1565C0"}}>{lang==="zh"?"總排課":"Total"}: {totalSessions}</span>
               <span style={{color:"#880E4F"}}>{t.studentAbsent}: {sAbs}</span>
               <span style={{color:"#BF360C"}}>{t.teacherAbsent}: {tAbs}</span>
-              <span style={{color:"#2E7D32"}}>{lang==="zh"?"完課":"Done"}: {Math.max(0,done)}</span>
+              <span style={{color:"#2E7D32"}}>{lang==="zh"?"已完課":"Completed"}: {doneSoFar}</span>
+              <span style={{color:"#7B1FA2"}}>{lang==="zh"?"剩餘課程":"Remaining"}: {remaining}</span>
             </div>
           </div>
         );
@@ -4380,6 +4520,8 @@ function StudentStats({ users, courses, absences, attendance, enrollments, lang 
               </div>
             );
           })}
+        </>
+      )}
         </>
       )}
     </div>
@@ -4489,6 +4631,33 @@ function inferActivePattern(course, enrollment) {
     getCourseSchedule(course).forEach(b => { map[b.dayIndex] = b.start; });
   }
   return map;
+}
+
+// "加開課堂" — append addCount more sessions after whatever's currently the
+// LAST scheduled date, following the enrollment's CURRENT active pattern
+// (same source of truth as 調整未來時段/deferExcusedSession — never guesses
+// from raw dates, which is what caused the earlier reschedule bugs). Nothing
+// existing is touched; this only ever appends new entries.
+function extendSchedule(course, enrollment, addCount) {
+  const patternMap = inferActivePattern(course, enrollment);
+  const days = Object.keys(patternMap).map(Number);
+  if (!days.length || !addCount) return [];
+  const existingDates = (enrollment.scheduledDates||[]).map(s=>s.date);
+  const lastDate = existingDates.length ? [...existingDates].sort().reverse()[0] : (enrollment.startDate || new Date().toISOString().slice(0,10));
+  const maxSessionNo = Math.max(0, ...(enrollment.scheduledDates||[]).map(s=>s.sessionNo||0));
+  const results = [];
+  let d = new Date(lastDate+"T00:00:00");
+  let count = 0, safety = 0;
+  while (count < addCount && safety < 3650) {
+    safety++;
+    d.setDate(d.getDate()+1);
+    const dow = (d.getDay()+6)%7;
+    if (days.includes(dow)) {
+      results.push({ date: fmtYMD(d), dayIndex: dow, sessionNo: maxSessionNo+count+1, customStart: patternMap[dow] });
+      count++;
+    }
+  }
+  return results;
 }
 
 function deferExcusedSession(course, enrollment, excusedDate) {
@@ -4744,6 +4913,89 @@ function AdjustFutureScheduleModal({ enrollment, course, users, setEnrollments, 
 }
 
 
+// ─── 加開課堂 — append N more sessions after whatever's currently the last
+// scheduled date, using the enrollment's current pattern. Nothing existing
+// (past or future) is touched; this purely extends the tail. ─────────────────
+function ExtendEnrollmentModal({ enrollment, course, users, setEnrollments, lang, setToast, onClose }) {
+  const teacher = users.find(u=>u.id===course?.teacherId);
+  const student = users.find(u=>u.id===course?.studentId);
+  const [addCount, setAddCount] = useState(4);
+  const [preview, setPreview] = useState(null);
+
+  if (!course) return null;
+
+  const existingDates = (enrollment.scheduledDates||[]).map(s=>s.date).sort();
+  const lastDate = existingDates[existingDates.length-1] || enrollment.startDate || "—";
+  const patternMap = inferActivePattern(course, enrollment);
+  const activeDays = Object.keys(patternMap).map(Number);
+
+  const buildPreview = () => {
+    if (!addCount || addCount<=0 || !activeDays.length) { setPreview([]); return; }
+    setPreview(extendSchedule(course, enrollment, addCount));
+  };
+
+  const confirmExtend = () => {
+    if (!preview || !preview.length) return;
+    const newSchedule = [...(enrollment.scheduledDates||[]), ...preview];
+    setEnrollments(es=>es.map(e=>e.id===enrollment.id?{...e, scheduledDates:newSchedule, totalSessions:(parseInt(e.totalSessions)||0)+preview.length}:e));
+    setToast(lang==="zh"?`已加開 ${preview.length} 堂課，總堂數更新為 ${(parseInt(enrollment.totalSessions)||0)+preview.length} 堂`:`Added ${preview.length} session(s) — total is now ${(parseInt(enrollment.totalSessions)||0)+preview.length}`);
+    onClose();
+  };
+
+  const iStyle = {width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13};
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9300,padding:"1rem"}}>
+      <div style={{background:"#FFFFFF",borderRadius:16,width:"100%",maxWidth:480,boxSizing:"border-box",maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 8px 36px rgba(23,47,57,0.2)",overflow:"hidden"}}>
+        <div style={{background:"#172F39",padding:"13px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+          <span style={{fontSize:14,fontWeight:600,color:"#fff"}}>➕ {lang==="zh"?"加開課堂":"Add More Sessions"}</span>
+          <button onClick={onClose} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",color:"#fff",fontSize:16}}>×</button>
+        </div>
+        <div style={{padding:"18px",overflowY:"auto",flex:1,minHeight:0}}>
+          <div style={{fontSize:12,color:"#546E7A",marginBottom:12,lineHeight:1.6}}>
+            {lang==="zh"
+              ? <>老師：<strong>{teacher?.name}</strong>　學生：<strong>{student?.name}</strong><br/>目前已排到 <strong>{lastDate}</strong>，加開的堂數會接在這之後，完全不會動到已經排定（含已上過）的堂次。</>
+              : <>Teacher: <strong>{teacher?.name}</strong>　Student: <strong>{student?.name}</strong><br/>Currently scheduled through <strong>{lastDate}</strong> — new sessions get appended after that, nothing already scheduled (or already held) is touched.</>}
+          </div>
+
+          {!activeDays.length && (
+            <div style={{background:"#FFEBEE",borderRadius:7,padding:"9px 12px",fontSize:12,color:"#D32F2F",marginBottom:12}}>
+              {lang==="zh"?"找不到這筆排課目前的上課規律，無法加開。":"Can't determine this enrollment's current pattern — unable to add sessions."}
+            </div>
+          )}
+
+          <label style={{display:"block",fontSize:12,color:"#546E7A",marginBottom:5}}>{lang==="zh"?"要加開幾堂":"Number of sessions to add"}</label>
+          <input type="number" min="1" value={addCount} onChange={e=>{setAddCount(parseInt(e.target.value)||0);setPreview(null);}} style={{...iStyle,marginBottom:14}}/>
+
+          {!preview ? (
+            <button onClick={buildPreview} disabled={!addCount||addCount<=0||!activeDays.length} style={{width:"100%",padding:"9px",borderRadius:7,border:"1px solid #4A9FD4",background:"transparent",color:"#1A6B8A",fontSize:13,cursor:(!addCount||addCount<=0||!activeDays.length)?"not-allowed":"pointer",opacity:(!addCount||addCount<=0||!activeDays.length)?0.5:1}}>
+              🔍 {lang==="zh"?"預覽新增堂次":"Preview New Sessions"}
+            </button>
+          ) : (
+            <div style={{background:"#E8F5E9",border:"1px solid #A5D6A7",borderRadius:8,padding:"12px 14px"}}>
+              <div style={{fontSize:12,fontWeight:600,color:"#2E7D32",marginBottom:6}}>✓ {lang==="zh"?`預覽（${preview.length} 堂新加開）`:`Preview (${preview.length} new session(s))`}</div>
+              <div style={{fontSize:11,color:"#172F39",maxHeight:180,overflowY:"auto",lineHeight:1.8}}>
+                {preview.map((s,i)=>(<div key={i}>{s.date} ({T[lang].days[s.dayIndex]}) {s.customStart} · #{s.sessionNo}</div>))}
+              </div>
+              <button onClick={()=>setPreview(null)} style={{marginTop:8,fontSize:11,padding:"4px 10px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>
+                {lang==="zh"?"重新設定":"Adjust again"}
+              </button>
+            </div>
+          )}
+        </div>
+        <div style={{display:"flex",gap:8,padding:"12px 18px 16px",borderTop:"0.5px solid #E0E0E0",flexShrink:0}}>
+          <button onClick={confirmExtend} disabled={!preview || preview.length===0} style={{flex:1,padding:"10px",borderRadius:7,background:(preview&&preview.length>0)?"#4CAF50":"#E0E0E0",border:"none",color:(preview&&preview.length>0)?"#fff":"#9E9E9E",fontSize:13,fontWeight:600,cursor:(preview&&preview.length>0)?"pointer":"not-allowed"}}>
+            ✓ {lang==="zh"?"確認加開":"Confirm & Add"}
+          </button>
+          <button onClick={onClose} style={{padding:"10px 16px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>
+            {lang==="zh"?"取消":"Cancel"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollments, attendance, setAttendance, lang, setToast }) {
   const t = T[lang];
   const students = users.filter(u=>u.role==="student");
@@ -4784,6 +5036,15 @@ function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollm
   const [collapsedGroups, setCollapsedGroups] = useState(new Set()); // studentIds whose group is collapsed
   const toggleCard = (id) => setExpandedCards(prev=>{const n=new Set(prev); n.has(id)?n.delete(id):n.add(id); return n;});
   const toggleGroup = (id) => setCollapsedGroups(prev=>{const n=new Set(prev); n.has(id)?n.delete(id):n.add(id); return n;});
+  // Active/Inactive split — same pattern as 課程管理's 進行中/已結束 tabs.
+  // "Inactive" here means the enrollment itself was discontinued, OR its
+  // underlying course has been ended/archived — either way it's done and
+  // shouldn't clutter the main list, but nothing about its data changes.
+  const [statusTab, setStatusTab] = useState("active"); // active | inactive
+  const isInactiveEnrollment = (enr) => {
+    const c = courses.find(x=>x.id===enr.courseId);
+    return enr.status==="discontinued" || c?.status==="archived";
+  };
 
   // Courses for selected form (all courses — needed so lookups for EXISTING
   // enrollments still resolve even if their course has since been archived)
@@ -4852,6 +5113,7 @@ function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollm
   // 課程管理 and 付費與排課 agree on the course's state instead of drifting
   // out of sync.
   const [discontinueTarget, setDiscontinueTarget] = useState(null); // enrollment being discontinued
+  const [extendTarget, setExtendTarget] = useState(null); // enrollment being extended with more sessions
   const doDiscontinue = (reason) => {
     const enr = discontinueTarget;
     if (!enr) return;
@@ -4970,12 +5232,15 @@ function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollm
   // ── Search + group-by-student (display only) ──
   const q = searchQuery.trim().toLowerCase();
   const filteredEnrollments = enrollments.filter(enr=>{
+    if (statusTab==="active" ? isInactiveEnrollment(enr) : !isInactiveEnrollment(enr)) return false;
     if (!q) return true;
     const course = allCourses.find(c=>c.id===enr.courseId);
     const subject = (course?.subject||"").toLowerCase();
     const studentName = getName(enr.studentId).toLowerCase();
     return subject.includes(q) || studentName.includes(q);
   });
+  const activeCount = enrollments.filter(enr=>!isInactiveEnrollment(enr)).length;
+  const inactiveCount = enrollments.filter(enr=>isInactiveEnrollment(enr)).length;
   const enrollGroups = {}; // studentId -> enrollments[]
   filteredEnrollments.forEach(enr=>{
     const key = enr.studentId || "_none";
@@ -5038,6 +5303,16 @@ function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollm
               courseName: courses.find(c=>c.id===enr.courseId)?.subject || "",
             });
           }}
+        />
+      )}
+      {extendTarget && (
+        <ExtendEnrollmentModal
+          enrollment={extendTarget}
+          course={courses.find(c=>c.id===extendTarget.courseId)}
+          users={users}
+          setEnrollments={setEnrollments}
+          lang={lang} setToast={setToast}
+          onClose={()=>setExtendTarget(null)}
         />
       )}
       {/* Attendance recording modal */}
@@ -5133,6 +5408,17 @@ function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollm
             )}
             <button onClick={()=>{setShowForm(false);setPreview(null);setEditingId(null);}} style={{padding:"11px 16px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer",flex:preview?"none":1}}>{t.cancel}</button>
           </div>
+        </div>
+      )}
+
+      {/* ── Active/Inactive tabs — mirrors 課程管理's 進行中/已結束 split ── */}
+      {enrollments.length>0 && (
+        <div style={{display:"flex",gap:6,marginBottom:14,flexWrap:"wrap"}}>
+          {[["active",lang==="zh"?"進行中":"Active",activeCount],["inactive",lang==="zh"?"已中斷／已結束":"Discontinued / Ended",inactiveCount]].map(([k,l,cnt])=>(
+            <button key={k} onClick={()=>setStatusTab(k)} style={{padding:"7px 16px",borderRadius:7,fontSize:13,cursor:"pointer",border:statusTab===k?"none":"0.5px solid #CFD8DC",background:statusTab===k?"#1A6B8A":"transparent",color:statusTab===k?"#fff":"#546E7A",fontWeight:statusTab===k?600:400}}>
+              {l} ({cnt})
+            </button>
+          ))}
         </div>
       )}
 
@@ -5247,6 +5533,7 @@ function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollm
                         {enr.status!=="discontinued" ? (
                           <>
                             <button onClick={()=>setAdjustTarget(enr)} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"1px solid #4A9FD4",background:"transparent",color:"#1A6B8A",cursor:"pointer",fontWeight:500}}>🔄 {lang==="zh"?"調整未來時段":"Adjust Future Time"}</button>
+                            <button onClick={()=>setExtendTarget(enr)} title={lang==="zh"?"在目前已排的最後面接著往後加開，不會動到已排定的堂次":"Appends new sessions after the current last one — doesn't touch anything already scheduled"} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"1px solid #2E7D32",background:"transparent",color:"#2E7D32",cursor:"pointer",fontWeight:500}}>➕ {lang==="zh"?"加開課堂":"Add Sessions"}</button>
                             <button onClick={()=>startEdit(enr)} title={lang==="zh"?"⚠️ 會重新產生整份排課表，含已上過的堂次也會被覆蓋——調整未來時段請改用左邊按鈕":"⚠️ Regenerates the ENTIRE schedule, including already-happened sessions — use the button on the left to adjust just future sessions"} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>{lang==="zh"?"編輯排課":"Edit"}</button>
                             <button onClick={()=>setDiscontinueTarget(enr)} title={lang==="zh"?"保留所有已發生的出席/完課紀錄，只移除尚未發生的未來排課":"Keeps all past attendance/completion records — only removes sessions that haven't happened yet"} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"1px solid #E65100",background:"transparent",color:"#E65100",cursor:"pointer",fontWeight:500}}>⛔ {lang==="zh"?"中斷課程":"Discontinue"}</button>
                           </>
@@ -7406,7 +7693,7 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
       {tab==="trial" &&<TrialApplicationsPanel users={users} setUsers={setUsers} lang={lang} setToast={setToast} trialApplications={trialApplications||[]} setTrialApplications={setTrialApplications} englishLevels={englishLevels||[]} setEnglishLevels={setEnglishLevels} learningPurposes={learningPurposes||[]} setLearningPurposes={setLearningPurposes}/>}
       {tab==="users"  &&<UserManager users={users} setUsers={setUsers} lang={lang} setToast={setToast} onImpersonate={onImpersonate}/>}
       {tab==="tstats" &&<TeacherStats users={users} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang}/>}
-      {tab==="sstats" &&<StudentStats users={users} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang}/>}
+      {tab==="sstats" &&<StudentStats users={users} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} setEnrollments={setEnrollments} lang={lang}/>}
       {tab==="studentOverview" &&<AdminStudentOverview currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} materials={materials} setMaterials={setMaterials} feedback={feedback} setFeedback={setFeedback} attendance={attendance} absences={absences} lang={lang} setToast={setToast}/>}
       {tab==="settings"&&<SiteSettings introText={introText} setIntroText={setIntroText} lang={lang} setToast={setToast}/>}
     </div>
