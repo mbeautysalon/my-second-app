@@ -501,7 +501,7 @@ const TRIAL_COLOR = {bg:"#FFFDE7",border:"#F9A825",text:"#F57F17"};
 // Bumped whenever a meaningful set of changes ships. Shown low-key on the
 // login page so version can be confirmed at a glance; also called out
 // whenever a new file is delivered.
-const APP_VERSION = "v1.2.4";
+const APP_VERSION = "v1.2.8";
 
 const genId = () => "id_" + Math.random().toString(36).slice(2,9);
 
@@ -827,6 +827,17 @@ function isSessionOver(dateStr, startTime, durationMins) {
   return new Date() >= end;
 }
 
+// For student material self-submission: only sessions starting MORE than 24
+// hours from now are eligible — anything closer is too last-minute for a
+// teacher to realistically review and use.
+function hoursUntilSession(dateStr, startTime) {
+  if (!dateStr) return -Infinity;
+  const [h,m] = (startTime||"00:00").split(":").map(Number);
+  const start = new Date(dateStr+"T00:00:00");
+  start.setHours(h||0, m||0, 0, 0);
+  return (start.getTime() - Date.now()) / 3600000;
+}
+
 // ─── Toast ────────────────────────────────────────────────────────────────────
 function Toast({ msg }) {
   if (!msg) return null;
@@ -1019,7 +1030,7 @@ function DiscontinueModal({ course, student, futureCount, lang, onConfirm, onCan
 // ─── Material Panel (modal — full course, all sessions) ──────────────────────
 // Shows ALL materials for a course, optionally pre-filtered to a specific day.
 // Each entry stores: courseId, dayIndex (0-6), date (YYYY-MM-DD), title, url, desc
-function MaterialPanel({ course, initialDate, users, lang, currentUser, materials, setMaterials, setToast, onClose, enrollments }) {
+function MaterialPanel({ course, initialDate, users, lang, currentUser, materials, setMaterials, setToast, onClose, enrollments, attendance, absences }) {
   const t = T[lang];
   const canEdit = currentUser.role === "admin" || currentUser.role === "teacher";
 
@@ -1043,6 +1054,15 @@ function MaterialPanel({ course, initialDate, users, lang, currentUser, material
     return (new Date(dateStr+"T00:00:00").getDay()+6)%7;
   };
   const fmtDateLabel = (d) => `${d} (${T[lang].days[dateDayIndex(d)]})`;
+  // A date already marked as leave/excused (self-reported or admin-recorded)
+  // shouldn't be selectable for a new material — that class isn't happening
+  // as normally scheduled, so there's nothing to prep material for.
+  const courseEnrs = (enrollments||[]).filter(e => e.courseId === course.id);
+  const isLeaveDate = (dateStr) => {
+    const hasAttLeave = courseEnrs.some(e => (attendance||[]).some(a => a.enrollmentId===e.id && a.date===dateStr && a.type!=="other"));
+    const hasSelfAbs = (absences||[]).some(a => a.courseId===course.id && a.dateStr===dateStr);
+    return hasAttLeave || hasSelfAbs;
+  };
 
   // ── filter / sort state ──
   // initialDate: "YYYY-MM-DD" for one specific class occurrence, or null (show all)
@@ -1058,8 +1078,8 @@ function MaterialPanel({ course, initialDate, users, lang, currentUser, material
   // Default date must be a real class occurrence — falling back to a
   // hardcoded/arbitrary date was the bug: materials saved against the wrong
   // date silently reappeared on (or vanished from) the wrong day.
-  const nextUpcoming = validDates.find(d => d >= today);
-  const defaultDate = (dateFilter !== "all" && validDates.includes(dateFilter)) ? dateFilter : (nextUpcoming || validDates[validDates.length-1] || today);
+  const nextUpcoming = validDates.find(d => d >= today && !isLeaveDate(d));
+  const defaultDate = (dateFilter !== "all" && validDates.includes(dateFilter) && !isLeaveDate(dateFilter)) ? dateFilter : (nextUpcoming || validDates.find(d=>!isLeaveDate(d)) || validDates[validDates.length-1] || today);
   const blank = { title:"", url:"", date: defaultDate, desc:"", dayIndex: dateDayIndex(defaultDate) };
   const [form, setForm] = useState(blank);
   const fset = (k, v) => setForm(f => ({...f, [k]: v, ...(k==="date" ? {dayIndex: dateDayIndex(v)} : {})}));
@@ -1257,7 +1277,14 @@ function MaterialPanel({ course, initialDate, users, lang, currentUser, material
               {validDates.length > 0 ? (
                 <select style={iStyle} value={validDates.includes(form.date) ? form.date : ""} onChange={e=>fset("date",e.target.value)}>
                   {!validDates.includes(form.date) && <option value="">{lang==="zh"?"— 非排課日期 —":"— Not a scheduled date —"}</option>}
-                  {validDates.map(d => <option key={d} value={d}>{fmtDateLabel(d)}{d===today?(lang==="zh"?"（今天）":" (today)"):""}</option>)}
+                  {validDates.map(d => {
+                    const onLeave = isLeaveDate(d);
+                    return (
+                      <option key={d} value={d} disabled={onLeave}>
+                        {fmtDateLabel(d)}{d===today?(lang==="zh"?"（今天）":" (today)"):""}{onLeave?(lang==="zh"?"（已請假）":" (on leave)"):""}
+                      </option>
+                    );
+                  })}
                 </select>
               ) : (
                 <div style={{fontSize:11,color:"#E65100",background:"#FFF3E0",borderRadius:6,padding:"6px 10px",marginBottom:4}}>
@@ -1677,7 +1704,7 @@ function SlotCalendarView({ slots, users, lang, currentUser, absences, materials
 
   return (
     <div style={{overflowX:"auto"}}>
-      {matTarget&&<MaterialPanel course={matTarget.course} initialDate={matTarget.date} users={users} lang={lang} currentUser={currentUser} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setMatTarget(null)} enrollments={enrollments}/>}
+      {matTarget&&<MaterialPanel course={matTarget.course} initialDate={matTarget.date} users={users} lang={lang} currentUser={currentUser} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setMatTarget(null)} enrollments={enrollments} attendance={attendance} absences={absences}/>}
       {detTarget&&<CourseDetailModal course={detTarget.course} dayIndex={detTarget.dayIndex} date={detTarget.date} users={users} lang={lang} materials={materials} setMaterials={setMaterials} onClose={()=>setDetTarget(null)} currentUser={currentUser} enrollments={enrollments} attendance={attendance} absences={absences} setToast={setToast}/>}
       {adminEditTarget&&<AdminSessionModal slot={adminEditTarget} users={users} lang={lang} attendance={attendance||[]} setAttendance={setAttendance} enrollments={enrollments||[]} setEnrollments={setEnrollments} courses={courses||[]} setToast={setToast} onClose={()=>setAdminEditTarget(null)}/>}
       {fbTarget&&<FeedbackModal slot={fbTarget} currentUser={currentUser} users={users} lang={lang} feedback={feedback||[]} setFeedback={setFeedback} setToast={setToast} onClose={()=>setFbTarget(null)} readOnly={isStudent}/>}
@@ -2251,7 +2278,7 @@ function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, ma
   return (
     <>
       {showDetail&&<CourseDetailModal course={course} dayIndex={dayIndex} date={date} users={users} lang={lang} materials={materials} setMaterials={setMaterials} onClose={()=>setShowDetail(false)} currentUser={currentUser} enrollments={enrollments} attendance={attendance} absences={absences} setToast={setToast}/>}
-      {showMat&&<MaterialPanel course={course} initialDate={matInitDate} users={users} lang={lang} currentUser={currentUser} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setShowMat(false)} enrollments={enrollments}/>}
+      {showMat&&<MaterialPanel course={course} initialDate={matInitDate} users={users} lang={lang} currentUser={currentUser} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setShowMat(false)} enrollments={enrollments} attendance={attendance} absences={absences}/>}
       {showAdminEdit&&<AdminSessionModal slot={slot} users={users} lang={lang} attendance={attendance||[]} setAttendance={setAttendance} enrollments={enrollments||[]} setEnrollments={setEnrollments} courses={courses||[]} setToast={setToast} onClose={()=>setShowAdminEdit(false)}/>}
       {showFeedback&&<FeedbackModal slot={slot} currentUser={currentUser} users={users} lang={lang} feedback={feedback||[]} setFeedback={setFeedback} setToast={setToast} onClose={()=>setShowFeedback(false)} readOnly={isStudent}/>}
       <div style={{background:cardBg,border:`1.5px solid ${cardBorder}`,borderRadius:10,padding:"10px 14px",marginBottom:8,opacity:cardOpacity}}>
@@ -3605,7 +3632,7 @@ function CourseManager({ users, courses, setCourses, lang, setToast, materials, 
     <div>
       {confirmDelCourseId && <ConfirmModal title={lang==="zh"?"刪除課程":"Delete Course"} message={lang==="zh"?"確認要刪除此課程？此操作無法復原，相關教材紀錄也將失效。":"Delete this course? This cannot be undone."} confirmLabel={lang==="zh"?"確認刪除":"Delete"} onConfirm={doDelCourse} onCancel={()=>setConfirmDelCourseId(null)} danger/>}
       {confirmArchiveId && <ConfirmModal title={lang==="zh"?"結束課程":"End Course"} message={lang==="zh"?"這堂課會標記為「已結束」，不再出現在進行中名單、不能再新增排課，但完課紀錄、出缺勤、獎牌積分完全不受影響。之後隨時可以在「已結束」分頁恢復。":"This marks the course as ended — it won't appear in the active roster or accept new scheduling, but completed sessions, attendance, and medal points are completely unaffected. You can restore it anytime from the Ended tab."} confirmLabel={lang==="zh"?"確認結束課程":"End Course"} onConfirm={doArchive} onCancel={()=>setConfirmArchiveId(null)}/>}
-      {matTarget && <MaterialPanel course={matTarget} initialDate={null} users={users} lang={lang} currentUser={fakeAdmin} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setMatTarget(null)} enrollments={enrollments}/>}
+      {matTarget && <MaterialPanel course={matTarget} initialDate={null} users={users} lang={lang} currentUser={fakeAdmin} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setMatTarget(null)} enrollments={enrollments} attendance={attendance} absences={absences}/>}
       {showBatch && <BatchMaterialModal users={users} courses={courses} materials={materials} setMaterials={setMaterials} lang={lang} setToast={setToast} onClose={()=>setShowBatch(false)} enrollments={enrollments}/>}
 
       {/* ── Prominent alert: sessions still missing materials — widens to include next week from Saturday onward ── */}
@@ -3859,7 +3886,7 @@ function UserManager({ users, setUsers, lang, setToast, onImpersonate }) {
       const { hash, salt } = await hashPassword(editing.newPwd);
       pwdPatch = { passwordHash: hash, passwordSalt: salt, password: undefined };
     }
-    setUsers(users.map(u=>u.id!==editing.id?u:{...u,name:editing.name,username:editing.username,...pwdPatch,...(u.role!=="admin"?{role:editing.role}:{}),canAssist:editing.role==="teacher"?!!editing.canAssist:undefined,canUseStudentOverview:editing.role==="teacher"?!!editing.canUseStudentOverview:undefined}));
+    setUsers(users.map(u=>u.id!==editing.id?u:{...u,name:editing.name,username:editing.username,...pwdPatch,...(u.role!=="admin"?{role:editing.role}:{}),canAssist:editing.role==="teacher"?!!editing.canAssist:undefined,canUseStudentOverview:editing.role==="teacher"?!!editing.canUseStudentOverview:undefined,canSubmitMaterials:editing.role==="student"?!!editing.canSubmitMaterials:undefined}));
     setEditing(null); setToast(t.userUpdated);
   };
 
@@ -3905,6 +3932,12 @@ function UserManager({ users, setUsers, lang, setToast, onImpersonate }) {
             <label style={{display:"flex",alignItems:"center",gap:7,marginTop:8,fontSize:12,color:"#172F39",cursor:"pointer"}}>
               <input type="checkbox" checked={!!editing.canUseStudentOverview} onChange={e=>setEditing(v=>({...v,canUseStudentOverview:e.target.checked}))}/>
               📊 {lang==="zh"?"開放「任教學生總覽」（測試階段功能，側邊欄會多一個入口）":"Enable \"Student Overview\" (test-phase feature, adds a sidebar item)"}
+            </label>
+          )}
+          {editing.role==="student" && (
+            <label style={{display:"flex",alignItems:"center",gap:7,marginTop:8,fontSize:12,color:"#172F39",cursor:"pointer"}}>
+              <input type="checkbox" checked={!!editing.canSubmitMaterials} onChange={e=>setEditing(v=>({...v,canSubmitMaterials:e.target.checked}))}/>
+              📚 {lang==="zh"?"開放自行準備教材（審核制，側邊欄會多一個入口）":"Allow self-submitted materials (review-gated, adds a sidebar item)"}
             </label>
           )}
           <div style={{display:"flex",gap:8,marginTop:14}}>
@@ -7389,6 +7422,120 @@ function PeopleDirectory({ users, setUsers, lang, setToast, enrollments, attenda
 
 // ─── Admin panel ──────────────────────────────────────────────────────────────
 // ─── Trial application review + option-list editor ────────────────────────────
+// ─── Review student-submitted materials (admin AND assistant) ────────────────
+function StudentMaterialReviewPanel({ users, courses, enrollments, materials, setMaterials, studentMatSubs, setStudentMatSubs, currentUser, lang, setToast }) {
+  const [subTab, setSubTab] = useState("pending"); // pending | history
+  const [rejectTarget, setRejectTarget] = useState(null);
+  const [rejectReason, setRejectReason] = useState("");
+
+  const getCourse = id => courses.find(c=>c.id===id);
+  const getUser = id => users.find(u=>u.id===id);
+
+  const pending = (studentMatSubs||[]).filter(s=>s.status==="pending").sort((a,b)=>a.date.localeCompare(b.date));
+  const history = (studentMatSubs||[]).filter(s=>s.status!=="pending").sort((a,b)=>(b.reviewedAt||"").localeCompare(a.reviewedAt||""));
+
+  const markReviewed = (sub, patch) => {
+    setStudentMatSubs(prev => prev.map(x=>x.id===sub.id?{...x, ...patch, reviewedAt:new Date().toISOString(), reviewedBy:currentUser?.id||""}:x));
+  };
+  const approveCoexist = (sub) => {
+    setMaterials(prev => [...(prev||[]), {
+      id: genId(), courseId: sub.courseId, date: sub.date, dayIndex: sub.dayIndex,
+      title: sub.title, url: sub.url, desc:"",
+      addedBy: sub.studentId, addedAt: new Date().toISOString(), source:"student",
+    }]);
+    markReviewed(sub, {status:"approved"});
+    setToast(lang==="zh"?"已核准並新增為教材":"Approved and added as material");
+  };
+  const approveReplace = (sub) => {
+    setMaterials(prev => [
+      ...(prev||[]).filter(m=>!(m.courseId===sub.courseId && m.date===sub.date)),
+      { id: genId(), courseId: sub.courseId, date: sub.date, dayIndex: sub.dayIndex, title: sub.title, url: sub.url, desc:"", addedBy: sub.studentId, addedAt: new Date().toISOString(), source:"student" }
+    ]);
+    markReviewed(sub, {status:"approved"});
+    setToast(lang==="zh"?"已核准並取代原教材":"Approved and replaced the existing material");
+  };
+  const doReject = () => {
+    if (!rejectTarget) return;
+    markReviewed(rejectTarget, {status:"rejected", reviewNote:rejectReason.trim()});
+    setRejectTarget(null); setRejectReason("");
+    setToast(lang==="zh"?"已退回":"Rejected");
+  };
+
+  const renderCard = (sub) => {
+    const course = getCourse(sub.courseId);
+    const student = getUser(sub.studentId);
+    const existingMats = (materials||[]).filter(m=>m.courseId===sub.courseId && m.date===sub.date);
+    return (
+      <div key={sub.id} style={{background:"#FFFFFF",border:"0.5px solid #E0E0E0",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
+        <div style={{fontSize:12,fontWeight:600,color:"#172F39"}}>{course?.subject||"—"}</div>
+        <div style={{fontSize:11,color:"#9E9E9E",marginTop:2,marginBottom:6}}>{sub.date} ({T[lang].days[sub.dayIndex]}) · {lang==="zh"?"學生":"Student"}: {student?.name||"—"}</div>
+        <div style={{background:"#F5F5F5",borderRadius:7,padding:"9px 11px",marginBottom:8}}>
+          <div style={{fontSize:12,color:"#172F39",fontWeight:500}}>{sub.title}</div>
+          <a href={sub.url} target="_blank" rel="noreferrer" style={{fontSize:11,color:"#1A6B8A",wordBreak:"break-all"}}>{sub.url}</a>
+        </div>
+        {existingMats.length>0 && sub.status==="pending" && (
+          <div style={{background:"#FFF3E0",borderRadius:6,padding:"7px 10px",marginBottom:8,fontSize:11,color:"#E65100"}}>
+            ⚠️ {lang==="zh"?`這堂課已經有 ${existingMats.length} 筆教材（${existingMats.map(m=>m.title).join("、")}），請選擇新增或取代`:`This class already has ${existingMats.length} material(s) (${existingMats.map(m=>m.title).join(", ")}) — choose to add or replace`}
+          </div>
+        )}
+        {sub.status==="pending" ? (
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            <button onClick={()=>approveCoexist(sub)} style={{fontSize:12,padding:"6px 12px",borderRadius:6,background:"#2E7D32",border:"none",color:"#fff",cursor:"pointer",fontWeight:500}}>
+              ✓ {lang==="zh"?"核准（新增）":"Approve (Add)"}
+            </button>
+            {existingMats.length>0 && (
+              <button onClick={()=>approveReplace(sub)} style={{fontSize:12,padding:"6px 12px",borderRadius:6,background:"#1A6B8A",border:"none",color:"#fff",cursor:"pointer",fontWeight:500}}>
+                ✓ {lang==="zh"?"核准（取代）":"Approve (Replace)"}
+              </button>
+            )}
+            <button onClick={()=>{setRejectTarget(sub);setRejectReason("");}} style={{fontSize:12,padding:"6px 12px",borderRadius:6,background:"transparent",border:"0.5px solid #D32F2F",color:"#D32F2F",cursor:"pointer"}}>
+              ✕ {lang==="zh"?"退回":"Reject"}
+            </button>
+          </div>
+        ) : (
+          <div style={{fontSize:11,color:sub.status==="approved"?"#2E7D32":"#D32F2F"}}>
+            {sub.status==="approved" ? `✓ ${lang==="zh"?"已核准":"Approved"}` : `✕ ${lang==="zh"?"已退回":"Rejected"}${sub.reviewNote?`：${sub.reviewNote}`:""}`}
+            <span style={{color:"#9E9E9E",marginLeft:6}}>{sub.reviewedAt?.slice(0,10)}</span>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div>
+      <h3 style={{fontSize:15,fontWeight:600,color:"#172F39",margin:"0 0 12px"}}>{lang==="zh"?"學生教材投稿":"Student Material Submissions"}</h3>
+      <div style={{display:"flex",gap:5,marginBottom:14}}>
+        {[["pending",lang==="zh"?"待審核":"Pending",pending.length],["history",lang==="zh"?"已處理":"History",0]].map(([k,l,badge])=>(
+          <button key={k} onClick={()=>setSubTab(k)} style={{position:"relative",padding:"7px 16px",borderRadius:7,fontSize:13,cursor:"pointer",border:subTab===k?"none":"0.5px solid #CFD8DC",background:subTab===k?"#1A6B8A":"transparent",color:subTab===k?"#fff":"#546E7A",fontWeight:subTab===k?600:400}}>
+            {l}
+            {badge>0 && <span style={{marginLeft:6,fontSize:10,background:"#D32F2F",color:"#fff",borderRadius:9,padding:"1px 6px",fontWeight:700}}>{badge}</span>}
+          </button>
+        ))}
+      </div>
+      {subTab==="pending" && (pending.length===0
+        ? <div style={{textAlign:"center",padding:"2.5rem 0",color:"#9E9E9E"}}><div style={{fontSize:28,marginBottom:8}}>🎉</div><div style={{fontSize:13}}>{lang==="zh"?"目前沒有待審核的投稿":"No pending submissions"}</div></div>
+        : pending.map(renderCard))}
+      {subTab==="history" && (history.length===0
+        ? <p style={{color:"#9E9E9E",fontSize:13,textAlign:"center",padding:"2rem 0"}}>—</p>
+        : history.map(renderCard))}
+
+      {rejectTarget && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9999,padding:"1rem"}}>
+          <div style={{background:"#FFFFFF",borderRadius:12,width:"100%",maxWidth:400,padding:"18px",boxSizing:"border-box"}}>
+            <div style={{fontSize:14,fontWeight:600,color:"#172F39",marginBottom:10}}>{lang==="zh"?"退回並附理由":"Reject with a reason"}</div>
+            <textarea value={rejectReason} onChange={e=>setRejectReason(e.target.value)} rows={3} placeholder={lang==="zh"?"讓學生知道為什麼被退回…":"Let the student know why…"} style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:7,border:"0.5px solid #CFD8DC",fontSize:13,fontFamily:"inherit",resize:"vertical",marginBottom:14}}/>
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+              <button onClick={()=>setRejectTarget(null)} style={{padding:"7px 16px",borderRadius:7,border:"0.5px solid #CFD8DC",background:"#F5F5F5",color:"#546E7A",fontSize:13,cursor:"pointer"}}>{lang==="zh"?"取消":"Cancel"}</button>
+              <button onClick={doReject} style={{padding:"7px 16px",borderRadius:7,border:"none",background:"#D32F2F",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer"}}>{lang==="zh"?"確認退回":"Confirm Reject"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TrialApplicationsPanel({ users, setUsers, lang, setToast, trialApplications, setTrialApplications, englishLevels, setEnglishLevels, learningPurposes, setLearningPurposes, hideOptions }) {
   const t = T[lang];
   const [subTab, setSubTab] = useState("pending"); // pending | history | options
@@ -7650,19 +7797,21 @@ function TrialApplicationsPanel({ users, setUsers, lang, setToast, trialApplicat
 }
 
 
-function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, lang, setToast, introText, setIntroText, feedback, setFeedback, teacherAvailability, setTeacherAvailability, availabilityOverrides, setAvailabilityOverrides, profileChanges, setProfileChanges, onImpersonate, trialApplications, setTrialApplications, englishLevels, setEnglishLevels, learningPurposes, setLearningPurposes, initialTab, currentUser }) {
+function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, lang, setToast, introText, setIntroText, feedback, setFeedback, teacherAvailability, setTeacherAvailability, availabilityOverrides, setAvailabilityOverrides, profileChanges, setProfileChanges, onImpersonate, trialApplications, setTrialApplications, englishLevels, setEnglishLevels, learningPurposes, setLearningPurposes, initialTab, currentUser, studentMatSubs, setStudentMatSubs }) {
   const t = T[lang];
   const [tab, setTab] = useState(initialTab || "courses");
   const pendingFbCount = (feedback||[]).filter(f=>f.status==="pending").length;
   const pendingChangeCount = (profileChanges||[]).filter(c=>c.status==="pending").length;
   const pendingTrialCount = (trialApplications||[]).filter(a=>a.status==="pending").length;
   const pendingMatEditCount = (materials||[]).filter(m=>m.pendingEdit).length;
+  const pendingStudentMatCount = (studentMatSubs||[]).filter(s=>s.status==="pending").length;
   const tabs = [
     {key:"courses", label:t.courses},
     {key:"enroll",  label:t.enrollments},
     {key:"leave",   label:t.leaveReview},
     {key:"feedback",label:t.feedbackCenterTitle, badge:pendingFbCount},
     {key:"matedit", label:lang==="zh"?"教材編輯審核":"Material Edit Review", badge:pendingMatEditCount},
+    {key:"studentmat", label:lang==="zh"?"學生教材投稿":"Student Materials", badge:pendingStudentMatCount},
     {key:"availability", label:t.availability},
     {key:"peopledir", label:t.peopleDir, badge:pendingChangeCount},
     {key:"trial", label:lang==="zh"?"試聽申請":"Trial Applications", badge:pendingTrialCount},
@@ -7688,6 +7837,7 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
       {tab==="leave"  &&<LeaveReview users={users} courses={courses} absences={absences} setAbsences={setAbsences} attendance={attendance} setAttendance={setAttendance} enrollments={enrollments} setEnrollments={setEnrollments} lang={lang} setToast={setToast}/>}
       {tab==="feedback"&&<FeedbackCenter users={users} courses={courses} enrollments={enrollments} attendance={attendance} absences={absences} feedback={feedback||[]} setFeedback={setFeedback} lang={lang} setToast={setToast} currentUser={currentUser} materials={materials} setMaterials={setMaterials}/>}
       {tab==="matedit"&&<MaterialEditReview courses={courses} materials={materials||[]} setMaterials={setMaterials} users={users} lang={lang} setToast={setToast}/>}
+      {tab==="studentmat"&&<StudentMaterialReviewPanel users={users} courses={courses} enrollments={enrollments} materials={materials||[]} setMaterials={setMaterials} studentMatSubs={studentMatSubs||[]} setStudentMatSubs={setStudentMatSubs} currentUser={currentUser} lang={lang} setToast={setToast}/>}
       {tab==="availability"&&<AdminTeacherAvailability users={users} courses={courses} availability={teacherAvailability||[]} setAvailability={setTeacherAvailability} overrides={availabilityOverrides||[]} setOverrides={setAvailabilityOverrides} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang} setToast={setToast}/>}
       {tab==="peopledir" &&<PeopleDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses} profileChanges={profileChanges} setProfileChanges={setProfileChanges}/>}
       {tab==="trial" &&<TrialApplicationsPanel users={users} setUsers={setUsers} lang={lang} setToast={setToast} trialApplications={trialApplications||[]} setTrialApplications={setTrialApplications} englishLevels={englishLevels||[]} setEnglishLevels={setEnglishLevels} learningPurposes={learningPurposes||[]} setLearningPurposes={setLearningPurposes}/>}
@@ -7706,13 +7856,15 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
 // access to payment/enrollment records, leave review, feedback moderation,
 // user management, stats, or site settings — and salary is hidden entirely
 // within the people directory.
-function AssistantPanel({ users, setUsers, courses, setCourses, materials, setMaterials, enrollments, setEnrollments, attendance, lang, setToast, currentUser, feedback, setFeedback, teacherAvailability, setTeacherAvailability, availabilityOverrides, setAvailabilityOverrides, absences, trialApplications, setTrialApplications, englishLevels, learningPurposes }) {
+function AssistantPanel({ users, setUsers, courses, setCourses, materials, setMaterials, enrollments, setEnrollments, attendance, lang, setToast, currentUser, feedback, setFeedback, teacherAvailability, setTeacherAvailability, availabilityOverrides, setAvailabilityOverrides, absences, trialApplications, setTrialApplications, englishLevels, learningPurposes, studentMatSubs, setStudentMatSubs }) {
   const t = T[lang];
   const [tab, setTab] = useState("courses");
   const pendingTrialCount = (trialApplications||[]).filter(a=>a.status==="pending").length;
+  const pendingStudentMatCount = (studentMatSubs||[]).filter(s=>s.status==="pending").length;
   const tabs = [
     {key:"courses", label:t.courses},
     {key:"feedback", label:t.feedbackCenterTitle},
+    {key:"studentmat", label:lang==="zh"?"學生教材投稿":"Student Materials", badge:pendingStudentMatCount},
     {key:"availability", label:t.availability},
     {key:"peopledir", label:t.peopleDir},
     {key:"trial", label:lang==="zh"?"試聽申請":"Trial Applications", badge:pendingTrialCount},
@@ -7731,6 +7883,7 @@ function AssistantPanel({ users, setUsers, courses, setCourses, materials, setMa
       </div>
       {tab==="courses"&&<CourseManager users={users} courses={courses} setCourses={setCourses} lang={lang} setToast={setToast} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} absences={absences}/>}
       {tab==="feedback"&&<FeedbackCenter users={users} courses={courses} enrollments={enrollments} attendance={attendance} absences={absences} feedback={feedback||[]} setFeedback={setFeedback} lang={lang} setToast={setToast} currentUser={currentUser} materials={materials} setMaterials={setMaterials}/>}
+      {tab==="studentmat"&&<StudentMaterialReviewPanel users={users} courses={courses} enrollments={enrollments} materials={materials||[]} setMaterials={setMaterials} studentMatSubs={studentMatSubs||[]} setStudentMatSubs={setStudentMatSubs} currentUser={currentUser} lang={lang} setToast={setToast}/>}
       {tab==="availability"&&<AdminTeacherAvailability users={users} courses={courses} availability={teacherAvailability||[]} setAvailability={setTeacherAvailability} overrides={availabilityOverrides||[]} setOverrides={setAvailabilityOverrides} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang} setToast={setToast} readOnly/>}
       {tab==="peopledir" &&<PeopleDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses} hideSalary readOnly/>}
       {tab==="trial" &&<TrialApplicationsPanel users={users} setUsers={setUsers} lang={lang} setToast={setToast} trialApplications={trialApplications||[]} setTrialApplications={setTrialApplications} englishLevels={englishLevels||[]} learningPurposes={learningPurposes||[]} hideOptions/>}
@@ -7787,8 +7940,15 @@ function FeedbackCenter({ users, courses, enrollments, attendance, absences, fee
   const [selected, setSelected] = useState(new Set()); // selected feedback ids (pending only)
   const [showBatchInput, setShowBatchInput] = useState(false);
   const [batchInputCourseId, setBatchInputCourseId] = useState(null);
-  const [overviewStudents, setOverviewStudents] = useState(new Set()); // selected student ids for the Overview sub-tab
+  const [overviewStudents, setOverviewStudents] = useState(new Set()); // optional narrow-down; empty = all students
   const [showOverviewPicker, setShowOverviewPicker] = useState(false);
+  const [overviewSearch, setOverviewSearch] = useState(""); // free-text: feedback content, student, teacher, course
+  const [overviewTeacherId, setOverviewTeacherId] = useState(""); // "" = all teachers
+  const [overviewStatusFilter, setOverviewStatusFilter] = useState("all"); // all | pending | approved | rejected | none
+  const todayStr0 = new Date().toISOString().slice(0,10);
+  const [overviewAllTime, setOverviewAllTime] = useState(false);
+  const [overviewDateFrom, setOverviewDateFrom] = useState(new Date(Date.now()-30*86400000).toISOString().slice(0,10));
+  const [overviewDateTo, setOverviewDateTo] = useState(todayStr0);
   // For "NO — 沿用教材" items: whether to also carry the material forward
   // when approving. Defaults to checked, since that's the whole point of the
   // quick action — admin just needs to uncheck it if they'd rather handle it
@@ -7797,6 +7957,7 @@ function FeedbackCenter({ users, courses, enrollments, attendance, absences, fee
   const continueChecked = (f) => continueChecks[f.id] ?? true;
 
   const allStudentUsers = users.filter(u=>u.role==="student");
+  const allTeacherUsers = users.filter(u=>u.role==="teacher");
 
   const getCourse = id => courses.find(c=>c.id===id);
   const getUser = id => users.find(u=>u.id===id);
@@ -7823,7 +7984,7 @@ function FeedbackCenter({ users, courses, enrollments, attendance, absences, fee
   };
   const getMaterialStatusMeta = (f) => {
     const hasCurrentMat = (materials||[]).some(m=>m.courseId===f.courseId && m.date===f.date);
-    if (f.nextMaterialStatus==="yes") return {bg:"#E8F5E9", color:"#2E7D32", icon:"✅", label:lang==="zh"?"教材已備妥":"Material ready", note:lang==="zh"?"請協助提供下一堂教材":"Please help prepare the next lesson's material", hasCurrentMat};
+    if (f.nextMaterialStatus==="yes") return {bg:"#E8F5E9", color:"#2E7D32", icon:"✅", label:lang==="zh"?"教材已上完（已結束）":"Material completed", note:lang==="zh"?"請協助提供下一堂教材":"Please help prepare the next lesson's material", hasCurrentMat};
     if (f.nextMaterialStatus==="no_continue") return {bg:"#FFF3E0", color:"#E65100", icon:"🔄", label:lang==="zh"?"尚未完成，沿用教材":"Not finished — reuse material", note: hasCurrentMat ? (lang==="zh"?"下次上課沿用本堂教材":"Reuse this class's material next time") : (lang==="zh"?"（此堂沒有登記教材，無法自動沿用）":"(no material logged for this class — can't auto-carry it forward)"), hasCurrentMat};
     return {bg:"#FFF3E0", color:"#E65100", icon:"📝", label:lang==="zh"?"尚未完成，下次主題":"Not finished — next topic", note: f.nextMaterialNote||"—", hasCurrentMat};
   };
@@ -7947,20 +8108,38 @@ function FeedbackCenter({ users, courses, enrollments, attendance, absences, fee
 
   const openBatchInputFor = (courseId) => { setBatchInputCourseId(courseId); setShowBatchInput(true); };
 
-  // ── Overview: all sessions (with any feedback attached) for the selected student(s), grouped by week ──
-  const overviewRows = overviewStudents.size>0
-    ? enrollments
-        .filter(enr => overviewStudents.has(enr.studentId))
-        .flatMap(enr => {
-          const course = courses.find(c=>c.id===enr.courseId);
-          if (!course) return [];
-          return (enr.scheduledDates||[]).map(s => ({
-            course, enrollment: enr, studentId: enr.studentId,
-            date: s.date, dayIndex: s.dayIndex, sessionNo: s.sessionNo, customStart: s.customStart,
-            fb: (feedback||[]).find(f=>f.enrollmentId===enr.id && f.date===s.date) || null,
-          }));
-        })
-    : [];
+  // ── Overview: searchable/filterable browse across ALL feedback + material
+  // status — no longer requires picking students first. Student picker is
+  // now an optional extra narrow-down, same as the teacher/status/date filters.
+  const overviewRows = enrollments
+    .flatMap(enr => {
+      const course = courses.find(c=>c.id===enr.courseId);
+      if (!course) return [];
+      if (overviewStudents.size>0 && !overviewStudents.has(enr.studentId)) return [];
+      if (overviewTeacherId && course.teacherId!==overviewTeacherId) return [];
+      return (enr.scheduledDates||[])
+        .filter(s => overviewAllTime || (s.date>=overviewDateFrom && s.date<=overviewDateTo))
+        .map(s => ({
+          course, enrollment: enr, studentId: enr.studentId,
+          date: s.date, dayIndex: s.dayIndex, sessionNo: s.sessionNo, customStart: s.customStart,
+          fb: (feedback||[]).find(f=>f.enrollmentId===enr.id && f.date===s.date) || null,
+        }));
+    })
+    .filter(r => {
+      if (overviewStatusFilter==="all") return true;
+      if (overviewStatusFilter==="none") return !r.fb;
+      return r.fb?.status === overviewStatusFilter;
+    })
+    .filter(r => {
+      const q = overviewSearch.trim().toLowerCase();
+      if (!q) return true;
+      const student = getUser(r.studentId);
+      const teacher = getUser(r.course.teacherId);
+      return (r.fb?.text||"").toLowerCase().includes(q)
+        || (student?.name||"").toLowerCase().includes(q)
+        || (teacher?.name||"").toLowerCase().includes(q)
+        || r.course.subject.toLowerCase().includes(q);
+    });
   const overviewByWeek = {};
   overviewRows.forEach(r => {
     const wk = getMondayKey(r.date);
@@ -8256,43 +8435,73 @@ function FeedbackCenter({ users, courses, enrollments, attendance, absences, fee
         <>
           <p style={{fontSize:12,color:"#9E9E9E",margin:"0 0 12px"}}>{t.fbOverviewDesc}</p>
 
-          {/* Student multi-select picker (same pattern as the admin schedule filter) */}
-          <div style={{position:"relative",marginBottom:16}}>
-            <button onClick={()=>setShowOverviewPicker(p=>!p)} style={{display:"flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:7,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13,cursor:"pointer"}}>
-              👤 {overviewStudents.size===0
-                ? t.fbSelectStudents
-                : (lang==="zh"?`已選 ${overviewStudents.size} 位學生`:`${overviewStudents.size} student(s) selected`)}
-              <span style={{fontSize:9,color:"#9E9E9E"}}>{showOverviewPicker?"▲":"▼"}</span>
+          {/* Filter toolbar — search + teacher + status + date range, all optional and combinable */}
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10,alignItems:"flex-end"}}>
+            <div style={{flex:"1 1 200px",minWidth:160}}>
+              <label style={{display:"block",fontSize:11,color:"#9E9E9E",marginBottom:3}}>{lang==="zh"?"搜尋":"Search"}</label>
+              <input value={overviewSearch} onChange={e=>setOverviewSearch(e.target.value)} placeholder={lang==="zh"?"反饋內容、學生、老師、課程…":"Feedback text, student, teacher, course…"} style={{width:"100%",boxSizing:"border-box",padding:"7px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",fontSize:12}}/>
+            </div>
+            <div style={{minWidth:120}}>
+              <label style={{display:"block",fontSize:11,color:"#9E9E9E",marginBottom:3}}>{lang==="zh"?"老師":"Teacher"}</label>
+              <select value={overviewTeacherId} onChange={e=>setOverviewTeacherId(e.target.value)} style={{width:"100%",boxSizing:"border-box",padding:"7px 8px",borderRadius:6,border:"0.5px solid #CFD8DC",fontSize:12,background:"#fff"}}>
+                <option value="">{lang==="zh"?"全部老師":"All teachers"}</option>
+                {allTeacherUsers.map(te=><option key={te.id} value={te.id}>{te.name}</option>)}
+              </select>
+            </div>
+            <div style={{minWidth:120}}>
+              <label style={{display:"block",fontSize:11,color:"#9E9E9E",marginBottom:3}}>{lang==="zh"?"狀態":"Status"}</label>
+              <select value={overviewStatusFilter} onChange={e=>setOverviewStatusFilter(e.target.value)} style={{width:"100%",boxSizing:"border-box",padding:"7px 8px",borderRadius:6,border:"0.5px solid #CFD8DC",fontSize:12,background:"#fff"}}>
+                <option value="all">{lang==="zh"?"全部":"All"}</option>
+                <option value="none">{t.fbNotWritten}</option>
+                <option value="pending">{STATUS_META.pending.label}</option>
+                <option value="approved">{STATUS_META.approved.label}</option>
+                <option value="rejected">{STATUS_META.rejected.label}</option>
+              </select>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16,alignItems:"center"}}>
+            <button onClick={()=>setOverviewAllTime(v=>!v)} style={{padding:"6px 12px",borderRadius:6,fontSize:12,cursor:"pointer",border:overviewAllTime?"none":"0.5px solid #CFD8DC",background:overviewAllTime?"#1A6B8A":"transparent",color:overviewAllTime?"#fff":"#546E7A",fontWeight:overviewAllTime?600:400}}>
+              {lang==="zh"?"不限日期":"All time"}
             </button>
-            {showOverviewPicker && (
-              <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,zIndex:50,background:"#FFFFFF",border:"0.5px solid #CFD8DC",borderRadius:8,boxShadow:"0 4px 16px rgba(23,47,57,0.15)",minWidth:220,maxHeight:300,overflowY:"auto",padding:"6px 0"}}>
-                {allStudentUsers.length===0 && <div style={{padding:"10px 12px",fontSize:12,color:"#9E9E9E"}}>—</div>}
-                {allStudentUsers.map(s=>(
-                  <label key={s.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 12px",fontSize:12,color:"#546E7A",cursor:"pointer"}}>
-                    <input type="checkbox" checked={overviewStudents.has(s.id)} onChange={()=>setOverviewStudents(prev=>{const n=new Set(prev); n.has(s.id)?n.delete(s.id):n.add(s.id); return n;})} style={{cursor:"pointer"}}/>
-                    {s.name}
-                  </label>
-                ))}
-                <div style={{padding:"6px 12px",borderTop:"0.5px solid #F0F0F0",marginTop:4,display:"flex",gap:6}}>
-                  <button onClick={()=>setOverviewStudents(new Set())} style={{flex:1,padding:"6px",borderRadius:5,background:"transparent",border:"0.5px solid #CFD8DC",color:"#9E9E9E",fontSize:11,cursor:"pointer"}}>
-                    {lang==="zh"?"清除":"Clear"}
-                  </button>
-                  <button onClick={()=>setShowOverviewPicker(false)} style={{flex:1,padding:"6px",borderRadius:5,background:"#1A6B8A",border:"none",color:"#fff",fontSize:11,cursor:"pointer"}}>
-                    {lang==="zh"?"完成":"Done"}
-                  </button>
-                </div>
-              </div>
+            {!overviewAllTime && (
+              <>
+                <input type="date" value={overviewDateFrom} onChange={e=>setOverviewDateFrom(e.target.value)} style={{padding:"6px 8px",borderRadius:6,border:"0.5px solid #CFD8DC",fontSize:12}}/>
+                <span style={{color:"#9E9E9E",fontSize:12}}>–</span>
+                <input type="date" value={overviewDateTo} onChange={e=>setOverviewDateTo(e.target.value)} style={{padding:"6px 8px",borderRadius:6,border:"0.5px solid #CFD8DC",fontSize:12}}/>
+              </>
             )}
+            {/* Optional extra narrow-down by student — no longer required to see anything */}
+            <div style={{position:"relative"}}>
+              <button onClick={()=>setShowOverviewPicker(p=>!p)} style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:6,border:"0.5px solid #CFD8DC",background:overviewStudents.size>0?"#EEF6FB":"#FFFFFF",color:"#172F39",fontSize:12,cursor:"pointer"}}>
+                👤 {overviewStudents.size===0
+                  ? (lang==="zh"?"篩選學生（選填）":"Filter by student (optional)")
+                  : (lang==="zh"?`已選 ${overviewStudents.size} 位學生`:`${overviewStudents.size} student(s) selected`)}
+                <span style={{fontSize:9,color:"#9E9E9E"}}>{showOverviewPicker?"▲":"▼"}</span>
+              </button>
+              {showOverviewPicker && (
+                <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,zIndex:50,background:"#FFFFFF",border:"0.5px solid #CFD8DC",borderRadius:8,boxShadow:"0 4px 16px rgba(23,47,57,0.15)",minWidth:220,maxHeight:300,overflowY:"auto",padding:"6px 0"}}>
+                  {allStudentUsers.length===0 && <div style={{padding:"10px 12px",fontSize:12,color:"#9E9E9E"}}>—</div>}
+                  {allStudentUsers.map(s=>(
+                    <label key={s.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 12px",fontSize:12,color:"#546E7A",cursor:"pointer"}}>
+                      <input type="checkbox" checked={overviewStudents.has(s.id)} onChange={()=>setOverviewStudents(prev=>{const n=new Set(prev); n.has(s.id)?n.delete(s.id):n.add(s.id); return n;})} style={{cursor:"pointer"}}/>
+                      {s.name}
+                    </label>
+                  ))}
+                  <div style={{padding:"6px 12px",borderTop:"0.5px solid #F0F0F0",marginTop:4,display:"flex",gap:6}}>
+                    <button onClick={()=>setOverviewStudents(new Set())} style={{flex:1,padding:"6px",borderRadius:5,background:"transparent",border:"0.5px solid #CFD8DC",color:"#9E9E9E",fontSize:11,cursor:"pointer"}}>
+                      {lang==="zh"?"清除":"Clear"}
+                    </button>
+                    <button onClick={()=>setShowOverviewPicker(false)} style={{flex:1,padding:"6px",borderRadius:5,background:"#1A6B8A",border:"none",color:"#fff",fontSize:11,cursor:"pointer"}}>
+                      {lang==="zh"?"完成":"Done"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+            <span style={{fontSize:11,color:"#9E9E9E",marginLeft:"auto"}}>{lang==="zh"?`共 ${overviewRows.length} 筆`:`${overviewRows.length} result(s)`}</span>
           </div>
 
-          {overviewStudents.size===0 && (
-            <div style={{textAlign:"center",padding:"2.5rem 0",color:"#9E9E9E"}}>
-              <div style={{fontSize:28,marginBottom:8}}>👤</div>
-              <div style={{fontSize:13}}>{t.fbOverviewSelectPrompt}</div>
-            </div>
-          )}
-
-          {overviewStudents.size>0 && overviewWeekKeys.length===0 && (
+          {overviewWeekKeys.length===0 && (
             <div style={{textAlign:"center",padding:"2.5rem 0",color:"#9E9E9E"}}>
               <div style={{fontSize:28,marginBottom:8}}>📭</div>
               <div style={{fontSize:13}}>{t.fbOverviewNoSessions}</div>
@@ -8314,6 +8523,7 @@ function FeedbackCenter({ users, courses, enrollments, attendance, absences, fee
                   const teacher = getUser(r.course.teacherId);
                   const student = getUser(r.studentId);
                   const meta = r.fb ? STATUS_META[r.fb.status] : null;
+                  const matMeta = r.fb?.nextMaterialStatus ? getMaterialStatusMeta(r.fb) : null;
                   return (
                     <div key={i} style={{background:"#FFFFFF",border:`1px solid ${meta?meta.color+"33":"#E0E0E0"}`,borderRadius:9,padding:"10px 14px",marginBottom:8}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,flexWrap:"wrap",marginBottom:r.fb?8:0}}>
@@ -8323,7 +8533,7 @@ function FeedbackCenter({ users, courses, enrollments, attendance, absences, fee
                             {r.date} ({T[lang].days[r.dayIndex]}) · #{r.sessionNo} · {r.customStart || getCourseStartForDay(r.course, r.dayIndex)}
                           </div>
                           <div style={{fontSize:11,color:"#546E7A",marginTop:2}}>
-                            {overviewStudents.size>1 && <>{student?.name||"—"} · </>}{teacher?.name||"—"}
+                            {student?.name||"—"} · {teacher?.name||"—"}
                           </div>
                         </div>
                         {meta
@@ -8332,8 +8542,16 @@ function FeedbackCenter({ users, courses, enrollments, attendance, absences, fee
                         }
                       </div>
                       {r.fb && (
-                        <div style={{background:"#F5F5F5",borderRadius:7,padding:"9px 12px",fontSize:12,color:"#172F39",lineHeight:1.7,whiteSpace:"pre-wrap"}}>
+                        <div style={{background:"#F5F5F5",borderRadius:7,padding:"9px 12px",fontSize:12,color:"#172F39",lineHeight:1.7,whiteSpace:"pre-wrap",marginBottom:matMeta?6:0}}>
                           {r.fb.text}
+                        </div>
+                      )}
+                      {matMeta && (
+                        <div style={{background:matMeta.bg,borderRadius:6,padding:"6px 10px",display:"flex",alignItems:"flex-start",gap:6}}>
+                          <span style={{fontSize:12,flexShrink:0}}>{matMeta.icon}</span>
+                          <div style={{fontSize:11,color:matMeta.color}}>
+                            <strong>{matMeta.label}</strong><span style={{marginLeft:4}}>{matMeta.note}</span>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -8891,6 +9109,129 @@ function StudentProgressPanel({ currentUser, enrollments, attendance, courses, l
           <div style={{fontSize:12,color:"#7B1FA2",fontWeight:600}}>{lang==="zh"?"🎉 已達最高等級！":"🎉 You've reached the top tier!"}</div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Student self-submitted materials ─────────────────────────────────────────
+// Only shown to students the admin has explicitly opted in (canSubmitMaterials).
+// Lists eligible upcoming sessions (>24h away, near→far), one row each, with
+// its own independent save/submit — never a big batch submit. Every
+// submission goes to pending review; nothing reaches the teacher until an
+// admin/assistant approves it.
+function StudentMaterialSubmitPanel({ currentUser, courses, enrollments, materials, attendance, absences, studentMatSubs, setStudentMatSubs, lang, setToast }) {
+  const [drafts, setDrafts] = useState({}); // key -> {title, url}
+  const keyFor = (s) => `${s.enr.id}_${s.date}`;
+  const draftFor = (s) => drafts[keyFor(s)] || {title:"", url:""};
+  const setDraft = (s, patch) => setDrafts(d=>({...d, [keyFor(s)]: {...draftFor(s), ...patch}}));
+
+  const mySessions = enrollments
+    .filter(enr => enr.studentId === currentUser.id && enr.status!=="discontinued")
+    .flatMap(enr => {
+      const course = courses.find(c => c.id === enr.courseId);
+      if (!course || course.status==="archived") return [];
+      return (enr.scheduledDates||[]).map(s => ({
+        course, enr, date: s.date, dayIndex: s.dayIndex,
+        start: s.customStart || getCourseStartForDay(course, s.dayIndex),
+        sessionNo: s.sessionNo,
+      }));
+    })
+    .filter(s => hoursUntilSession(s.date, s.start) > 24)
+    .filter(s => {
+      const attRec = (attendance||[]).find(a=>a.enrollmentId===s.enr.id && a.date===s.date);
+      if (attRec && attRec.type!=="other") return false;
+      const selfAbs = (absences||[]).find(a=>a.courseId===s.course.id && a.dateStr===s.date);
+      if (selfAbs) return false;
+      return true;
+    })
+    .sort((a,b) => a.date.localeCompare(b.date) || a.start.localeCompare(b.start));
+
+  const submitFor = (s) => {
+    const draft = draftFor(s);
+    if (!draft.title.trim() || !draft.url.trim()) return;
+    const existing = studentMatSubs.find(x=>x.enrollmentId===s.enr.id && x.date===s.date && x.studentId===currentUser.id);
+    const rec = {
+      id: existing?.id || genId(),
+      courseId: s.course.id, enrollmentId: s.enr.id, studentId: currentUser.id,
+      date: s.date, dayIndex: s.dayIndex,
+      title: draft.title.trim(), url: draft.url.trim(),
+      status: "pending",
+      submittedAt: new Date().toISOString(),
+      reviewedAt: "", reviewedBy: "", reviewNote: "",
+    };
+    setStudentMatSubs(prev => existing ? prev.map(x=>x.id===existing.id?rec:x) : [...(prev||[]), rec]);
+    setDrafts(d=>{const n={...d}; delete n[keyFor(s)]; return n;});
+    setToast(lang==="zh"?"已送出，等待審核":"Submitted — waiting for review");
+  };
+
+  return (
+    <div style={{padding:"1.25rem 1rem"}}>
+      <h3 style={{fontSize:15,fontWeight:600,color:"#172F39",margin:"0 0 4px"}}>{lang==="zh"?"自行準備教材":"Submit Your Own Material"}</h3>
+      <p style={{fontSize:12,color:"#9E9E9E",margin:"0 0 1rem",lineHeight:1.6}}>
+        {lang==="zh"
+          ? "只能為 24 小時以後的課堂準備教材（太臨時老師會來不及看）。送出後需要管理員或助教審核通過，老師才看得到。"
+          : "You can only submit material for a session more than 24 hours away (anything sooner is too last-minute for the teacher). Submissions need admin/assistant approval before the teacher can see them."}
+      </p>
+      {mySessions.length===0 ? (
+        <div style={{textAlign:"center",padding:"2.5rem 0",color:"#9E9E9E"}}><div style={{fontSize:28,marginBottom:8}}>📭</div><div style={{fontSize:13}}>{lang==="zh"?"目前沒有符合條件（24小時以後）的課堂":"No sessions currently more than 24 hours away"}</div></div>
+      ) : mySessions.map((s,i) => {
+        const key = keyFor(s);
+        const existingSub = studentMatSubs.find(x=>x.enrollmentId===s.enr.id && x.date===s.date && x.studentId===currentUser.id);
+        const existingMats = (materials||[]).filter(m=>m.courseId===s.course.id && m.date===s.date);
+        const draft = draftFor(s);
+        const isEditing = !existingSub || existingSub.status==="rejected";
+        return (
+          <div key={i} style={{background:"#FFFFFF",border:"1px solid #E0E0E0",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
+            <div style={{fontSize:12,fontWeight:600,color:"#172F39"}}>{s.course.subject}</div>
+            <div style={{fontSize:11,color:"#9E9E9E",marginTop:2,marginBottom:8}}>{s.date} ({T[lang].days[s.dayIndex]}) · {s.start} · #{s.sessionNo}</div>
+
+            {existingMats.length>0 && (
+              <div style={{background:"#FFF3E0",borderRadius:6,padding:"6px 10px",marginBottom:8,fontSize:11,color:"#E65100"}}>
+                ⚠️ {lang==="zh"?"老師已經有這堂的教材了，你送出的會被當作補充，由管理員/助教審核後決定新增或取代":"The teacher already has material for this class — yours will be treated as a supplement; admin/assistant will decide whether to add it or replace the existing one"}
+              </div>
+            )}
+
+            {existingSub && existingSub.status==="pending" && (
+              <div style={{background:"#FFF3E0",borderRadius:7,padding:"9px 11px",fontSize:12,color:"#E65100"}}>
+                ⏳ {lang==="zh"?"待審核":"Pending review"}：{existingSub.title}
+                <div style={{fontSize:11,color:"#9E9E9E",wordBreak:"break-all",marginTop:2}}>{existingSub.url}</div>
+              </div>
+            )}
+            {existingSub && existingSub.status==="approved" && (
+              <div style={{background:"#E8F5E9",borderRadius:7,padding:"9px 11px",fontSize:12,color:"#2E7D32"}}>
+                ✓ {lang==="zh"?"已核准":"Approved"}：{existingSub.title}
+                <div style={{fontSize:11,color:"#9E9E9E",wordBreak:"break-all",marginTop:2}}>{existingSub.url}</div>
+              </div>
+            )}
+            {existingSub && existingSub.status==="rejected" && (
+              <div style={{background:"#FFEBEE",borderRadius:7,padding:"9px 11px",fontSize:12,color:"#D32F2F",marginBottom:8}}>
+                ✕ {lang==="zh"?"已退回":"Rejected"}{existingSub.reviewNote?`：${existingSub.reviewNote}`:""}
+                <div style={{fontSize:11,color:"#9E9E9E",marginTop:2}}>{lang==="zh"?"可以修改後重新送出":"You can edit and resubmit below"}</div>
+              </div>
+            )}
+
+            {isEditing && (
+              <div style={{marginTop:existingSub?8:0}}>
+                <input
+                  value={draft.title}
+                  onChange={e=>setDraft(s,{title:e.target.value})}
+                  placeholder={lang==="zh"?"教材標題":"Material title"}
+                  style={{width:"100%",boxSizing:"border-box",padding:"7px 9px",borderRadius:6,border:"0.5px solid #CFD8DC",fontSize:12,marginBottom:6}}
+                />
+                <input
+                  value={draft.url}
+                  onChange={e=>setDraft(s,{url:e.target.value})}
+                  placeholder="https://..."
+                  style={{width:"100%",boxSizing:"border-box",padding:"7px 9px",borderRadius:6,border:"0.5px solid #CFD8DC",fontSize:12,marginBottom:8}}
+                />
+                <button onClick={()=>submitFor(s)} disabled={!draft.title.trim()||!draft.url.trim()} style={{padding:"6px 16px",borderRadius:6,background:(draft.title.trim()&&draft.url.trim())?"#1A6B8A":"#E0E0E0",border:"none",color:(draft.title.trim()&&draft.url.trim())?"#fff":"#9E9E9E",fontSize:12,fontWeight:600,cursor:(draft.title.trim()&&draft.url.trim())?"pointer":"not-allowed"}}>
+                  {lang==="zh"?"送出":"Submit"}
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -10691,7 +11032,7 @@ function StudentTeacherIntroPanel({ currentUser, users, courses, teacherDirEntri
   );
 }
 
-function StudentTeacherLayout({ currentUser, users, setUsers, courses, setCourses, lang, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, setToast, feedback, setFeedback, teacherAvailability, setTeacherAvailability, availabilityOverrides, setAvailabilityOverrides, profileChanges, setProfileChanges, dirEntries, saveDirEntries, dirLoaded, teacherDirEntries, saveTeacherDirEntries, teacherDirLoaded, trialApplications, setTrialApplications, englishLevels, learningPurposes, sideTabRequest }) {
+function StudentTeacherLayout({ currentUser, users, setUsers, courses, setCourses, lang, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, setToast, feedback, setFeedback, teacherAvailability, setTeacherAvailability, availabilityOverrides, setAvailabilityOverrides, profileChanges, setProfileChanges, dirEntries, saveDirEntries, dirLoaded, teacherDirEntries, saveTeacherDirEntries, teacherDirLoaded, trialApplications, setTrialApplications, englishLevels, learningPurposes, sideTabRequest, studentMatSubs, setStudentMatSubs }) {
   const t = T[lang];
   const isStudent = currentUser.role==="student";
   const isTeacher = currentUser.role==="teacher";
@@ -10721,6 +11062,7 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, setCourse
         { key:"progress",      icon:"🏆", zh:"獎牌進度", en:"My Progress" },
         { key:"history",       icon:"📋", zh:"課程紀錄", en:"Class History"},
         { key:"teacherIntro",  icon:"🎓", zh:"老師介紹", en:"My Teachers" },
+        ...(currentUser.canSubmitMaterials ? [{ key:"submitMaterials", icon:"📚", zh:"自行準備教材", en:"Submit Material" }] : []),
         { key:"settings",      icon:"⚙️", zh:"基本資訊與設定", en:"Basic Info & Settings" },
         { key:"schedule_side", icon:"📅", zh:"課表",     en:"Schedule"   },
         ...sharedSchedules.map(s => ({
@@ -10837,6 +11179,8 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, setCourse
               ? <StudentClassHistory currentUser={currentUser} enrollments={enrollments} attendance={attendance} courses={courses} users={users} lang={lang} dirLoaded={dirLoaded} feedback={feedback}/>
             : isStudent && sideTab==="teacherIntro"
               ? <StudentTeacherIntroPanel currentUser={currentUser} users={users} courses={courses} teacherDirEntries={teacherDirEntries} dirLoaded={dirLoaded} lang={lang}/>
+            : isStudent && currentUser.canSubmitMaterials && sideTab==="submitMaterials"
+              ? <StudentMaterialSubmitPanel currentUser={currentUser} courses={courses} enrollments={enrollments} materials={materials} attendance={attendance} absences={absences} studentMatSubs={studentMatSubs} setStudentMatSubs={setStudentMatSubs} lang={lang} setToast={setToast}/>
             : isStudent && sideTab==="settings"
               ? <StudentSettingsPanel currentUser={currentUser} users={users} setUsers={setUsers} dirEntries={dirEntries} saveDirEntries={saveDirEntries} dirLoaded={dirLoaded} profileChanges={profileChanges} setProfileChanges={setProfileChanges} lang={lang} setToast={setToast}/>
             : isTeacher && sideTab==="students"
@@ -11038,6 +11382,7 @@ export default function App() {
   // Trial-lesson applications submitted from the public login page, plus the
   // two admin-editable dropdown option lists used on that form.
   const [trialApplications,setTrialApplications,trialLoaded]=useStorage("cp3_trial_applications",[]);
+  const [studentMatSubs,setStudentMatSubs]=useStorage("cp3_student_material_submissions",[]);
   const [englishLevels,setEnglishLevels,elLoaded]=useStorage("cp3_english_levels",DEFAULT_ENGLISH_LEVELS);
   const [learningPurposes,setLearningPurposes,lpLoaded]=useStorage("cp3_learning_purposes",DEFAULT_LEARNING_PURPOSES);
   const [toast,setToastMsg]=useState("");
@@ -11186,7 +11531,7 @@ export default function App() {
         {isAdmin && (
           <div className="es-content-card" style={{background:"#FFFFFF",borderRadius:14,border:"0.5px solid #E0E0E0",boxShadow:"0 2px 12px rgba(23,47,57,0.06)",padding:"1.5rem"}}>
             {activeTab==="schedule"&&<ScheduleView currentUser={currentUser} users={users} courses={courses} lang={lang} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} setToast={setToast} feedback={feedback} setFeedback={setFeedback}/>}
-            {activeTab==="admin"&&<AdminPanel users={users} setUsers={setUsers} courses={courses} setCourses={setCourses} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} lang={lang} setToast={setToast} introText={introText} setIntroText={setIntroText} feedback={feedback} setFeedback={setFeedback} teacherAvailability={teacherAvailability} setTeacherAvailability={setTeacherAvailability} availabilityOverrides={availabilityOverrides} setAvailabilityOverrides={setAvailabilityOverrides} profileChanges={profileChanges} setProfileChanges={setProfileChanges} onImpersonate={startImpersonating} trialApplications={trialApplications} setTrialApplications={setTrialApplications} englishLevels={englishLevels} setEnglishLevels={setEnglishLevels} learningPurposes={learningPurposes} setLearningPurposes={setLearningPurposes} initialTab={adminInitialTab} currentUser={currentUser}/>}
+            {activeTab==="admin"&&<AdminPanel users={users} setUsers={setUsers} courses={courses} setCourses={setCourses} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} lang={lang} setToast={setToast} introText={introText} setIntroText={setIntroText} feedback={feedback} setFeedback={setFeedback} teacherAvailability={teacherAvailability} setTeacherAvailability={setTeacherAvailability} availabilityOverrides={availabilityOverrides} setAvailabilityOverrides={setAvailabilityOverrides} profileChanges={profileChanges} setProfileChanges={setProfileChanges} onImpersonate={startImpersonating} trialApplications={trialApplications} setTrialApplications={setTrialApplications} englishLevels={englishLevels} setEnglishLevels={setEnglishLevels} learningPurposes={learningPurposes} setLearningPurposes={setLearningPurposes} initialTab={adminInitialTab} currentUser={currentUser} studentMatSubs={studentMatSubs} setStudentMatSubs={setStudentMatSubs}/>}
           </div>
         )}
 
@@ -11194,7 +11539,7 @@ export default function App() {
         {isAssistant && (
           <div className="es-content-card" style={{background:"#FFFFFF",borderRadius:14,border:"0.5px solid #E0E0E0",boxShadow:"0 2px 12px rgba(23,47,57,0.06)",padding:"1.5rem"}}>
             {activeTab==="schedule"&&<ScheduleView currentUser={currentUser} users={users} courses={courses} lang={lang} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} setToast={setToast} feedback={feedback} setFeedback={setFeedback}/>}
-            {activeTab==="assistant"&&<AssistantPanel users={users} setUsers={setUsers} courses={courses} setCourses={setCourses} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} lang={lang} setToast={setToast} currentUser={currentUser} feedback={feedback} setFeedback={setFeedback} teacherAvailability={teacherAvailability} setTeacherAvailability={setTeacherAvailability} availabilityOverrides={availabilityOverrides} setAvailabilityOverrides={setAvailabilityOverrides} absences={absences} trialApplications={trialApplications} setTrialApplications={setTrialApplications} englishLevels={englishLevels} learningPurposes={learningPurposes}/>}
+            {activeTab==="assistant"&&<AssistantPanel users={users} setUsers={setUsers} courses={courses} setCourses={setCourses} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} lang={lang} setToast={setToast} currentUser={currentUser} feedback={feedback} setFeedback={setFeedback} teacherAvailability={teacherAvailability} setTeacherAvailability={setTeacherAvailability} availabilityOverrides={availabilityOverrides} setAvailabilityOverrides={setAvailabilityOverrides} absences={absences} trialApplications={trialApplications} setTrialApplications={setTrialApplications} englishLevels={englishLevels} learningPurposes={learningPurposes} studentMatSubs={studentMatSubs} setStudentMatSubs={setStudentMatSubs}/>}
           </div>
         )}
 
@@ -11215,6 +11560,7 @@ export default function App() {
             trialApplications={trialApplications} setTrialApplications={setTrialApplications}
             englishLevels={englishLevels} learningPurposes={learningPurposes}
             sideTabRequest={sideTabRequest}
+            studentMatSubs={studentMatSubs} setStudentMatSubs={setStudentMatSubs}
             setToast={setToast}
           />
         )}
