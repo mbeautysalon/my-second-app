@@ -84,7 +84,7 @@ const T = {
     absentSendEmail:"發送 Email", absentSendFB:"發送 Facebook 訊息", absentSendLINE:"發送 LINE 訊息",
     confirmAbsent:"確認送出請假",
     notifySuccess:"✓ 已通知管理者", leaveRecord:"請假紀錄",
-    courseDetails:"課程明細", completedNote:"已完課 = 已發生且未請假的堂數；剩餘課程 = 尚未發生、未來還會上的堂數",
+    courseDetails:"課程明細", completedNote:"已完課 = 已發生且沒有請假／缺席（學生或老師）的堂數；剩餘課程 = 尚未發生的堂數",
     absenceHistory:"請假紀錄", by:"by",
     // Materials
     materials:"教材管理", addMaterial:"新增教材", materialTitle:"教材名稱", materialUrl:"教材網址",
@@ -304,7 +304,7 @@ const T = {
     absentSendEmail:"Send Email", absentSendFB:"Send Facebook Message", absentSendLINE:"Send LINE Message",
     confirmAbsent:"Confirm Leave Request",
     notifySuccess:"✓ Admin notified", leaveRecord:"Leave Record",
-    courseDetails:"Course Details", completedNote:"Completed = past sessions with no leave; Remaining = future sessions still to come",
+    courseDetails:"Course Details", completedNote:"Completed = past sessions with no leave/absence (student or teacher); Remaining = sessions still to come",
     absenceHistory:"Absence History", by:"by",
     // Materials
     materials:"Materials", addMaterial:"Add Material", materialTitle:"Title", materialUrl:"URL",
@@ -501,7 +501,7 @@ const TRIAL_COLOR = {bg:"#FFFDE7",border:"#F9A825",text:"#F57F17"};
 // Bumped whenever a meaningful set of changes ships. Shown low-key on the
 // login page so version can be confirmed at a glance; also called out
 // whenever a new file is delivered.
-const APP_VERSION = "v1.2.8";
+const APP_VERSION = "v1.2.8.5";
 
 const genId = () => "id_" + Math.random().toString(36).slice(2,9);
 
@@ -4031,9 +4031,14 @@ function computeStats(courses, absences, allTime, dateFrom, dateTo, enrollments,
       const enr = courseEnrollments.find(e=>e.scheduledDates?.some(sd=>sd.date===s.date&&sd.dayIndex===s.dayIndex));
       const attRec = enr && (attendance||[]).find(a=>a.enrollmentId===enr.id&&a.date===s.date);
       if (attRec) {
+        // A session only counts as "completed" if it was GENUINELY,
+        // properly completed. Student absence, student leave, and teacher
+        // leave all mean it wasn't — none of them count, they're only
+        // tallied here as informational "how many times was this
+        // student/teacher away" counts.
         if (attRec.type==="absent") studentAbsent++;
         else if (attRec.type==="teacher_leave") teacherAbsent++;
-        else if (attRec.type==="excused") studentAbsent++; // excused still counts as student leave
+        else if (attRec.type==="excused") studentAbsent++;
         return;
       }
       // Fall back to self-reported absences from course view
@@ -4051,15 +4056,20 @@ function computeStats(courses, absences, allTime, dateFrom, dateTo, enrollments,
 }
 
 // ─── Teacher stats ────────────────────────────────────────────────────────────
-function TeacherStats({ users, courses, absences, attendance, enrollments, lang }) {
+function TeacherStats({ users, courses, absences, attendance, enrollments, lang, initialTeacherId, onClose, dirEntries, setToast }) {
   const t = T[lang];
   const teachers = users.filter(u=>u.role==="teacher");
-  const [selId, setSelId] = useState(teachers[0]?.id||"");
+  const [selId, setSelId] = useState(initialTeacherId || teachers[0]?.id||"");
   const [allTime, setAllTime] = useState(true);
   const today = new Date().toISOString().slice(0,10);
   const [dateFrom, setDateFrom] = useState(today.slice(0,7)+"-01");
   const [dateTo, setDateTo] = useState(today);
   const [sortOldFirst, setSortOldFirst] = useState(true);
+  const [showSalaryCalc, setShowSalaryCalc] = useState(false);
+  const [salaryCalcMode, setSalaryCalcMode] = useState("perSession"); // perSession | hourly
+  const [salaryRateValue, setSalaryRateValue] = useState("");
+  const [salarySaving, setSalarySaving] = useState(false);
+  const [salaryCalcPreviewed, setSalaryCalcPreviewed] = useState(false);
   const getName = id => users.find(u=>u.id===id)?.name||id;
   const iStyle={padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13};
 
@@ -4100,6 +4110,50 @@ function TeacherStats({ users, courses, absences, attendance, enrollments, lang 
   // often pay differently than 50-min ones).
   const completed25 = allSessions.filter(s=>s.status==="completed" && s.duration===25).length;
   const completed50 = allSessions.filter(s=>s.status==="completed" && s.duration===50).length;
+
+  // ── Salary calculator — turns the currently-selected teacher/date-range
+  // into an actual payment, saved straight into 師生資料庫's salary
+  // management (cp3_salary) for this teacher, no need to re-open that panel
+  // and re-enter the numbers by hand.
+  const salaryTotalHours = (completed25*25 + completed50*50) / 60;
+  const salaryCalcAmount = () => {
+    const rate = parseFloat(salaryRateValue) || 0;
+    if (!rate) return 0;
+    return salaryCalcMode==="perSession" ? rate*completedCount : rate*salaryTotalHours;
+  };
+  const saveSalaryCalc = async () => {
+    const amount = salaryCalcAmount();
+    if (!amount || amount<=0) return;
+    const teacherEntry = (dirEntries||[]).find(d=>d.linkedUserId===selId);
+    if (!teacherEntry) {
+      setToast?.(lang==="zh"?"這位老師還沒有師生資料庫的老師資料，無法儲存薪資":"This teacher has no 師生資料庫 entry yet — can't save a salary record");
+      return;
+    }
+    setSalarySaving(true);
+    try {
+      const r = await window.storage.get("cp3_salary");
+      const records = r?.value ? JSON.parse(r.value) : [];
+      const periodLabel2 = allTime ? (lang==="zh"?"全部時間":"all time") : `${dateFrom} ~ ${dateTo}`;
+      const rec = {
+        id: genId(), teacherEntryId: teacherEntry.id,
+        amount: Math.round(amount*100)/100,
+        date: new Date().toISOString().slice(0,10),
+        note: lang==="zh"
+          ? `老師統計試算（${periodLabel2}，共 ${completedCount} 堂：25分×${completed25}、50分×${completed50}）`
+          : `Auto-calculated from Teacher Stats (${periodLabel2}, ${completedCount} session(s): 25min×${completed25}, 50min×${completed50})`,
+        recordedAt: new Date().toISOString(),
+      };
+      await window.storage.set("cp3_salary", JSON.stringify([...records, rec]));
+      setToast?.(lang==="zh"?"已儲存至薪資管理，最新一筆已更新":"Saved to salary management — the latest record is now updated");
+      setShowSalaryCalc(false);
+      setSalaryRateValue("");
+      setSalaryCalcPreviewed(false);
+    } catch {
+      setToast?.(lang==="zh"?"儲存失敗，請稍後再試":"Failed to save — please try again");
+    } finally {
+      setSalarySaving(false);
+    }
+  };
 
   // ── Salary notification text — admin-only (this whole page already is).
   // Two ready-to-send phrasings, generated from whatever teacher/date-range
@@ -4164,7 +4218,7 @@ Thank you!`;
     URL.revokeObjectURL(url);
   };
 
-  return (
+  const content = (
     <div>
       <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:"1.25rem",flexWrap:"wrap"}}>
         <div>
@@ -4173,6 +4227,48 @@ Thank you!`;
             {teachers.map(te=><option key={te.id} value={te.id}>{te.name}</option>)}
           </select>
         </div>
+      </div>
+      {/* Salary calculator — turns the selected teacher/date-range directly into a saved payment */}
+      <div style={{marginBottom:"1.25rem"}}>
+        <button onClick={()=>{setShowSalaryCalc(v=>!v);setSalaryCalcPreviewed(false);}} style={{fontSize:12,padding:"7px 14px",borderRadius:7,border:"1px solid #2E7D32",background:showSalaryCalc?"#2E7D32":"transparent",color:showSalaryCalc?"#fff":"#2E7D32",cursor:"pointer",fontWeight:500}}>
+          💰 {lang==="zh"?"計算薪資":"Calculate Salary"}
+        </button>
+        {showSalaryCalc && (
+          <div style={{marginTop:10,background:"#FAFAFA",border:"0.5px solid #E0E0E0",borderRadius:10,padding:"14px 16px",maxWidth:420}}>
+            <div style={{fontSize:12,color:"#546E7A",marginBottom:10,lineHeight:1.6}}>
+              {lang==="zh"
+                ? `目前統計區間：${allTime?"全部時間":dateFrom+" ~ "+dateTo}，共 ${completedCount} 堂完課（25分鐘 ${completed25} 堂、50分鐘 ${completed50} 堂，共 ${salaryTotalHours.toFixed(1)} 小時）`
+                : `Current range: ${allTime?"all time":dateFrom+" ~ "+dateTo} — ${completedCount} completed session(s) (25min×${completed25}, 50min×${completed50}, ${salaryTotalHours.toFixed(1)}h total)`}
+            </div>
+            <div style={{display:"flex",gap:6,marginBottom:10}}>
+              {[["perSession",lang==="zh"?"每堂固定金額":"Per Session"],["hourly",lang==="zh"?"時薪":"Hourly Rate"]].map(([k,l])=>(
+                <button key={k} onClick={()=>{setSalaryCalcMode(k);setSalaryCalcPreviewed(false);}} style={{flex:1,padding:"7px",borderRadius:6,fontSize:12,cursor:"pointer",border:salaryCalcMode===k?"none":"0.5px solid #CFD8DC",background:salaryCalcMode===k?"#1A6B8A":"transparent",color:salaryCalcMode===k?"#fff":"#546E7A",fontWeight:salaryCalcMode===k?600:400}}>{l}</button>
+              ))}
+            </div>
+            <label style={{display:"block",fontSize:11,color:"#9E9E9E",marginBottom:4}}>
+              {salaryCalcMode==="perSession" ? (lang==="zh"?"每堂金額":"Amount per session") : (lang==="zh"?"每小時金額":"Amount per hour")}
+            </label>
+            <input type="number" min="0" value={salaryRateValue} onChange={e=>{setSalaryRateValue(e.target.value);setSalaryCalcPreviewed(false);}} placeholder="0" style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",fontSize:13,marginBottom:10}}/>
+            {!salaryCalcPreviewed ? (
+              <button onClick={()=>setSalaryCalcPreviewed(true)} disabled={!salaryRateValue||salaryCalcAmount()<=0} style={{width:"100%",padding:"9px",borderRadius:7,border:"1px solid #4A9FD4",background:"transparent",color:"#1A6B8A",fontSize:13,cursor:(!salaryRateValue||salaryCalcAmount()<=0)?"not-allowed":"pointer",opacity:(!salaryRateValue||salaryCalcAmount()<=0)?0.5:1}}>
+                🔍 {lang==="zh"?"預覽薪資":"Preview"}
+              </button>
+            ) : (
+              <div style={{background:"#E8F5E9",border:"1px solid #A5D6A7",borderRadius:8,padding:"12px 14px"}}>
+                <div style={{fontSize:12,color:"#2E7D32",marginBottom:4}}>{lang==="zh"?"試算金額":"Calculated amount"}</div>
+                <div style={{fontSize:22,fontWeight:700,color:"#172F39",marginBottom:10}}>{salaryCalcAmount().toLocaleString(undefined,{maximumFractionDigits:2})}</div>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={saveSalaryCalc} disabled={salarySaving} style={{flex:1,padding:"9px",borderRadius:7,background:"#2E7D32",border:"none",color:"#fff",fontSize:13,fontWeight:600,cursor:salarySaving?"not-allowed":"pointer",opacity:salarySaving?0.6:1}}>
+                    {salarySaving ? (lang==="zh"?"儲存中…":"Saving…") : `✓ ${lang==="zh"?"確認並儲存":"Confirm & Save"}`}
+                  </button>
+                  <button onClick={()=>setSalaryCalcPreviewed(false)} style={{padding:"9px 14px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>
+                    {lang==="zh"?"重新調整":"Adjust"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
       <DateRangePicker lang={lang} dateFrom={dateFrom} dateTo={dateTo} setDateFrom={setDateFrom} setDateTo={setDateTo} allTime={allTime} setAllTime={setAllTime}/>
       <StatCards {...stats} lang={lang}/>
@@ -4190,13 +4286,13 @@ Thank you!`;
         const attRecs=(attendance||[]).filter(a=>courseEnrs.some(e=>e.id===a.enrollmentId));
         const sAbs=cAbs.filter(a=>a.requesterRole!=="teacher").length + attRecs.filter(a=>a.type==="absent"||a.type==="excused").length;
         const tAbs=cAbs.filter(a=>a.requesterRole==="teacher").length + attRecs.filter(a=>a.type==="teacher_leave").length;
-        // Same fix as 學生統計 — this used to be a single "完課" number that
-        // was actually total (past+future) minus leaves, not genuinely
-        // "completed". Split into what's really happened vs what's left.
+        // A session only counts as "已完課" if it was GENUINELY, properly
+        // completed — student leave, student absence, teacher leave, and
+        // teacher absence all mean it wasn't, so none of them count.
         const doneSoFar = allSessionEntries.filter(s => {
           if (!isSessionOver(s.date, resolveSessionStart(c, s), c.duration)) return false;
           const attRec = (attendance||[]).find(a=>a.enrollmentId===s.enr.id && a.date===s.date);
-          if (attRec) return attRec.type!=="absent" && attRec.type!=="excused" && attRec.type!=="teacher_leave";
+          if (attRec) return false; // absent | excused | teacher_leave — none of these are a genuine completion
           const selfAbs = (absences||[]).find(a=>a.courseId===c.id && a.dateStr===s.date);
           return !selfAbs;
         }).length;
@@ -4326,6 +4422,21 @@ Thank you!`;
       })}
     </div>
   );
+
+  if (!onClose) return content; // legacy standalone-page path (no longer used, kept for safety)
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9300,padding:"1rem"}}>
+      <div style={{background:"#FFFFFF",borderRadius:16,width:"100%",maxWidth:900,boxSizing:"border-box",maxHeight:"88vh",display:"flex",flexDirection:"column",boxShadow:"0 8px 36px rgba(23,47,57,0.2)",overflow:"hidden"}}>
+        <div style={{background:"#172F39",padding:"13px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+          <span style={{fontSize:14,fontWeight:600,color:"#fff"}}>📊 {t.teacherStats}</span>
+          <button onClick={onClose} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",color:"#fff",fontSize:16}}>×</button>
+        </div>
+        <div style={{padding:"18px",overflowY:"auto",flex:1,minHeight:0}}>
+          {content}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ─── Student stats ────────────────────────────────────────────────────────────
@@ -4356,7 +4467,7 @@ function StudentStats({ users, courses, absences, attendance, enrollments, setEn
   const stuMedalInfo = selId ? (()=>{
     const dir = dirEntries.find(d=>d.linkedUserId===selId);
     const confirmedOverride = dir?.confirmedSessions || null;
-    const {full,half,total:tot}=calcStudentSessions(selId,enrollments,attendance,courses,confirmedOverride);
+    const {full,half,total:tot}=calcStudentSessions(selId,enrollments,attendance,courses,confirmedOverride,absences);
     const {current,next}=getMedalInfo(tot);
     return {full,half,total:tot,current,next,isConfirmed:!!confirmedOverride,confirmedVal:confirmedOverride};
   })() : null;
@@ -4508,13 +4619,13 @@ function StudentStats({ users, courses, absences, attendance, enrollments, setEn
         const attRecs=(attendance||[]).filter(a=>courseEnrs.some(e=>e.id===a.enrollmentId));
         const sAbs=cAbs.filter(a=>a.requesterRole!=="teacher").length + attRecs.filter(a=>a.type==="absent"||a.type==="excused").length;
         const tAbs=cAbs.filter(a=>a.requesterRole==="teacher").length + attRecs.filter(a=>a.type==="teacher_leave").length;
-        // 已完課 — sessions that have GENUINELY already happened (past) and
-        // weren't excused/absent. This used to be miscalled "完課" while
-        // actually counting past+future combined; now it's the real thing.
+        // 已完課 — only sessions that were GENUINELY, properly completed.
+        // Student leave, student absence, teacher leave, and teacher
+        // absence all mean it wasn't, so none of them count.
         const doneSoFar = allSessionEntries.filter(s => {
           if (!isSessionOver(s.date, resolveSessionStart(c, s), c.duration)) return false;
           const attRec = (attendance||[]).find(a=>a.enrollmentId===s.enr.id && a.date===s.date);
-          if (attRec) return attRec.type!=="absent" && attRec.type!=="excused" && attRec.type!=="teacher_leave";
+          if (attRec) return false; // absent | excused | teacher_leave — none of these are a genuine completion
           const selfAbs = (absences||[]).find(a=>a.courseId===c.id && a.dateStr===s.date);
           return !selfAbs;
         }).length;
@@ -6213,7 +6324,7 @@ function ScheduleShareModal({ ownerEntry, users, dirEntries, saveDirEntries, lan
   );
 }
 
-function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attendance, courses, readOnly }) {
+function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attendance, courses, readOnly, absences }) {
   const t = T[lang];
   const students = users.filter(u=>u.role==="student");
 
@@ -6228,7 +6339,7 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
       ? (parseInt(confirmedSessions)||0)
       : 0;
     const system = linkedUserId
-      ? calcStudentSessions(linkedUserId, enrollments||[], attendance||[], courses||[]).full
+      ? calcStudentSessions(linkedUserId, enrollments||[], attendance||[], courses||[], undefined, absences||[]).full
       : 0;
     const total = system + manual + confirmed;
     return {
@@ -6886,7 +6997,7 @@ function TeacherProfileCard({ entry, lang }) {
   );
 }
 
-function TeacherDirectory({ users, setUsers, lang, setToast, hideSalary, readOnly }) {
+function TeacherDirectory({ users, setUsers, lang, setToast, hideSalary, readOnly, courses, enrollments, attendance, absences }) {
   const t = T[lang];
   const teachers = users.filter(u=>u.role==="teacher");
 
@@ -6903,13 +7014,25 @@ function TeacherDirectory({ users, setUsers, lang, setToast, hideSalary, readOnl
   const [previewTarget, setPreviewTarget] = useState(null);
   const [confirmDelDirId, setConfirmDelDirId] = useState(null);
   const [salaryTarget, setSalaryTarget] = useState(null); // teacher entry being managed for salary
+  const [statsTarget, setStatsTarget] = useState(null); // teacher user id — opens 老師統計 scoped to this teacher
+  const [salaryRecordsAll, setSalaryRecordsAll] = useState([]); // fetched read-only, just to show "last paid" in the list — SalaryModal owns the actual writes
 
   useEffect(()=>{
     (async()=>{
       try{ const r=await window.storage.get("cp3_teacher_dir"); if(r?.value) setDirEntries(JSON.parse(r.value)); }catch{}
       setDirLoaded(true);
     })();
+    if (!hideSalary) {
+      (async()=>{
+        try{ const r=await window.storage.get("cp3_salary"); if(r?.value) setSalaryRecordsAll(JSON.parse(r.value)); }catch{}
+      })();
+    }
   },[]);
+  const lastPaymentDateFor = (entryId) => {
+    const mine = salaryRecordsAll.filter(r=>r.teacherEntryId===entryId);
+    if (!mine.length) return null;
+    return mine.reduce((latest,r)=> (!latest || r.date>latest) ? r.date : latest, null);
+  };
   const saveDirEntries = async (next) => {
     setDirEntries(next);
     try{ await window.storage.set("cp3_teacher_dir",JSON.stringify(next)); }catch{}
@@ -7010,7 +7133,14 @@ function TeacherDirectory({ users, setUsers, lang, setToast, hideSalary, readOnl
   return (
     <div>
       {confirmDelDirId && <ConfirmModal title={lang==="zh"?"刪除老師資料":"Delete Teacher"} message={lang==="zh"?"確認刪除此老師的資料？":"Delete this teacher record?"} confirmLabel={lang==="zh"?"確認刪除":"Delete"} onConfirm={doDelDir} onCancel={()=>setConfirmDelDirId(null)} danger/>}
-      {salaryTarget && <SalaryModal teacherEntry={salaryTarget} users={users} lang={lang} setToast={setToast} onClose={()=>setSalaryTarget(null)}/>}
+      {salaryTarget && <SalaryModal teacherEntry={salaryTarget} users={users} lang={lang} setToast={setToast} onClose={()=>{
+        setSalaryTarget(null);
+        (async()=>{ try{ const r=await window.storage.get("cp3_salary"); if(r?.value) setSalaryRecordsAll(JSON.parse(r.value)); }catch{} })();
+      }}/>}
+      {statsTarget && <TeacherStats users={users} courses={courses||[]} absences={absences||[]} attendance={attendance||[]} enrollments={enrollments||[]} lang={lang} initialTeacherId={statsTarget} onClose={()=>{
+        setStatsTarget(null);
+        if (!hideSalary) (async()=>{ try{ const r=await window.storage.get("cp3_salary"); if(r?.value) setSalaryRecordsAll(JSON.parse(r.value)); }catch{} })();
+      }} dirEntries={dirEntries} setToast={setToast}/>}
 
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"1rem",flexWrap:"wrap",gap:8}}>
         <h3 style={{fontSize:16,fontWeight:500,color:"#172F39",margin:0}}>{t.teacherDir} ({allTeachers.length})</h3>
@@ -7177,11 +7307,19 @@ function TeacherDirectory({ users, setUsers, lang, setToast, hideSalary, readOnl
                     <td style={tdStyle}>{d.yearsExp?`${d.yearsExp} ${t.yearsUnit}`:"—"}</td>
                     <td style={tdStyle}>{d.joinYear||"—"}</td>
                     <td style={tdStyle}>
-                      {!hideSalary && (
-                        <button onClick={()=>setSalaryTarget({id:entryId,nameEn:d.nameEn,linkedUserId:d.linkedUserId})} style={{fontSize:11,padding:"4px 10px",borderRadius:5,border:"0.5px solid #2E7D32",background:"transparent",color:"#2E7D32",cursor:"pointer",fontWeight:500}}>
-                          💰 {t.salaryManage}
-                        </button>
-                      )}
+                      {!hideSalary && (() => {
+                        const lastPaid = lastPaymentDateFor(entryId);
+                        return (
+                          <div>
+                            <div style={{fontSize:10,color:lastPaid?"#546E7A":"#9E9E9E",marginBottom:4}}>
+                              {lang==="zh"?"上次付款：":"Last paid: "}{lastPaid||"—"}
+                            </div>
+                            <button onClick={()=>setSalaryTarget({id:entryId,nameEn:d.nameEn,linkedUserId:d.linkedUserId})} style={{fontSize:11,padding:"4px 10px",borderRadius:5,border:"0.5px solid #2E7D32",background:"transparent",color:"#2E7D32",cursor:"pointer",fontWeight:500}}>
+                              💰 {t.salaryManage}
+                            </button>
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td style={tdStyle}>
                       {linkedUser
@@ -7191,6 +7329,7 @@ function TeacherDirectory({ users, setUsers, lang, setToast, hideSalary, readOnl
                     <td style={tdStyle}>
                       <div style={{display:"flex",gap:4}}>
                         <button onClick={()=>setPreviewTarget(d)} title={t.previewStudentView} style={{padding:"4px 9px",borderRadius:4,border:"0.5px solid #7B1FA2",background:"transparent",color:"#7B1FA2",fontSize:11,cursor:"pointer"}}>👁</button>
+                        {linkedUser && <button onClick={()=>setStatsTarget(linkedUser.id)} title={lang==="zh"?"老師統計":"Teacher Stats"} style={{padding:"4px 9px",borderRadius:4,border:"0.5px solid #1565C0",background:"transparent",color:"#1565C0",fontSize:11,cursor:"pointer"}}>📊</button>}
                         {!readOnly && <button onClick={()=>startEdit(d)} style={{padding:"4px 9px",borderRadius:4,border:"0.5px solid #CFD8DC",background:"transparent",color:"#1A6B8A",fontSize:11,cursor:"pointer"}}>{t.dirEdit}</button>}
                         {!readOnly && d._fromDir && <button onClick={()=>setConfirmDelDirId(entryId)} style={{padding:"4px 9px",borderRadius:4,border:"0.5px solid #FFCDD2",background:"transparent",color:"#D32F2F",fontSize:11,cursor:"pointer"}}>✕</button>}
                       </div>
@@ -7388,7 +7527,7 @@ function ChangeNotifications({ users, setUsers, lang, setToast, profileChanges, 
   );
 }
 
-function PeopleDirectory({ users, setUsers, lang, setToast, enrollments, attendance, courses, profileChanges, setProfileChanges, hideSalary, readOnly }) {
+function PeopleDirectory({ users, setUsers, lang, setToast, enrollments, attendance, courses, profileChanges, setProfileChanges, hideSalary, readOnly, absences }) {
   const t = T[lang];
   const [subTab, setSubTab] = useState("students"); // students | teachers | changes
   const pendingChangeCount = (profileChanges||[]).filter(c=>c.status==="pending").length;
@@ -7413,8 +7552,8 @@ function PeopleDirectory({ users, setUsers, lang, setToast, enrollments, attenda
           </button>
         ))}
       </div>
-      {subTab==="students" && <StudentDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses} readOnly={readOnly}/>}
-      {subTab==="teachers" && <TeacherDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} hideSalary={hideSalary} readOnly={readOnly}/>}
+      {subTab==="students" && <StudentDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses} readOnly={readOnly} absences={absences}/>}
+      {subTab==="teachers" && <TeacherDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} hideSalary={hideSalary} readOnly={readOnly} courses={courses} enrollments={enrollments} attendance={attendance} absences={absences}/>}
       {!readOnly && subTab==="changes" && <ChangeNotifications users={users} setUsers={setUsers} lang={lang} setToast={setToast} profileChanges={profileChanges} setProfileChanges={setProfileChanges}/>}
     </div>
   );
@@ -7816,7 +7955,6 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
     {key:"peopledir", label:t.peopleDir, badge:pendingChangeCount},
     {key:"trial", label:lang==="zh"?"試聽申請":"Trial Applications", badge:pendingTrialCount},
     {key:"users",   label:t.manageUsers},
-    {key:"tstats",  label:t.teacherStats},
     {key:"sstats",  label:t.studentStats},
     {key:"studentOverview", label:lang==="zh"?"任教學生總覽":"Student Overview"},
     {key:"settings",label:lang==="zh"?"網站設定":"Site Settings"},
@@ -7839,10 +7977,9 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
       {tab==="matedit"&&<MaterialEditReview courses={courses} materials={materials||[]} setMaterials={setMaterials} users={users} lang={lang} setToast={setToast}/>}
       {tab==="studentmat"&&<StudentMaterialReviewPanel users={users} courses={courses} enrollments={enrollments} materials={materials||[]} setMaterials={setMaterials} studentMatSubs={studentMatSubs||[]} setStudentMatSubs={setStudentMatSubs} currentUser={currentUser} lang={lang} setToast={setToast}/>}
       {tab==="availability"&&<AdminTeacherAvailability users={users} courses={courses} availability={teacherAvailability||[]} setAvailability={setTeacherAvailability} overrides={availabilityOverrides||[]} setOverrides={setAvailabilityOverrides} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang} setToast={setToast}/>}
-      {tab==="peopledir" &&<PeopleDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses} profileChanges={profileChanges} setProfileChanges={setProfileChanges}/>}
+      {tab==="peopledir" &&<PeopleDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses} profileChanges={profileChanges} setProfileChanges={setProfileChanges} absences={absences}/>}
       {tab==="trial" &&<TrialApplicationsPanel users={users} setUsers={setUsers} lang={lang} setToast={setToast} trialApplications={trialApplications||[]} setTrialApplications={setTrialApplications} englishLevels={englishLevels||[]} setEnglishLevels={setEnglishLevels} learningPurposes={learningPurposes||[]} setLearningPurposes={setLearningPurposes}/>}
       {tab==="users"  &&<UserManager users={users} setUsers={setUsers} lang={lang} setToast={setToast} onImpersonate={onImpersonate}/>}
-      {tab==="tstats" &&<TeacherStats users={users} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang}/>}
       {tab==="sstats" &&<StudentStats users={users} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} setEnrollments={setEnrollments} lang={lang}/>}
       {tab==="studentOverview" &&<AdminStudentOverview currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} materials={materials} setMaterials={setMaterials} feedback={feedback} setFeedback={setFeedback} attendance={attendance} absences={absences} lang={lang} setToast={setToast}/>}
       {tab==="settings"&&<SiteSettings introText={introText} setIntroText={setIntroText} lang={lang} setToast={setToast}/>}
@@ -7885,7 +8022,7 @@ function AssistantPanel({ users, setUsers, courses, setCourses, materials, setMa
       {tab==="feedback"&&<FeedbackCenter users={users} courses={courses} enrollments={enrollments} attendance={attendance} absences={absences} feedback={feedback||[]} setFeedback={setFeedback} lang={lang} setToast={setToast} currentUser={currentUser} materials={materials} setMaterials={setMaterials}/>}
       {tab==="studentmat"&&<StudentMaterialReviewPanel users={users} courses={courses} enrollments={enrollments} materials={materials||[]} setMaterials={setMaterials} studentMatSubs={studentMatSubs||[]} setStudentMatSubs={setStudentMatSubs} currentUser={currentUser} lang={lang} setToast={setToast}/>}
       {tab==="availability"&&<AdminTeacherAvailability users={users} courses={courses} availability={teacherAvailability||[]} setAvailability={setTeacherAvailability} overrides={availabilityOverrides||[]} setOverrides={setAvailabilityOverrides} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang} setToast={setToast} readOnly/>}
-      {tab==="peopledir" &&<PeopleDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses} hideSalary readOnly/>}
+      {tab==="peopledir" &&<PeopleDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses} hideSalary readOnly absences={absences}/>}
       {tab==="trial" &&<TrialApplicationsPanel users={users} setUsers={setUsers} lang={lang} setToast={setToast} trialApplications={trialApplications||[]} setTrialApplications={setTrialApplications} englishLevels={englishLevels||[]} learningPurposes={learningPurposes||[]} hideOptions/>}
       {tab==="studentOverview" &&<AdminStudentOverview currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} materials={materials} setMaterials={setMaterials} feedback={feedback} setFeedback={setFeedback} attendance={attendance} absences={absences} lang={lang} setToast={setToast}/>}
     </div>
@@ -8119,15 +8256,34 @@ function FeedbackCenter({ users, courses, enrollments, attendance, absences, fee
       if (overviewTeacherId && course.teacherId!==overviewTeacherId) return [];
       return (enr.scheduledDates||[])
         .filter(s => overviewAllTime || (s.date>=overviewDateFrom && s.date<=overviewDateTo))
-        .map(s => ({
-          course, enrollment: enr, studentId: enr.studentId,
-          date: s.date, dayIndex: s.dayIndex, sessionNo: s.sessionNo, customStart: s.customStart,
-          fb: (feedback||[]).find(f=>f.enrollmentId===enr.id && f.date===s.date) || null,
-        }));
+        .map(s => {
+          const attRec = (attendance||[]).find(a=>a.enrollmentId===enr.id && a.date===s.date);
+          const selfAbs = (!attRec || attRec.type==="other") ? (absences||[]).find(a=>a.courseId===course.id && a.dateStr===s.date) : null;
+          let leaveInfo = null;
+          if (attRec && attRec.type!=="other") {
+            const labelMap = {
+              absent: lang==="zh"?"學生缺席（扣課）":"Student absent (deducted)",
+              excused: lang==="zh"?"學生請假":"Student leave",
+              teacher_leave: lang==="zh"?"老師請假":"Teacher leave",
+            };
+            leaveInfo = { label: labelMap[attRec.type] || attRec.type, note: attRec.note||"" };
+          } else if (selfAbs) {
+            leaveInfo = {
+              label: selfAbs.requesterRole==="teacher" ? (lang==="zh"?"老師請假":"Teacher leave") : (lang==="zh"?"學生請假":"Student leave"),
+              note: selfAbs.reason || selfAbs.note || "",
+            };
+          }
+          return {
+            course, enrollment: enr, studentId: enr.studentId,
+            date: s.date, dayIndex: s.dayIndex, sessionNo: s.sessionNo, customStart: s.customStart,
+            fb: (feedback||[]).find(f=>f.enrollmentId===enr.id && f.date===s.date) || null,
+            leaveInfo,
+          };
+        });
     })
     .filter(r => {
       if (overviewStatusFilter==="all") return true;
-      if (overviewStatusFilter==="none") return !r.fb;
+      if (overviewStatusFilter==="none") return !r.fb && !r.leaveInfo;
       return r.fb?.status === overviewStatusFilter;
     })
     .filter(r => {
@@ -8525,8 +8681,8 @@ function FeedbackCenter({ users, courses, enrollments, attendance, absences, fee
                   const meta = r.fb ? STATUS_META[r.fb.status] : null;
                   const matMeta = r.fb?.nextMaterialStatus ? getMaterialStatusMeta(r.fb) : null;
                   return (
-                    <div key={i} style={{background:"#FFFFFF",border:`1px solid ${meta?meta.color+"33":"#E0E0E0"}`,borderRadius:9,padding:"10px 14px",marginBottom:8}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,flexWrap:"wrap",marginBottom:r.fb?8:0}}>
+                    <div key={i} style={{background:"#FFFFFF",border:`1px solid ${r.leaveInfo?"#E0E0E0":meta?meta.color+"33":"#E0E0E0"}`,borderRadius:9,padding:"10px 14px",marginBottom:8}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,flexWrap:"wrap",marginBottom:(r.leaveInfo||r.fb)?8:0}}>
                         <div>
                           <div style={{fontSize:12,fontWeight:600,color:"#172F39"}}>{r.course.subject}</div>
                           <div style={{fontSize:11,color:"#9E9E9E",marginTop:2}}>
@@ -8536,17 +8692,30 @@ function FeedbackCenter({ users, courses, enrollments, attendance, absences, fee
                             {student?.name||"—"} · {teacher?.name||"—"}
                           </div>
                         </div>
-                        {meta
-                          ? <span style={{fontSize:10,background:meta.bg,color:meta.color,borderRadius:5,padding:"2px 9px",fontWeight:600,flexShrink:0}}>● {meta.label}</span>
-                          : <span style={{fontSize:10,background:"#F5F5F5",color:"#9E9E9E",borderRadius:5,padding:"2px 9px",flexShrink:0}}>{t.fbNotWritten}</span>
-                        }
+                        <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flexShrink:0}}>
+                          {r.leaveInfo
+                            ? <span style={{fontSize:10,background:"#F5F5F5",color:"#9E9E9E",borderRadius:5,padding:"2px 9px",fontWeight:600}}>◌ {lang==="zh"?"未正常完課":"Not completed"}</span>
+                            : meta
+                            ? <span style={{fontSize:10,background:meta.bg,color:meta.color,borderRadius:5,padding:"2px 9px",fontWeight:600}}>● {meta.label}</span>
+                            : <span style={{fontSize:10,background:"#F5F5F5",color:"#9E9E9E",borderRadius:5,padding:"2px 9px"}}>{t.fbNotWritten}</span>
+                          }
+                          {!r.leaveInfo && matMeta && (
+                            <span style={{fontSize:10,background:matMeta.bg,color:matMeta.color,borderRadius:5,padding:"2px 9px",fontWeight:600,whiteSpace:"nowrap"}}>{matMeta.icon} {matMeta.label}</span>
+                          )}
+                        </div>
                       </div>
-                      {r.fb && (
+                      {/* Class didn't properly happen — show the reason, no feedback expected */}
+                      {r.leaveInfo && (
+                        <div style={{background:"#FAFAFA",borderRadius:7,padding:"9px 12px",fontSize:12,color:"#546E7A"}}>
+                          {lang==="zh"?"原因":"Reason"}：{r.leaveInfo.label}{r.leaveInfo.note?`（${r.leaveInfo.note}）`:""}
+                        </div>
+                      )}
+                      {!r.leaveInfo && r.fb && (
                         <div style={{background:"#F5F5F5",borderRadius:7,padding:"9px 12px",fontSize:12,color:"#172F39",lineHeight:1.7,whiteSpace:"pre-wrap",marginBottom:matMeta?6:0}}>
                           {r.fb.text}
                         </div>
                       )}
-                      {matMeta && (
+                      {!r.leaveInfo && matMeta && (
                         <div style={{background:matMeta.bg,borderRadius:6,padding:"6px 10px",display:"flex",alignItems:"flex-start",gap:6}}>
                           <span style={{fontSize:12,flexShrink:0}}>{matMeta.icon}</span>
                           <div style={{fontSize:11,color:matMeta.color}}>
@@ -8958,7 +9127,7 @@ const MEDALS = [
 // that's ADDED to the live, ever-growing system count — admin enters prior
 // history once, and everything the platform tracks afterward keeps
 // accumulating on top of it automatically.
-function calcStudentSessions(studentId, enrollments, attendance, courses, confirmedOverride) {
+function calcStudentSessions(studentId, enrollments, attendance, courses, confirmedOverride, absences) {
   const today = new Date().toISOString().slice(0,10);
   let count = 0;
   enrollments.filter(e=>e.studentId===studentId).forEach(enr=>{
@@ -8968,8 +9137,15 @@ function calcStudentSessions(studentId, enrollments, attendance, courses, confir
     (enr.scheduledDates||[]).forEach(s=>{
       // Only count sessions whose actual end time has passed (not just "today or earlier")
       if (!isSessionOver(s.date, resolveSessionStart(course, s), course.duration)) return;
+      // A session only earns points if it was GENUINELY, properly completed —
+      // student leave, student absence, teacher leave, and teacher absence
+      // all mean it wasn't, so none of them count. This covers both a
+      // formally-recorded attendance exception AND a self-reported leave
+      // request that hasn't been processed into one yet.
       const att = attendance.find(a=>a.enrollmentId===enr.id&&a.date===s.date);
-      if (att?.type==="absent") return; // deducted
+      if (att) return; // absent | excused | teacher_leave — none of these count
+      const selfReported = (absences||[]).some(a=>a.courseId===course.id&&a.dateStr===s.date);
+      if (selfReported) return;
       count += sessVal;
     });
   });
@@ -8990,7 +9166,7 @@ function getMedalInfo(totalFloat) {
 }
 
 // ─── Student Progress Panel ───────────────────────────────────────────────────
-function StudentProgressPanel({ currentUser, enrollments, attendance, courses, lang, dirLoaded, confirmedOverride }) {
+function StudentProgressPanel({ currentUser, enrollments, attendance, courses, lang, dirLoaded, confirmedOverride, absences }) {
   const t = T[lang];
 
   // Don't render any numbers until we know whether admin has confirmed an
@@ -9005,7 +9181,7 @@ function StudentProgressPanel({ currentUser, enrollments, attendance, courses, l
     );
   }
 
-  const { full, half, total } = calcStudentSessions(currentUser.id, enrollments, attendance, courses, confirmedOverride);
+  const { full, half, total } = calcStudentSessions(currentUser.id, enrollments, attendance, courses, confirmedOverride, absences);
   const { current, next } = getMedalInfo(total);
 
   // Progress toward next medal
@@ -9237,7 +9413,7 @@ function StudentMaterialSubmitPanel({ currentUser, courses, enrollments, materia
 }
 
 // ─── Teacher Students Panel ───────────────────────────────────────────────────
-function TeacherStudentsPanel({ currentUser, users, courses, enrollments, attendance, lang, dirEntries }) {
+function TeacherStudentsPanel({ currentUser, users, courses, enrollments, attendance, lang, dirEntries, absences }) {
   const t = T[lang];
   const [expandedId, setExpandedId] = useState(null);
 
@@ -9258,7 +9434,7 @@ function TeacherStudentsPanel({ currentUser, users, courses, enrollments, attend
         const isExpanded = expandedId===stu.id;
         const stuCourses = myCourses.filter(c=>c.studentId===stu.id);
         const confirmedOverride = dir?.confirmedSessions || null;
-        const {full,half,total} = calcStudentSessions(stu.id, enrollments, attendance, courses, confirmedOverride);
+        const {full,half,total} = calcStudentSessions(stu.id, enrollments, attendance, courses, confirmedOverride, absences);
         const {current:medal} = getMedalInfo(total);
         const weeklyCount = stuCourses.reduce((s,c)=>(c.days?.length||0)+s, 0);
         const duration = stuCourses[0]?.duration || "—";
@@ -10310,16 +10486,31 @@ function TeacherFeedbackPanel({ currentUser, users, courses, enrollments, attend
         .filter(s => isSessionOver(s.date, resolveSessionStart(course, s), course.duration))
         .map(s => {
           const start = s.customStart || getCourseStartForDay(course, s.dayIndex);
+          const attRec = (attendance||[]).find(a=>a.enrollmentId===enr.id && a.date===s.date) || null;
+          // Self-reported leave (student/teacher via AbsenceModal) only
+          // ever creates an `absences` entry, never an `attendance` one —
+          // checking attRec alone was the bug, it silently missed every
+          // self-reported leave and kept nagging for feedback on classes
+          // that were already excused.
+          const absRec = (!attRec || attRec.type==="other") ? ((absences||[]).find(a=>a.courseId===course.id && a.dateStr===s.date) || null) : null;
+          let leaveInfo = null;
+          if (attRec && attRec.type!=="other") {
+            const labelMap = {
+              absent: lang==="zh"?"學生缺席（扣課）":"Student absent (deducted)",
+              excused: lang==="zh"?"學生請假":"Student leave",
+              teacher_leave: lang==="zh"?"老師請假":"Teacher leave",
+            };
+            leaveInfo = { label: labelMap[attRec.type] || attRec.type, note: attRec.note||"" };
+          } else if (absRec) {
+            leaveInfo = {
+              label: absRec.requesterRole==="teacher" ? (lang==="zh"?"老師請假":"Teacher leave") : (lang==="zh"?"學生請假":"Student leave"),
+              note: absRec.reason || absRec.note || "",
+            };
+          }
           return {
             course, enrollment: enr, date: s.date, dayIndex: s.dayIndex, sessionNo: s.sessionNo, start,
             feedbackRec: (feedback||[]).find(f=>f.enrollmentId===enr.id && f.date===s.date) || null,
-            attRec: (attendance||[]).find(a=>a.enrollmentId===enr.id && a.date===s.date) || null,
-            // Self-reported leave (student/teacher via AbsenceModal) only
-            // ever creates an `absences` entry, never an `attendance` one —
-            // checking attRec alone was the bug, it silently missed every
-            // self-reported leave and kept nagging for feedback on classes
-            // that were already excused.
-            absRec: (absences||[]).find(a=>a.courseId===course.id && a.dateStr===s.date) || null,
+            attRec, absRec, leaveInfo,
           };
         });
     });
@@ -10382,6 +10573,15 @@ function TeacherFeedbackPanel({ currentUser, users, courses, enrollments, attend
     rejected: {label:t.feedbackStatusRejected, color:"#D32F2F", bg:"#FFEBEE"},
   };
   const taStyle = {width:"100%",boxSizing:"border-box",minHeight:60,padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:12,fontFamily:"inherit",resize:"vertical"};
+  // Compact top-of-card badge for the mandatory material-status field, shown
+  // right alongside the approval-status badge so it's visible at a glance —
+  // not just buried in the detail box further down the card.
+  const matBadgeFor = (status) => {
+    if (status==="yes") return {icon:"✅", label:lang==="zh"?"教材已上完":"Material done", color:"#2E7D32", bg:"#E8F5E9"};
+    if (status==="no_continue") return {icon:"🔄", label:lang==="zh"?"沿用教材":"Reuse material", color:"#E65100", bg:"#FFF3E0"};
+    if (status==="no_scope") return {icon:"📝", label:lang==="zh"?"下次主題":"Next topic", color:"#E65100", bg:"#FFF3E0"};
+    return null;
+  };
 
   const renderSessionRow = (s, i) => {
     const student = users.find(u=>u.id===s.course.studentId);
@@ -10391,7 +10591,7 @@ function TeacherFeedbackPanel({ currentUser, users, courses, enrollments, attend
     // mechanism — typing into it and confirming re-submits as pending.
     const isEditingExisting = drafts[keyFor(s)] && s.feedbackRec;
     return (
-      <div key={i} style={{background:"#FFFFFF",border:`1px solid ${meta?meta.color+"33":"#E0E0E0"}`,borderRadius:9,padding:"10px 14px",marginBottom:8}}>
+      <div key={i} style={{background:"#FFFFFF",border:`1px solid ${s.leaveInfo?"#E0E0E0":meta?meta.color+"33":"#E0E0E0"}`,borderRadius:9,padding:"10px 14px",marginBottom:8}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,flexWrap:"wrap",marginBottom:8}}>
           <div>
             <div style={{fontSize:12,fontWeight:600,color:"#172F39"}}>{s.course.subject}</div>
@@ -10400,13 +10600,28 @@ function TeacherFeedbackPanel({ currentUser, users, courses, enrollments, attend
             </div>
             <div style={{fontSize:11,color:"#546E7A",marginTop:2}}>{lang==="zh"?"學生":"Student"}: {student?.name||"—"}</div>
           </div>
-          {meta && !isEditingExisting && (
-            <span style={{fontSize:10,background:meta.bg,color:meta.color,borderRadius:5,padding:"2px 9px",fontWeight:600,flexShrink:0}}>● {meta.label}</span>
-          )}
+          <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flexShrink:0}}>
+            {s.leaveInfo
+              ? <span style={{fontSize:10,background:"#F5F5F5",color:"#9E9E9E",borderRadius:5,padding:"2px 9px",fontWeight:600}}>◌ {lang==="zh"?"未正常完課":"Not completed"}</span>
+              : meta && !isEditingExisting && (
+                <span style={{fontSize:10,background:meta.bg,color:meta.color,borderRadius:5,padding:"2px 9px",fontWeight:600}}>● {meta.label}</span>
+              )}
+            {!s.leaveInfo && s.feedbackRec && !isEditingExisting && matBadgeFor(s.feedbackRec.nextMaterialStatus) && (() => {
+              const mb = matBadgeFor(s.feedbackRec.nextMaterialStatus);
+              return <span style={{fontSize:10,background:mb.bg,color:mb.color,borderRadius:5,padding:"2px 9px",fontWeight:600,whiteSpace:"nowrap"}}>{mb.icon} {mb.label}</span>;
+            })()}
+          </div>
         </div>
 
+        {/* Class didn't properly happen — show the reason, no feedback expected or editable here */}
+        {s.leaveInfo && (
+          <div style={{background:"#FAFAFA",borderRadius:7,padding:"9px 12px",fontSize:12,color:"#546E7A"}}>
+            {lang==="zh"?"原因":"Reason"}：{s.leaveInfo.label}{s.leaveInfo.note?`（${s.leaveInfo.note}）`:""}
+          </div>
+        )}
+
         {/* Already-submitted content — shown as read display, with an inline edit-again option */}
-        {s.feedbackRec && !isEditingExisting && (
+        {!s.leaveInfo && s.feedbackRec && !isEditingExisting && (
           <div>
             <div style={{background:"#F5F5F5",borderRadius:7,padding:"9px 12px",fontSize:12,color:"#172F39",lineHeight:1.7,whiteSpace:"pre-wrap",marginBottom:6}}>
               {s.feedbackRec.text}
@@ -10419,7 +10634,7 @@ function TeacherFeedbackPanel({ currentUser, users, courses, enrollments, attend
         )}
 
         {/* No submission yet, OR re-editing an existing one — inline draft workflow */}
-        {(!s.feedbackRec || isEditingExisting) && (
+        {!s.leaveInfo && (!s.feedbackRec || isEditingExisting) && (
           draft.confirmed ? (
             <div style={{background:"#EEF6FB",border:"1px solid #4A9FD4",borderRadius:8,padding:"10px 12px"}}>
               <label style={{display:"flex",alignItems:"flex-start",gap:8,cursor:"pointer"}}>
@@ -10652,7 +10867,7 @@ function TeacherStudentOverview({ currentUser, users, courses, enrollments, mate
           };
         });
     })
-    .sort((a,b) => a.date.localeCompare(b.date) || a.start.localeCompare(b.start)); // oldest → newest (far to near), matching the original Excel sheet's row order
+    .sort((a,b) => b.date.localeCompare(a.date) || b.start.localeCompare(a.start)); // newest → oldest, top to bottom
 
   // Already-happened sessions default to showing just the last month;
   // anything older auto-collapses. Future (not-yet-happened) sessions are
@@ -11115,7 +11330,7 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, setCourse
             {/* Student: quick medal teaser when not on progress tab */}
             {isStudent && sideTab!=="progress" && dirLoaded && (()=>{
               // Medal number (top box) — the gamified, duration-weighted metric (unrelated to payment records)
-              const {total:tot}=calcStudentSessions(currentUser.id,enrollments,attendance,courses,myConfirmedOverride);
+              const {total:tot}=calcStudentSessions(currentUser.id,enrollments,attendance,courses,myConfirmedOverride,absences);
               const {current,next}=getMedalInfo(tot);
               const medal=current||{icon:"🎯",zh:"努力中",en:"In Progress",color:"#9E9E9E",bg:"#F5F5F5"};
               const toNext=next?Math.ceil(next.sessions-tot):null;
@@ -11174,7 +11389,7 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, setCourse
       <div className="es-sidebar-main" style={{flex:1,minWidth:0,marginLeft:sideHasSidebar?12:0,width:"100%"}}>
         <div style={{background:"#FFFFFF",borderRadius:14,border:"0.5px solid #E0E0E0",boxShadow:"0 2px 12px rgba(23,47,57,0.06)",overflow:"hidden"}}>
           {isStudent && sideTab==="progress"
-            ? <StudentProgressPanel currentUser={currentUser} enrollments={enrollments} attendance={attendance} courses={courses} lang={lang} dirLoaded={dirLoaded} confirmedOverride={myConfirmedOverride}/>
+            ? <StudentProgressPanel currentUser={currentUser} enrollments={enrollments} attendance={attendance} courses={courses} lang={lang} dirLoaded={dirLoaded} confirmedOverride={myConfirmedOverride} absences={absences}/>
             : isStudent && sideTab==="history"
               ? <StudentClassHistory currentUser={currentUser} enrollments={enrollments} attendance={attendance} courses={courses} users={users} lang={lang} dirLoaded={dirLoaded} feedback={feedback}/>
             : isStudent && sideTab==="teacherIntro"
@@ -11184,7 +11399,7 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, setCourse
             : isStudent && sideTab==="settings"
               ? <StudentSettingsPanel currentUser={currentUser} users={users} setUsers={setUsers} dirEntries={dirEntries} saveDirEntries={saveDirEntries} dirLoaded={dirLoaded} profileChanges={profileChanges} setProfileChanges={setProfileChanges} lang={lang} setToast={setToast}/>
             : isTeacher && sideTab==="students"
-              ? <TeacherStudentsPanel currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} attendance={attendance} lang={lang} dirEntries={dirEntries}/>
+              ? <TeacherStudentsPanel currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} attendance={attendance} lang={lang} dirEntries={dirEntries} absences={absences}/>
             : isTeacher && sideTab==="teacherFeedback"
               ? <TeacherFeedbackPanel currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} attendance={attendance} absences={absences} feedback={feedback} setFeedback={setFeedback} lang={lang} setToast={setToast}/>
             : isTeacher && currentUser.canUseStudentOverview && sideTab==="studentOverview"
