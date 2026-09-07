@@ -501,7 +501,7 @@ const TRIAL_COLOR = {bg:"#FFFDE7",border:"#F9A825",text:"#F57F17"};
 // Bumped whenever a meaningful set of changes ships. Shown low-key on the
 // login page so version can be confirmed at a glance; also called out
 // whenever a new file is delivered.
-const APP_VERSION = "v1.2.8.5";
+const APP_VERSION = "v1.2.8.6";
 
 const genId = () => "id_" + Math.random().toString(36).slice(2,9);
 
@@ -4066,8 +4066,10 @@ function TeacherStats({ users, courses, absences, attendance, enrollments, lang,
   const [dateTo, setDateTo] = useState(today);
   const [sortOldFirst, setSortOldFirst] = useState(true);
   const [showSalaryCalc, setShowSalaryCalc] = useState(false);
-  const [salaryCalcMode, setSalaryCalcMode] = useState("perSession"); // perSession | hourly
-  const [salaryRateValue, setSalaryRateValue] = useState("");
+  const [salaryRate25, setSalaryRate25] = useState("");
+  const [salaryRate50, setSalaryRate50] = useState("");
+  const [salaryExtra, setSalaryExtra] = useState("");
+  const [justSavedAmount, setJustSavedAmount] = useState(null); // amount just saved — shows the copy-text dialog until dismissed
   const [salarySaving, setSalarySaving] = useState(false);
   const [salaryCalcPreviewed, setSalaryCalcPreviewed] = useState(false);
   const getName = id => users.find(u=>u.id===id)?.name||id;
@@ -4114,12 +4116,14 @@ function TeacherStats({ users, courses, absences, attendance, enrollments, lang,
   // ── Salary calculator — turns the currently-selected teacher/date-range
   // into an actual payment, saved straight into 師生資料庫's salary
   // management (cp3_salary) for this teacher, no need to re-open that panel
-  // and re-enter the numbers by hand.
-  const salaryTotalHours = (completed25*25 + completed50*50) / 60;
+  // and re-enter the numbers by hand. Two separate per-session rates (25min
+  // and 50min classes are usually paid differently) plus one free-form extra
+  // amount (bonus, adjustment, etc.) — total is all three added together.
   const salaryCalcAmount = () => {
-    const rate = parseFloat(salaryRateValue) || 0;
-    if (!rate) return 0;
-    return salaryCalcMode==="perSession" ? rate*completedCount : rate*salaryTotalHours;
+    const rate25 = parseFloat(salaryRate25) || 0;
+    const rate50 = parseFloat(salaryRate50) || 0;
+    const extra = parseFloat(salaryExtra) || 0;
+    return rate25*completed25 + rate50*completed50 + extra;
   };
   const saveSalaryCalc = async () => {
     const amount = salaryCalcAmount();
@@ -4134,19 +4138,22 @@ function TeacherStats({ users, courses, absences, attendance, enrollments, lang,
       const r = await window.storage.get("cp3_salary");
       const records = r?.value ? JSON.parse(r.value) : [];
       const periodLabel2 = allTime ? (lang==="zh"?"全部時間":"all time") : `${dateFrom} ~ ${dateTo}`;
+      const rate25 = parseFloat(salaryRate25) || 0;
+      const rate50 = parseFloat(salaryRate50) || 0;
+      const extra = parseFloat(salaryExtra) || 0;
+      const extraNote = extra ? (lang==="zh"?` + 其他 ${extra}`:` + extra ${extra}`) : "";
       const rec = {
         id: genId(), teacherEntryId: teacherEntry.id,
         amount: Math.round(amount*100)/100,
         date: new Date().toISOString().slice(0,10),
         note: lang==="zh"
-          ? `老師統計試算（${periodLabel2}，共 ${completedCount} 堂：25分×${completed25}、50分×${completed50}）`
-          : `Auto-calculated from Teacher Stats (${periodLabel2}, ${completedCount} session(s): 25min×${completed25}, 50min×${completed50})`,
+          ? `老師統計試算（${periodLabel2}）：25分鐘 ${completed25} 堂 × ${rate25} + 50分鐘 ${completed50} 堂 × ${rate50}${extraNote}`
+          : `Auto-calculated from Teacher Stats (${periodLabel2}): 25min ${completed25}×${rate25} + 50min ${completed50}×${rate50}${extraNote}`,
         recordedAt: new Date().toISOString(),
       };
       await window.storage.set("cp3_salary", JSON.stringify([...records, rec]));
       setToast?.(lang==="zh"?"已儲存至薪資管理，最新一筆已更新":"Saved to salary management — the latest record is now updated");
-      setShowSalaryCalc(false);
-      setSalaryRateValue("");
+      setJustSavedAmount(Math.round(amount*100)/100); // keep panel open, show the copy-text dialog
       setSalaryCalcPreviewed(false);
     } catch {
       setToast?.(lang==="zh"?"儲存失敗，請稍後再試":"Failed to save — please try again");
@@ -4172,18 +4179,18 @@ function TeacherStats({ users, courses, absences, attendance, enrollments, lang,
     if (completed50>0) parts.push(`${completed50}×50min`);
     return parts.join("; ") || "0 lessons";
   };
-  const salaryTextLong = () =>
+  const salaryTextLong = (amt) =>
 `Good ${greetingWord()}, Teacher ${selectedTeacher?.name||""}!
 
 We've calculated your salary for the period of ${periodLabel}. In total, you taught ${completedCount} lesson${completedCount===1?"":"s"} (${lessonBreakdown()}).
 
-We'll be sending $_____ to your account (_____). Please confirm this is correct.
+We'll be sending $${amt} to your account (_____). Please confirm this is correct.
 
 Thank you!`;
-  const salaryTextShort = () =>
-`Hi ${selectedTeacher?.name||""}! Quick salary summary for ${periodLabel}: ${completedCount} lesson${completedCount===1?"":"s"} total (${lessonBreakdown()}). Sending $_____ to account _____ — please confirm. Thanks!`;
-  const copySalaryText = (which) => {
-    const text = which==="long" ? salaryTextLong() : salaryTextShort();
+  const salaryTextShort = (amt) =>
+`Hi ${selectedTeacher?.name||""}! Quick salary summary for ${periodLabel}: ${completedCount} lesson${completedCount===1?"":"s"} total (${lessonBreakdown()}). Sending $${amt} to account _____ — please confirm. Thanks!`;
+  const copySalaryText = (which, amt) => {
+    const text = which==="long" ? salaryTextLong(amt) : salaryTextShort(amt);
     const doCopy = () => { setSalaryCopied(which); setTimeout(()=>setSalaryCopied(null),2000); };
     navigator.clipboard?.writeText(text).then(doCopy).catch(()=>{
       const ta=document.createElement("textarea"); ta.value=text; document.body.appendChild(ta);
@@ -4230,42 +4237,84 @@ Thank you!`;
       </div>
       {/* Salary calculator — turns the selected teacher/date-range directly into a saved payment */}
       <div style={{marginBottom:"1.25rem"}}>
-        <button onClick={()=>{setShowSalaryCalc(v=>!v);setSalaryCalcPreviewed(false);}} style={{fontSize:12,padding:"7px 14px",borderRadius:7,border:"1px solid #2E7D32",background:showSalaryCalc?"#2E7D32":"transparent",color:showSalaryCalc?"#fff":"#2E7D32",cursor:"pointer",fontWeight:500}}>
+        <button onClick={()=>{setShowSalaryCalc(v=>!v);setSalaryCalcPreviewed(false);setJustSavedAmount(null);}} style={{fontSize:12,padding:"7px 14px",borderRadius:7,border:"1px solid #2E7D32",background:showSalaryCalc?"#2E7D32":"transparent",color:showSalaryCalc?"#fff":"#2E7D32",cursor:"pointer",fontWeight:500}}>
           💰 {lang==="zh"?"計算薪資":"Calculate Salary"}
         </button>
         {showSalaryCalc && (
           <div style={{marginTop:10,background:"#FAFAFA",border:"0.5px solid #E0E0E0",borderRadius:10,padding:"14px 16px",maxWidth:420}}>
-            <div style={{fontSize:12,color:"#546E7A",marginBottom:10,lineHeight:1.6}}>
-              {lang==="zh"
-                ? `目前統計區間：${allTime?"全部時間":dateFrom+" ~ "+dateTo}，共 ${completedCount} 堂完課（25分鐘 ${completed25} 堂、50分鐘 ${completed50} 堂，共 ${salaryTotalHours.toFixed(1)} 小時）`
-                : `Current range: ${allTime?"all time":dateFrom+" ~ "+dateTo} — ${completedCount} completed session(s) (25min×${completed25}, 50min×${completed50}, ${salaryTotalHours.toFixed(1)}h total)`}
-            </div>
-            <div style={{display:"flex",gap:6,marginBottom:10}}>
-              {[["perSession",lang==="zh"?"每堂固定金額":"Per Session"],["hourly",lang==="zh"?"時薪":"Hourly Rate"]].map(([k,l])=>(
-                <button key={k} onClick={()=>{setSalaryCalcMode(k);setSalaryCalcPreviewed(false);}} style={{flex:1,padding:"7px",borderRadius:6,fontSize:12,cursor:"pointer",border:salaryCalcMode===k?"none":"0.5px solid #CFD8DC",background:salaryCalcMode===k?"#1A6B8A":"transparent",color:salaryCalcMode===k?"#fff":"#546E7A",fontWeight:salaryCalcMode===k?600:400}}>{l}</button>
-              ))}
-            </div>
-            <label style={{display:"block",fontSize:11,color:"#9E9E9E",marginBottom:4}}>
-              {salaryCalcMode==="perSession" ? (lang==="zh"?"每堂金額":"Amount per session") : (lang==="zh"?"每小時金額":"Amount per hour")}
-            </label>
-            <input type="number" min="0" value={salaryRateValue} onChange={e=>{setSalaryRateValue(e.target.value);setSalaryCalcPreviewed(false);}} placeholder="0" style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",fontSize:13,marginBottom:10}}/>
-            {!salaryCalcPreviewed ? (
-              <button onClick={()=>setSalaryCalcPreviewed(true)} disabled={!salaryRateValue||salaryCalcAmount()<=0} style={{width:"100%",padding:"9px",borderRadius:7,border:"1px solid #4A9FD4",background:"transparent",color:"#1A6B8A",fontSize:13,cursor:(!salaryRateValue||salaryCalcAmount()<=0)?"not-allowed":"pointer",opacity:(!salaryRateValue||salaryCalcAmount()<=0)?0.5:1}}>
-                🔍 {lang==="zh"?"預覽薪資":"Preview"}
-              </button>
-            ) : (
-              <div style={{background:"#E8F5E9",border:"1px solid #A5D6A7",borderRadius:8,padding:"12px 14px"}}>
-                <div style={{fontSize:12,color:"#2E7D32",marginBottom:4}}>{lang==="zh"?"試算金額":"Calculated amount"}</div>
-                <div style={{fontSize:22,fontWeight:700,color:"#172F39",marginBottom:10}}>{salaryCalcAmount().toLocaleString(undefined,{maximumFractionDigits:2})}</div>
-                <div style={{display:"flex",gap:8}}>
-                  <button onClick={saveSalaryCalc} disabled={salarySaving} style={{flex:1,padding:"9px",borderRadius:7,background:"#2E7D32",border:"none",color:"#fff",fontSize:13,fontWeight:600,cursor:salarySaving?"not-allowed":"pointer",opacity:salarySaving?0.6:1}}>
-                    {salarySaving ? (lang==="zh"?"儲存中…":"Saving…") : `✓ ${lang==="zh"?"確認並儲存":"Confirm & Save"}`}
+            {justSavedAmount!==null ? (
+              /* ── Post-save: notification text ready to copy, using the actual saved amount ── */
+              <div>
+                <div style={{fontSize:13,fontWeight:600,color:"#2E7D32",marginBottom:8}}>
+                  ✓ {lang==="zh"?`已儲存 ${justSavedAmount.toLocaleString(undefined,{maximumFractionDigits:2})}`:`Saved ${justSavedAmount.toLocaleString(undefined,{maximumFractionDigits:2})}`}
+                </div>
+                <div style={{fontSize:11,color:"#546E7A",marginBottom:10,lineHeight:1.6}}>
+                  {lang==="zh"?"薪資通知文字（已帶入這次儲存的金額，帳號欄位留白自行填寫）：":"Salary notification text (this saved amount is filled in — account number is left blank for you):"}
+                </div>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:8}}>
+                  <button onClick={()=>copySalaryText("long", justSavedAmount)} style={{fontSize:12,padding:"7px 14px",borderRadius:6,background:salaryCopied==="long"?"#4CAF50":"#1A6B8A",border:"none",color:"#fff",cursor:"pointer",fontWeight:500,transition:"background 0.2s"}}>
+                    {salaryCopied==="long" ? `✓ ${lang==="zh"?"已複製":"Copied"}` : `📋 ${lang==="zh"?"複製（完整版）":"Copy (Detailed)"}`}
                   </button>
-                  <button onClick={()=>setSalaryCalcPreviewed(false)} style={{padding:"9px 14px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>
-                    {lang==="zh"?"重新調整":"Adjust"}
+                  <button onClick={()=>copySalaryText("short", justSavedAmount)} style={{fontSize:12,padding:"7px 14px",borderRadius:6,background:salaryCopied==="short"?"#4CAF50":"transparent",border:`1px solid ${salaryCopied==="short"?"#4CAF50":"#1A6B8A"}`,color:salaryCopied==="short"?"#fff":"#1A6B8A",cursor:"pointer",fontWeight:500,transition:"background 0.2s"}}>
+                    {salaryCopied==="short" ? `✓ ${lang==="zh"?"已複製":"Copied"}` : `📋 ${lang==="zh"?"複製（簡短版）":"Copy (Short)"}`}
                   </button>
                 </div>
+                <button onClick={()=>{setJustSavedAmount(null);setShowSalaryCalc(false);setSalaryRate25("");setSalaryRate50("");setSalaryExtra("");}} style={{fontSize:12,padding:"6px 12px",borderRadius:6,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",cursor:"pointer"}}>
+                  {lang==="zh"?"完成":"Done"}
+                </button>
               </div>
+            ) : (
+              <>
+                <div style={{fontSize:12,color:"#546E7A",marginBottom:10,lineHeight:1.6}}>
+                  {lang==="zh"
+                    ? `目前統計區間：${allTime?"全部時間":dateFrom+" ~ "+dateTo}，共 ${completedCount} 堂完課（25分鐘 ${completed25} 堂、50分鐘 ${completed50} 堂）`
+                    : `Current range: ${allTime?"all time":dateFrom+" ~ "+dateTo} — ${completedCount} completed session(s) (25min×${completed25}, 50min×${completed50})`}
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+                  <div>
+                    <label style={{display:"block",fontSize:11,color:"#9E9E9E",marginBottom:4}}>
+                      {lang==="zh"?`25分鐘每堂金額（共 ${completed25} 堂）`:`Amount per 25min session (${completed25} total)`}
+                    </label>
+                    <input type="number" min="0" value={salaryRate25} onChange={e=>{setSalaryRate25(e.target.value);setSalaryCalcPreviewed(false);}} placeholder="0" style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",fontSize:13}}/>
+                  </div>
+                  <div>
+                    <label style={{display:"block",fontSize:11,color:"#9E9E9E",marginBottom:4}}>
+                      {lang==="zh"?`50分鐘每堂金額（共 ${completed50} 堂）`:`Amount per 50min session (${completed50} total)`}
+                    </label>
+                    <input type="number" min="0" value={salaryRate50} onChange={e=>{setSalaryRate50(e.target.value);setSalaryCalcPreviewed(false);}} placeholder="0" style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",fontSize:13}}/>
+                  </div>
+                </div>
+                <label style={{display:"block",fontSize:11,color:"#9E9E9E",marginBottom:4}}>
+                  {lang==="zh"?"其他金額（自由選填，例如獎金或調整）":"Other amount (optional — bonus, adjustment, etc.)"}
+                </label>
+                <input type="number" value={salaryExtra} onChange={e=>{setSalaryExtra(e.target.value);setSalaryCalcPreviewed(false);}} placeholder="0" style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",fontSize:13,marginBottom:10}}/>
+                <div style={{fontSize:10,color:"#9E9E9E",marginBottom:10}}>
+                  {lang==="zh"?"三格都是選填，留空視為 0，三格加總就是最終試算金額":"All three are optional — blank counts as 0. Total is all three added together"}
+                </div>
+                {!salaryCalcPreviewed ? (
+                  <button onClick={()=>setSalaryCalcPreviewed(true)} disabled={salaryCalcAmount()<=0} style={{width:"100%",padding:"9px",borderRadius:7,border:"1px solid #4A9FD4",background:"transparent",color:"#1A6B8A",fontSize:13,cursor:salaryCalcAmount()<=0?"not-allowed":"pointer",opacity:salaryCalcAmount()<=0?0.5:1}}>
+                    🔍 {lang==="zh"?"預覽薪資":"Preview"}
+                  </button>
+                ) : (
+                  <div style={{background:"#E8F5E9",border:"1px solid #A5D6A7",borderRadius:8,padding:"12px 14px"}}>
+                    <div style={{fontSize:12,color:"#2E7D32",marginBottom:2}}>{lang==="zh"?"試算金額":"Calculated amount"}</div>
+                    <div style={{fontSize:11,color:"#546E7A",marginBottom:6}}>
+                      {lang==="zh"
+                        ? `25分鐘 ${completed25} × ${parseFloat(salaryRate25)||0} ＋ 50分鐘 ${completed50} × ${parseFloat(salaryRate50)||0} ＋ 其他 ${parseFloat(salaryExtra)||0}`
+                        : `25min ${completed25} × ${parseFloat(salaryRate25)||0} + 50min ${completed50} × ${parseFloat(salaryRate50)||0} + other ${parseFloat(salaryExtra)||0}`}
+                    </div>
+                    <div style={{fontSize:22,fontWeight:700,color:"#172F39",marginBottom:10}}>{salaryCalcAmount().toLocaleString(undefined,{maximumFractionDigits:2})}</div>
+                    <div style={{display:"flex",gap:8}}>
+                      <button onClick={saveSalaryCalc} disabled={salarySaving} style={{flex:1,padding:"9px",borderRadius:7,background:"#2E7D32",border:"none",color:"#fff",fontSize:13,fontWeight:600,cursor:salarySaving?"not-allowed":"pointer",opacity:salarySaving?0.6:1}}>
+                        {salarySaving ? (lang==="zh"?"儲存中…":"Saving…") : `✓ ${lang==="zh"?"確認並儲存":"Confirm & Save"}`}
+                      </button>
+                      <button onClick={()=>setSalaryCalcPreviewed(false)} style={{padding:"9px 14px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>
+                        {lang==="zh"?"重新調整":"Adjust"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}
@@ -4341,28 +4390,6 @@ Thank you!`;
           </div>
           <div style={{background:"#E8F5E9",border:"0.5px solid #A5D6A7",borderRadius:8,padding:"8px 16px",fontSize:13,color:"#1B5E20"}}>
             <strong style={{fontSize:18}}>{completed50}</strong> {lang==="zh"?"堂 · 50分鐘":"× 50min sessions"}
-          </div>
-        </div>
-      )}
-
-      {/* Salary notification text — admin only (this whole page already is
-          admin-exclusive). Two ready-to-send phrasings; amount/account are
-          left as blanks for you to fill in after pasting. */}
-      {completedCount>0 && (
-        <div style={{background:"#FAFAFA",border:"0.5px solid #E0E0E0",borderRadius:8,padding:"10px 14px",marginBottom:16}}>
-          <div style={{fontSize:12,fontWeight:600,color:"#172F39",marginBottom:8}}>
-            💰 {lang==="zh"?"薪資通知文字（自動帶入目前選擇的老師與區間）":"Salary Notification Text (uses the teacher/date-range currently selected)"}
-          </div>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            <button onClick={()=>copySalaryText("long")} style={{fontSize:12,padding:"7px 14px",borderRadius:6,background:salaryCopied==="long"?"#4CAF50":"#1A6B8A",border:"none",color:"#fff",cursor:"pointer",fontWeight:500,transition:"background 0.2s"}}>
-              {salaryCopied==="long" ? `✓ ${lang==="zh"?"已複製":"Copied"}` : `📋 ${lang==="zh"?"複製（完整版）":"Copy (Detailed)"}`}
-            </button>
-            <button onClick={()=>copySalaryText("short")} style={{fontSize:12,padding:"7px 14px",borderRadius:6,background:salaryCopied==="short"?"#4CAF50":"transparent",border:`1px solid ${salaryCopied==="short"?"#4CAF50":"#1A6B8A"}`,color:salaryCopied==="short"?"#fff":"#1A6B8A",cursor:"pointer",fontWeight:500,transition:"background 0.2s"}}>
-              {salaryCopied==="short" ? `✓ ${lang==="zh"?"已複製":"Copied"}` : `📋 ${lang==="zh"?"複製（簡短版）":"Copy (Short)"}`}
-            </button>
-          </div>
-          <div style={{fontSize:10,color:"#9E9E9E",marginTop:6,lineHeight:1.5}}>
-            {lang==="zh"?"金額跟帳號欄位會留白，貼上後自行填寫。":"Amount and account number are left blank — fill them in after pasting."}
           </div>
         </div>
       )}
@@ -6324,7 +6351,84 @@ function ScheduleShareModal({ ownerEntry, users, dirEntries, saveDirEntries, lan
   );
 }
 
-function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attendance, courses, readOnly, absences }) {
+// ─── View/clean up a student's teachers & courses (admin) ────────────────────
+// Handles the specific gap where deleting an ENROLLMENT (付費與排課's 刪除)
+// only removes the enrollment + attendance — the underlying COURSE record
+// (which is what actually carries teacherId/studentId, and is what the
+// student's own "任教老師" list is built from) is never touched. That
+// orphaned course then keeps showing a teacher the admin thought was gone.
+function StudentCoursesModal({ studentId, users, courses, setCourses, enrollments, lang, setToast, onClose }) {
+  const student = users.find(u=>u.id===studentId);
+  const [confirmDelId, setConfirmDelId] = useState(null);
+  const myCourses = courses.filter(c=>c.studentId===studentId);
+
+  const doDelete = () => {
+    setCourses(cs => cs.filter(c=>c.id!==confirmDelId));
+    setToast(lang==="zh"?"已刪除該課程紀錄":"Course record deleted");
+    setConfirmDelId(null);
+  };
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9300,padding:"1rem"}}>
+      <div style={{background:"#FFFFFF",borderRadius:16,width:"100%",maxWidth:520,boxSizing:"border-box",maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 8px 36px rgba(23,47,57,0.2)",overflow:"hidden"}}>
+        <div style={{background:"#172F39",padding:"13px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+          <span style={{fontSize:14,fontWeight:600,color:"#fff"}}>🎓 {lang==="zh"?`${student?.name||""} 的任教老師與課程`:`${student?.name||""}'s Teachers & Courses`}</span>
+          <button onClick={onClose} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",color:"#fff",fontSize:16}}>×</button>
+        </div>
+        <div style={{padding:"16px 18px",overflowY:"auto",flex:1,minHeight:0}}>
+          <p style={{fontSize:11,color:"#9E9E9E",margin:"0 0 12px",lineHeight:1.6}}>
+            {lang==="zh"
+              ? "這裡列出這位學生底下所有的課程紀錄。如果之前在「付費與排課」用過刪除，只會刪掉排課本身，課程紀錄（含老師關聯）會留下來變成孤立資料——學生自己看到的「任教老師」仍然會抓到這裡沒清乾淨的紀錄。「無排課紀錄」的項目通常就是這種殘留，可以在這裡直接刪除。"
+              : "Every course record under this student. Deleting an enrollment in 付費與排課 only removes the enrollment itself — the course record (including its teacher link) is left behind as orphaned data, which is why the student's own \"My Teachers\" list can still show it. Entries marked \"No enrollment\" are usually this kind of leftover — delete them directly here."}
+          </p>
+          {myCourses.length===0 ? (
+            <p style={{color:"#9E9E9E",fontSize:13,textAlign:"center",padding:"1.5rem 0"}}>—</p>
+          ) : myCourses.map(c => {
+            const teacher = users.find(u=>u.id===c.teacherId);
+            const hasEnrollment = enrollments.some(e=>e.courseId===c.id);
+            return (
+              <div key={c.id} style={{background:hasEnrollment?"#FFFFFF":"#FFF3E0",border:`0.5px solid ${hasEnrollment?"#E0E0E0":"#FFCC80"}`,borderRadius:9,padding:"10px 14px",marginBottom:8}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,flexWrap:"wrap"}}>
+                  <div>
+                    <div style={{fontSize:12,fontWeight:600,color:"#172F39"}}>{c.subject}</div>
+                    <div style={{fontSize:11,color:"#546E7A",marginTop:2}}>{lang==="zh"?"老師":"Teacher"}: {teacher?.name||"—"}</div>
+                    <div style={{fontSize:11,color:"#9E9E9E",marginTop:2}}>
+                      {lang==="zh"?"狀態":"Status"}: {c.status==="archived"?(lang==="zh"?"已結束":"Archived"):(lang==="zh"?"進行中":"Active")}
+                      {c.isTrial && <span style={{marginLeft:6,fontSize:10,background:"#FFFDE7",color:"#F57F17",borderRadius:4,padding:"1px 6px"}}>Trial</span>}
+                    </div>
+                    {!hasEnrollment && (
+                      <div style={{fontSize:11,color:"#E65100",marginTop:4,fontWeight:600}}>⚠️ {lang==="zh"?"無排課紀錄（可能是殘留的孤立課程）":"No enrollment (likely orphaned leftover)"}</div>
+                    )}
+                  </div>
+                  <button onClick={()=>setConfirmDelId(c.id)} style={{fontSize:11,padding:"4px 10px",borderRadius:5,border:"0.5px solid #D32F2F",background:"transparent",color:"#D32F2F",cursor:"pointer",flexShrink:0}}>
+                    🗑 {lang==="zh"?"刪除":"Delete"}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      {confirmDelId && (() => {
+        const c = myCourses.find(x=>x.id===confirmDelId);
+        const hasEnrollment = enrollments.some(e=>e.courseId===confirmDelId);
+        return (
+          <ConfirmModal
+            title={lang==="zh"?"刪除課程紀錄":"Delete Course Record"}
+            message={hasEnrollment
+              ? (lang==="zh"?`「${c?.subject||""}」目前還有排課紀錄，確定要刪除嗎？這個操作無法復原。`:`"${c?.subject||""}" still has an enrollment attached — delete anyway? This cannot be undone.`)
+              : (lang==="zh"?`確認刪除「${c?.subject||""}」這筆孤立的課程紀錄？此操作無法復原。`:`Delete the orphaned course record "${c?.subject||""}"? This cannot be undone.`)}
+            confirmLabel={lang==="zh"?"確認刪除":"Delete"}
+            onConfirm={doDelete}
+            onCancel={()=>setConfirmDelId(null)}
+            danger/>
+        );
+      })()}
+    </div>
+  );
+}
+
+function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attendance, courses, setCourses, readOnly, absences }) {
   const t = T[lang];
   const students = users.filter(u=>u.role==="student");
 
@@ -6369,6 +6473,7 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
   const [addForm, setAddForm] = useState({nameEn:"",nameCn:"",age:"",regYear:String(new Date().getFullYear()),regDate:"",startDate:"",duration:"",manualSessions:"",linkedUserId:""});
   const [confirmDelDirId, setConfirmDelDirId] = useState(null);
   const [shareTarget, setShareTarget] = useState(null); // dir entry whose schedule-sharing is being edited
+  const [coursesTarget, setCoursesTarget] = useState(null); // linkedUserId whose courses/teachers are being reviewed
   const [sortField, setSortField] = useState(null); // "age" | "regYear" | "duration" | "points" | null
   const [sortDir, setSortDir] = useState("asc"); // "asc" | "desc"
   const toggleSort = (field) => {
@@ -6533,6 +6638,7 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
     <div>
       {confirmDelDirId && <ConfirmModal title={lang==="zh"?"刪除學生資料":"Delete Student"} message={lang==="zh"?"確認刪除此學生的資料？":"Delete this student record?"} confirmLabel={lang==="zh"?"確認刪除":"Delete"} onConfirm={doDelDir} onCancel={()=>setConfirmDelDirId(null)} danger/>}
       {shareTarget && <ScheduleShareModal ownerEntry={shareTarget} users={users} dirEntries={dirEntries} saveDirEntries={saveDirEntries} lang={lang} setToast={setToast} onClose={()=>setShareTarget(null)}/>}
+      {coursesTarget && setCourses && <StudentCoursesModal studentId={coursesTarget} users={users} courses={courses} setCourses={setCourses} enrollments={enrollments} lang={lang} setToast={setToast} onClose={()=>setCoursesTarget(null)}/>}
 
       {/* Header */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"0.6rem",flexWrap:"wrap",gap:8}}>
@@ -6818,6 +6924,11 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
                           {linkedUser && (
                             <button onClick={()=>setShareTarget(d)} title={t.scheduleShareBtn} style={{padding:"4px 9px",borderRadius:4,border:`0.5px solid ${(d.sharedWith||[]).length?"#1A6B8A":"#CFD8DC"}`,background:(d.sharedWith||[]).length?"#EEF6FB":"transparent",color:"#1A6B8A",fontSize:11,cursor:"pointer"}}>
                               🔗{(d.sharedWith||[]).length>0?` ${(d.sharedWith||[]).length}`:""}
+                            </button>
+                          )}
+                          {linkedUser && setCourses && (
+                            <button onClick={()=>setCoursesTarget(linkedUser.id)} title={lang==="zh"?"檢視/清理任教老師與課程":"View/clean up teachers & courses"} style={{padding:"4px 9px",borderRadius:4,border:"0.5px solid #7B1FA2",background:"transparent",color:"#7B1FA2",fontSize:11,cursor:"pointer"}}>
+                              🎓
                             </button>
                           )}
                           {d._fromDir && <button onClick={()=>setConfirmDelDirId(entryId)} style={{padding:"4px 9px",borderRadius:4,border:"0.5px solid #FFCDD2",background:"transparent",color:"#D32F2F",fontSize:11,cursor:"pointer"}}>✕</button>}
@@ -7527,7 +7638,7 @@ function ChangeNotifications({ users, setUsers, lang, setToast, profileChanges, 
   );
 }
 
-function PeopleDirectory({ users, setUsers, lang, setToast, enrollments, attendance, courses, profileChanges, setProfileChanges, hideSalary, readOnly, absences }) {
+function PeopleDirectory({ users, setUsers, lang, setToast, enrollments, attendance, courses, setCourses, profileChanges, setProfileChanges, hideSalary, readOnly, absences }) {
   const t = T[lang];
   const [subTab, setSubTab] = useState("students"); // students | teachers | changes
   const pendingChangeCount = (profileChanges||[]).filter(c=>c.status==="pending").length;
@@ -7552,7 +7663,7 @@ function PeopleDirectory({ users, setUsers, lang, setToast, enrollments, attenda
           </button>
         ))}
       </div>
-      {subTab==="students" && <StudentDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses} readOnly={readOnly} absences={absences}/>}
+      {subTab==="students" && <StudentDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses} setCourses={setCourses} readOnly={readOnly} absences={absences}/>}
       {subTab==="teachers" && <TeacherDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} hideSalary={hideSalary} readOnly={readOnly} courses={courses} enrollments={enrollments} attendance={attendance} absences={absences}/>}
       {!readOnly && subTab==="changes" && <ChangeNotifications users={users} setUsers={setUsers} lang={lang} setToast={setToast} profileChanges={profileChanges} setProfileChanges={setProfileChanges}/>}
     </div>
@@ -7977,7 +8088,7 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
       {tab==="matedit"&&<MaterialEditReview courses={courses} materials={materials||[]} setMaterials={setMaterials} users={users} lang={lang} setToast={setToast}/>}
       {tab==="studentmat"&&<StudentMaterialReviewPanel users={users} courses={courses} enrollments={enrollments} materials={materials||[]} setMaterials={setMaterials} studentMatSubs={studentMatSubs||[]} setStudentMatSubs={setStudentMatSubs} currentUser={currentUser} lang={lang} setToast={setToast}/>}
       {tab==="availability"&&<AdminTeacherAvailability users={users} courses={courses} availability={teacherAvailability||[]} setAvailability={setTeacherAvailability} overrides={availabilityOverrides||[]} setOverrides={setAvailabilityOverrides} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang} setToast={setToast}/>}
-      {tab==="peopledir" &&<PeopleDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses} profileChanges={profileChanges} setProfileChanges={setProfileChanges} absences={absences}/>}
+      {tab==="peopledir" &&<PeopleDirectory users={users} setUsers={setUsers} lang={lang} setToast={setToast} enrollments={enrollments} attendance={attendance} courses={courses} setCourses={setCourses} profileChanges={profileChanges} setProfileChanges={setProfileChanges} absences={absences}/>}
       {tab==="trial" &&<TrialApplicationsPanel users={users} setUsers={setUsers} lang={lang} setToast={setToast} trialApplications={trialApplications||[]} setTrialApplications={setTrialApplications} englishLevels={englishLevels||[]} setEnglishLevels={setEnglishLevels} learningPurposes={learningPurposes||[]} setLearningPurposes={setLearningPurposes}/>}
       {tab==="users"  &&<UserManager users={users} setUsers={setUsers} lang={lang} setToast={setToast} onImpersonate={onImpersonate}/>}
       {tab==="sstats" &&<StudentStats users={users} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} setEnrollments={setEnrollments} lang={lang}/>}
