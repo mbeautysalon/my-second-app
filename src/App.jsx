@@ -501,7 +501,7 @@ const TRIAL_COLOR = {bg:"#FFFDE7",border:"#F9A825",text:"#F57F17"};
 // Bumped whenever a meaningful set of changes ships. Shown low-key on the
 // login page so version can be confirmed at a glance; also called out
 // whenever a new file is delivered.
-const APP_VERSION = "v1.2.8.6";
+const APP_VERSION = "v1.2.8.8";
 
 const genId = () => "id_" + Math.random().toString(36).slice(2,9);
 
@@ -1840,16 +1840,28 @@ function AdminSessionModal({ slot, users, lang, attendance, setAttendance, enrol
 
   const doReschedule = () => {
     if (!rsDate || !rsTime) { setToast(lang==="zh"?"請選擇日期與時間":"Please pick a date and time"); return; }
+    // If this session was excused/teacher_leave, deferExcusedSession already
+    // auto-appended a compensating make-up session for it (tagged
+    // rescheduledFrom: date). Now that admin is manually giving THIS session
+    // an explicit new date, that auto-compensation is redundant — remove it
+    // BEFORE the move (excluding the entry being moved itself, in case it's
+    // somehow the same one) so the student doesn't end up with both the
+    // auto-compensation AND this manual reschedule, one extra session. Doing
+    // this before the collision check too, so rescheduling straight onto
+    // that same auto-picked date isn't wrongly blocked as "already taken".
+    const baseSched = (existing && (existing.type==="excused" || existing.type==="teacher_leave"))
+      ? (enrollment.scheduledDates||[]).filter(s => !(s.rescheduledFrom===date && !(s.date===date && s.sessionNo===sessionNo)))
+      : (enrollment.scheduledDates||[]);
     // Guard against creating a duplicate: if this enrollment already has a
     // DIFFERENT session on the target date, moving this one there would make
     // the same course show up twice on the same day in the schedule.
-    const collision = (enrollment.scheduledDates||[]).some(s => s.date===rsDate && !(s.date===date && s.sessionNo===sessionNo));
+    const collision = baseSched.some(s => s.date===rsDate && !(s.date===date && s.sessionNo===sessionNo));
     if (collision) {
       setToast(lang==="zh"?`${rsDate} 已經有這堂課的排課了，請選擇其他日期`:`This course already has a session on ${rsDate} — pick a different date`);
       return;
     }
     const newDayIndex = (new Date(rsDate+"T00:00:00").getDay()+6)%7;
-    const newSched = (enrollment.scheduledDates||[]).map(s =>
+    const newSched = baseSched.map(s =>
       (s.date===date && s.sessionNo===sessionNo)
         ? { ...s, date: rsDate, dayIndex: newDayIndex, customStart: rsTime, rescheduledFrom: s.rescheduledFrom || date }
         : s
@@ -4706,25 +4718,35 @@ function buildSchedule(course, startDateStr, totalSessions, excusedDates=[]) {
   const results = [];
   const excusedSet = new Set(excusedDates);
   const start = new Date(startDateStr + "T00:00:00");
-  const dow = getCourseDays(course); // [0..6] Mon-based — union of all schedule blocks' days
-  if (!dow.length || !totalSessions) return results;
+  // Raw schedule blocks — NOT deduplicated by day. A course can have more
+  // than one time slot on the same weekday (e.g. back-to-back Saturday
+  // sessions), so this generates one session per BLOCK, not just one per
+  // distinct weekday. customStart is always set explicitly on every
+  // generated session so there's never ambiguity about which of a day's
+  // slots it belongs to.
+  const blocksByDay = {};
+  getCourseSchedule(course).forEach(b => { (blocksByDay[b.dayIndex] ||= []).push(b); });
+  Object.values(blocksByDay).forEach(arr => arr.sort((a,b)=>(a.start||"").localeCompare(b.start||"")));
+  if (!Object.keys(blocksByDay).length || !totalSessions) return results;
 
-  // Sort days so we go Mon→Sun each week
-  const sortedDow = [...dow].sort((a,b)=>a-b);
   let d = new Date(start);
   let session = 1;
   let safety = 0; // prevent infinite loop
   while (session <= totalSessions && safety < 1000) {
     safety++;
     const thisDow = (d.getDay() + 6) % 7; // 0=Mon
-    if (sortedDow.includes(thisDow)) {
+    const dayBlocks = blocksByDay[thisDow];
+    if (dayBlocks) {
       const dateStr = fmtYMD(d);
       if (dateStr >= startDateStr) {
         if (excusedSet.has(dateStr)) {
-          // Skip this slot — deferred (don't count as session)
+          // Skip this day's slot(s) — deferred (don't count as session)
         } else {
-          results.push({ date: dateStr, dayIndex: thisDow, sessionNo: session });
-          session++;
+          for (const block of dayBlocks) {
+            if (session > totalSessions) break;
+            results.push({ date: dateStr, dayIndex: thisDow, sessionNo: session, customStart: block.start });
+            session++;
+          }
         }
       }
     }
@@ -4794,13 +4816,17 @@ function parseTSVBlock(text) {
 // alongside the new pattern's days, silently reintroducing the old day into
 // the deferral logic. Falls back to the course's own declared schedule only
 // if this enrollment has never been adjusted at all.
+// Returns { dayIndex: [start1, start2, ...] } — an ARRAY per day, not a
+// single value, so a course with two time slots on the same weekday (e.g.
+// back-to-back Saturday sessions) is represented correctly instead of one
+// slot silently overwriting the other.
 function inferActivePattern(course, enrollment) {
   const map = {};
-  if (enrollment.currentPattern && enrollment.currentPattern.length) {
-    enrollment.currentPattern.forEach(b => { map[b.dayIndex] = b.start; });
-  } else {
-    getCourseSchedule(course).forEach(b => { map[b.dayIndex] = b.start; });
-  }
+  const blocks = (enrollment.currentPattern && enrollment.currentPattern.length)
+    ? enrollment.currentPattern
+    : getCourseSchedule(course);
+  blocks.forEach(b => { (map[b.dayIndex] ||= []).push(b.start); });
+  Object.values(map).forEach(arr => arr.sort());
   return map;
 }
 
@@ -4808,7 +4834,8 @@ function inferActivePattern(course, enrollment) {
 // LAST scheduled date, following the enrollment's CURRENT active pattern
 // (same source of truth as 調整未來時段/deferExcusedSession — never guesses
 // from raw dates, which is what caused the earlier reschedule bugs). Nothing
-// existing is touched; this only ever appends new entries.
+// existing is touched; this only ever appends new entries. A day with two
+// time slots produces two sessions for that occurrence, in start-time order.
 function extendSchedule(course, enrollment, addCount) {
   const patternMap = inferActivePattern(course, enrollment);
   const days = Object.keys(patternMap).map(Number);
@@ -4823,14 +4850,23 @@ function extendSchedule(course, enrollment, addCount) {
     safety++;
     d.setDate(d.getDate()+1);
     const dow = (d.getDay()+6)%7;
-    if (days.includes(dow)) {
-      results.push({ date: fmtYMD(d), dayIndex: dow, sessionNo: maxSessionNo+count+1, customStart: patternMap[dow] });
-      count++;
+    const starts = patternMap[dow];
+    if (starts) {
+      for (const start of starts) {
+        if (count >= addCount) break;
+        results.push({ date: fmtYMD(d), dayIndex: dow, sessionNo: maxSessionNo+count+1, customStart: start });
+        count++;
+      }
     }
   }
   return results;
 }
 
+// When a session gets excused, find the next day (following the pattern)
+// that isn't already fully scheduled, and add ONE compensating make-up
+// session there. If that day has more than one time slot, the compensation
+// uses the first (earliest) one — it's a placeholder the admin can move to
+// an exact time via 更換時間補課 anyway.
 function deferExcusedSession(course, enrollment, excusedDate) {
   const existingDates = new Set((enrollment.scheduledDates||[]).map(s=>s.date));
   const patternMap = inferActivePattern(course, enrollment);
@@ -4849,7 +4885,7 @@ function deferExcusedSession(course, enrollment, excusedDate) {
   }
   if (!compDate) return enrollment.scheduledDates||[]; // couldn't find a slot — leave schedule untouched
   const maxNo = Math.max(0, ...(enrollment.scheduledDates||[]).map(s=>s.sessionNo||0));
-  return [...(enrollment.scheduledDates||[]), {date:compDate, dayIndex:compDayIndex, sessionNo:maxNo+1, rescheduledFrom:excusedDate, customStart:patternMap[compDayIndex]}];
+  return [...(enrollment.scheduledDates||[]), {date:compDate, dayIndex:compDayIndex, sessionNo:maxNo+1, rescheduledFrom:excusedDate, customStart:patternMap[compDayIndex][0]}];
 }
 // Reverting a session FROM excused/teacher_leave back to normal: the excused
 // date's own entry was never removed in the first place (see above), so
@@ -4905,12 +4941,13 @@ function AdjustFutureScheduleModal({ enrollment, course, users, setEnrollments, 
 
   if (!course) return null;
 
-  // dayIndex -> start time, flattened across every block (a day can only
-  // belong to one block at a time in the UI, so this is unambiguous)
+  // dayIndex -> [start1, start2, ...] — an ARRAY per day now, since a day can
+  // have more than one time slot (e.g. back-to-back Saturday sessions).
   const dayTimeMap = {};
-  blocks.forEach(b => (b.days||[]).forEach(d => { dayTimeMap[d] = b.start; }));
+  blocks.forEach(b => (b.days||[]).forEach(d => { (dayTimeMap[d] ||= []).push(b.start); }));
+  Object.values(dayTimeMap).forEach(arr => arr.sort());
   const activeDays = Object.keys(dayTimeMap).map(Number);
-  const sessionsPerWeek = activeDays.length;
+  const sessionsPerWeek = Object.values(dayTimeMap).reduce((sum,arr)=>sum+arr.length, 0);
 
   // Bug fix (kept from the single-day version): a session that's ALREADY
   // HAPPENED must stay kept even if its date happens to equal the chosen
@@ -4934,14 +4971,18 @@ function AdjustFutureScheduleModal({ enrollment, course, users, setEnrollments, 
       d.setDate(d.getDate()+1);
       const dow = (d.getDay()+6)%7;
       const ds = fmtYMD(d);
-      if (activeDays.includes(dow) && !keptDates.has(ds)) {
+      const starts = dayTimeMap[dow];
+      if (starts && !keptDates.has(ds)) {
         // customStart is set explicitly on every new entry (using THAT
         // day's own block time) — its displayed time is then fully
         // self-contained and never depends on the course's own schedule
         // pattern, which is deliberately left untouched (see confirmAdjust
         // below) so nothing here can ever retroactively affect how past
         // sessions resolve their time.
-        newDates.push({date:ds, dayIndex:dow, sessionNo:sessionNo++, customStart:dayTimeMap[dow]});
+        for (const start of starts) {
+          if (newDates.length >= remainingCount) break;
+          newDates.push({date:ds, dayIndex:dow, sessionNo:sessionNo++, customStart:start});
+        }
       }
     }
     setPreview(newDates);
@@ -4957,7 +4998,7 @@ function AdjustFutureScheduleModal({ enrollment, course, users, setEnrollments, 
     // leftover not-yet-happened old-pattern entry, still correctly kept
     // because its date fell before the effective date, could get mistaken
     // for part of the active pattern too).
-    const newPattern = activeDays.map(d => ({dayIndex:d, start:dayTimeMap[d]}));
+    const newPattern = activeDays.flatMap(d => dayTimeMap[d].map(start => ({dayIndex:d, start})));
     // Capture what the schedule looked like right before this change, so
     // the caller can offer a one-click undo if the admin picked the wrong
     // day/time by mistake.
@@ -5015,9 +5056,8 @@ function AdjustFutureScheduleModal({ enrollment, course, users, setEnrollments, 
                 </div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:6}}>
                   {T[lang].days.map((d,i)=>{
-                    const takenByOther = blocks.some(ob=>ob._bid!==b._bid && (ob.days||[]).includes(i));
                     return (
-                      <button key={i} type="button" disabled={takenByOther} onClick={()=>toggleBlockDay(b._bid,i)} style={{padding:"5px 10px",borderRadius:5,fontSize:12,cursor:takenByOther?"not-allowed":"pointer",border:`1px solid ${b.days?.includes(i)?"#1A6B8A":"#CFD8DC"}`,background:b.days?.includes(i)?"#1A6B8A":"transparent",color:takenByOther?"#CFD8DC":b.days?.includes(i)?"#fff":"#546E7A",opacity:takenByOther?0.5:1}}>{d}</button>
+                      <button key={i} type="button" onClick={()=>toggleBlockDay(b._bid,i)} style={{padding:"5px 10px",borderRadius:5,fontSize:12,cursor:"pointer",border:`1px solid ${b.days?.includes(i)?"#1A6B8A":"#CFD8DC"}`,background:b.days?.includes(i)?"#1A6B8A":"transparent",color:b.days?.includes(i)?"#fff":"#546E7A"}}>{d}</button>
                     );
                   })}
                 </div>
@@ -5167,7 +5207,207 @@ function ExtendEnrollmentModal({ enrollment, course, users, setEnrollments, lang
   );
 }
 
-function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollments, attendance, setAttendance, lang, setToast }) {
+// ─── 單堂課編輯 (admin-only) — a direct, no-magic escape hatch for fixing a
+// schedule when the smarter tools (調整未來時段/加開課堂/更換時間補課/中斷課程)
+// interact in a way that leaves it wrong. Deliberately restricted to
+// FUTURE (not-yet-happened) sessions only — same safety principle as every
+// other schedule-editing tool in this app: history is never touched here.
+// Every save first pushes a snapshot of the enrollment's prior state into
+// editSnapshots (capped at the last 10), so any mistake can be rolled back
+// to a specific point in time from the 編輯歷程 tab of this same modal.
+function SessionEditorModal({ enrollment, course, users, materials, setMaterials, setEnrollments, currentUser, lang, setToast, onClose }) {
+  const teacher = users.find(u=>u.id===course?.teacherId);
+  const student = users.find(u=>u.id===course?.studentId);
+  const today = new Date().toISOString().slice(0,10);
+  const [view, setView] = useState("edit"); // edit | history
+
+  const pastEntries = (enrollment.scheduledDates||[]).filter(s=>s.date<today);
+  const [rows, setRows] = useState(() =>
+    (enrollment.scheduledDates||[])
+      .filter(s=>s.date>=today)
+      .sort((a,b)=>a.date.localeCompare(b.date) || (a.customStart||"").localeCompare(b.customStart||""))
+      .map(s=>({...s, _rid:genId()}))
+  );
+  const [syncTotal, setSyncTotal] = useState(true);
+  const [confirming, setConfirming] = useState(false);
+
+  const updateRow = (rid, patch) => setRows(rs=>rs.map(r=>r._rid===rid?{...r,...patch}:r));
+  const deleteRow = (rid) => setRows(rs=>rs.filter(r=>r._rid!==rid));
+  const addRow = () => setRows(rs=>[...rs, {_rid:genId(), date: rs.length?rs[rs.length-1].date:today, customStart:"09:00"}]);
+
+  const totalAfter = pastEntries.length + rows.length;
+  const originalTotal = (enrollment.scheduledDates||[]).length;
+  const netChange = totalAfter - originalTotal;
+
+  const materialFor = (date) => (materials||[]).find(m=>m.courseId===course?.id && m.date===date);
+
+  const applyEdits = () => {
+    const sortedRows = [...rows].sort((a,b)=>a.date.localeCompare(b.date) || (a.customStart||"").localeCompare(b.customStart||""));
+    const newFutureEntries = sortedRows.map((r,i)=>({
+      date: r.date,
+      dayIndex: (new Date(r.date+"T00:00:00").getDay()+6)%7,
+      sessionNo: pastEntries.length + i + 1,
+      customStart: r.customStart,
+      ...(r.rescheduledFrom ? {rescheduledFrom:r.rescheduledFrom} : {}),
+    }));
+    const newScheduledDates = [...pastEntries, ...newFutureEntries];
+
+    // Clean up materials tied to any future date that's being removed —
+    // otherwise they'd become the exact kind of orphaned leftover the
+    // 師生資料庫 cleanup tool was built to deal with.
+    const keptFutureDates = new Set(newFutureEntries.map(s=>s.date));
+    const removedFutureDates = (enrollment.scheduledDates||[])
+      .filter(s=>s.date>=today && !keptFutureDates.has(s.date))
+      .map(s=>s.date);
+    if (removedFutureDates.length && setMaterials) {
+      setMaterials(prev => (prev||[]).filter(m => !(m.courseId===course.id && removedFutureDates.includes(m.date))));
+    }
+
+    const snap = {
+      id: genId(), timestamp: new Date().toISOString(),
+      adminName: currentUser?.name || "admin",
+      description: lang==="zh"
+        ? `手動編輯單堂課：${originalTotal} 堂 → ${totalAfter} 堂${netChange!==0?`（${netChange>0?"+":""}${netChange}）`:""}`
+        : `Manual session edit: ${originalTotal} → ${totalAfter}${netChange!==0?` (${netChange>0?"+":""}${netChange})`:""}`,
+      scheduledDates: enrollment.scheduledDates || [],
+      totalSessions: enrollment.totalSessions,
+    };
+    const snapshots = [...(enrollment.editSnapshots||[]), snap].slice(-10);
+
+    setEnrollments(es=>es.map(e=>e.id===enrollment.id?{
+      ...e,
+      scheduledDates: newScheduledDates,
+      totalSessions: syncTotal ? totalAfter : e.totalSessions,
+      editSnapshots: snapshots,
+    }:e));
+    setToast(lang==="zh"?"已儲存變更，可在「編輯歷程」回復":"Changes saved — you can roll back from \"Edit History\"");
+    onClose();
+  };
+
+  const restoreSnapshot = (snap) => {
+    // Snapshot the CURRENT state first too, so restoring is itself undoable.
+    const preRestoreSnap = {
+      id: genId(), timestamp: new Date().toISOString(),
+      adminName: currentUser?.name || "admin",
+      description: lang==="zh" ? `回復前的狀態（即將回復到 ${snap.timestamp.slice(0,16).replace("T"," ")}）` : `State before rollback (restoring to ${snap.timestamp.slice(0,16).replace("T"," ")})`,
+      scheduledDates: enrollment.scheduledDates || [],
+      totalSessions: enrollment.totalSessions,
+    };
+    const snapshots = [...(enrollment.editSnapshots||[]), preRestoreSnap].slice(-10);
+    setEnrollments(es=>es.map(e=>e.id===enrollment.id?{
+      ...e,
+      scheduledDates: snap.scheduledDates,
+      totalSessions: snap.totalSessions,
+      editSnapshots: snapshots,
+    }:e));
+    setToast(lang==="zh"?"已回復到選定的時間點":"Rolled back to the selected point");
+    onClose();
+  };
+
+  if (!course) return null;
+  const history = [...(enrollment.editSnapshots||[])].reverse();
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9300,padding:"1rem"}}>
+      <div style={{background:"#FFFFFF",borderRadius:16,width:"100%",maxWidth:560,boxSizing:"border-box",maxHeight:"88vh",display:"flex",flexDirection:"column",boxShadow:"0 8px 36px rgba(23,47,57,0.2)",overflow:"hidden"}}>
+        <div style={{background:"#172F39",padding:"13px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+          <span style={{fontSize:14,fontWeight:600,color:"#fff"}}>🛠 {lang==="zh"?"單堂課編輯":"Session Editor"}</span>
+          <button onClick={onClose} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",color:"#fff",fontSize:16}}>×</button>
+        </div>
+
+        <div style={{display:"flex",gap:5,padding:"10px 18px 0",flexShrink:0}}>
+          {[["edit",lang==="zh"?"編輯堂次":"Edit Sessions"],["history",lang==="zh"?`編輯歷程 (${history.length})`:`Edit History (${history.length})`]].map(([k,l])=>(
+            <button key={k} onClick={()=>setView(k)} style={{padding:"7px 14px",borderRadius:"7px 7px 0 0",fontSize:12,cursor:"pointer",border:"none",borderBottom:view===k?"2px solid #1A6B8A":"2px solid transparent",background:view===k?"#EEF6FB":"transparent",color:view===k?"#1A6B8A":"#546E7A",fontWeight:view===k?600:400}}>{l}</button>
+          ))}
+        </div>
+
+        <div style={{padding:"14px 18px",overflowY:"auto",flex:1,minHeight:0}}>
+          <div style={{fontSize:11,color:"#9E9E9E",marginBottom:12,lineHeight:1.6}}>
+            {lang==="zh"
+              ? <>老師：<strong>{teacher?.name}</strong>　學生：<strong>{student?.name}</strong>　·　⚠️ 只能編輯尚未發生的堂次（{pastEntries.length} 堂已完成的紀錄不受影響）</>
+              : <>Teacher: <strong>{teacher?.name}</strong>　Student: <strong>{student?.name}</strong>　·　⚠️ Only sessions that haven't happened yet ({pastEntries.length} completed session(s) are untouched)</>}
+          </div>
+
+          {view==="edit" ? (
+            <>
+              {rows.length===0 && (
+                <p style={{color:"#9E9E9E",fontSize:12,textAlign:"center",padding:"1rem 0"}}>{lang==="zh"?"沒有未來堂次了":"No future sessions"}</p>
+              )}
+              {rows.map(r=>{
+                const mat = materialFor(r.date);
+                return (
+                  <div key={r._rid} style={{display:"flex",gap:6,alignItems:"center",background:"#F5F5F5",borderRadius:8,padding:"8px 10px",marginBottom:6,flexWrap:"wrap"}}>
+                    <input type="date" value={r.date} min={today} onChange={e=>updateRow(r._rid,{date:e.target.value})} style={{padding:"6px 8px",borderRadius:5,border:"0.5px solid #CFD8DC",fontSize:12}}/>
+                    <select value={(r.customStart||"09:00").split(":")[0]} onChange={e=>updateRow(r._rid,{customStart:`${e.target.value}:${(r.customStart||"09:00").split(":")[1]}`})} style={{padding:"6px 6px",borderRadius:5,border:"0.5px solid #CFD8DC",fontSize:12}}>
+                      {HOUR_OPTIONS.map(h=><option key={h} value={h}>{h}</option>)}
+                    </select>
+                    <span style={{color:"#9E9E9E"}}>:</span>
+                    <select value={(r.customStart||"09:00").split(":")[1]} onChange={e=>updateRow(r._rid,{customStart:`${(r.customStart||"09:00").split(":")[0]}:${e.target.value}`})} style={{padding:"6px 6px",borderRadius:5,border:"0.5px solid #CFD8DC",fontSize:12}}>
+                      {MIN_OPTIONS.map(m=><option key={m} value={m}>{m}</option>)}
+                    </select>
+                    {mat && <span title={lang==="zh"?`此日期有教材：${mat.title}（刪除此列會一併刪除教材）`:`Has material: ${mat.title} (deleting this row also deletes it)`} style={{fontSize:10,background:"#FFF3E0",color:"#E65100",borderRadius:4,padding:"2px 6px"}}>📄</span>}
+                    <button onClick={()=>deleteRow(r._rid)} style={{marginLeft:"auto",fontSize:11,padding:"4px 9px",borderRadius:5,border:"0.5px solid #FFCDD2",background:"transparent",color:"#D32F2F",cursor:"pointer"}}>🗑</button>
+                  </div>
+                );
+              })}
+              <button onClick={addRow} style={{fontSize:12,padding:"6px 14px",borderRadius:6,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",cursor:"pointer",marginBottom:14}}>
+                ＋ {lang==="zh"?"新增一堂":"Add a session"}
+              </button>
+
+              <div style={{background:"#FAFAFA",border:"0.5px solid #E0E0E0",borderRadius:8,padding:"10px 12px"}}>
+                <div style={{fontSize:12,color:"#172F39",marginBottom:8}}>
+                  {lang==="zh"
+                    ? <>原本 <strong>{originalTotal}</strong> 堂 → 現在 <strong>{totalAfter}</strong> 堂{netChange!==0 && <span style={{color:netChange>0?"#2E7D32":"#D32F2F"}}>（{netChange>0?"+":""}{netChange}）</span>}</>
+                    : <>Was <strong>{originalTotal}</strong> → now <strong>{totalAfter}</strong>{netChange!==0 && <span style={{color:netChange>0?"#2E7D32":"#D32F2F"}}> ({netChange>0?"+":""}{netChange})</span>}</>}
+                </div>
+                <label style={{display:"flex",alignItems:"center",gap:7,fontSize:12,color:"#546E7A",cursor:"pointer"}}>
+                  <input type="checkbox" checked={syncTotal} onChange={e=>setSyncTotal(e.target.checked)}/>
+                  {lang==="zh"?`同步更新購買堂數為 ${totalAfter}`:`Also update purchased sessions to ${totalAfter}`}
+                </label>
+              </div>
+            </>
+          ) : (
+            history.length===0 ? (
+              <p style={{color:"#9E9E9E",fontSize:12,textAlign:"center",padding:"1.5rem 0"}}>{lang==="zh"?"目前沒有編輯歷程":"No edit history yet"}</p>
+            ) : history.map(snap=>(
+              <div key={snap.id} style={{background:"#FFFFFF",border:"0.5px solid #E0E0E0",borderRadius:8,padding:"10px 12px",marginBottom:8}}>
+                <div style={{fontSize:12,color:"#172F39",fontWeight:500}}>{snap.description}</div>
+                <div style={{fontSize:11,color:"#9E9E9E",marginTop:2}}>{snap.timestamp.slice(0,16).replace("T"," ")} · {snap.adminName}</div>
+                <button onClick={()=>restoreSnapshot(snap)} style={{marginTop:8,fontSize:11,padding:"5px 12px",borderRadius:5,border:"1px solid #1A6B8A",background:"transparent",color:"#1A6B8A",cursor:"pointer",fontWeight:500}}>
+                  ↩ {lang==="zh"?"回復到這個時間點":"Roll back to this point"}
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+
+        {view==="edit" && (
+          <div style={{display:"flex",gap:8,padding:"12px 18px 16px",borderTop:"0.5px solid #E0E0E0",flexShrink:0}}>
+            {!confirming ? (
+              <button onClick={()=>setConfirming(true)} style={{flex:1,padding:"10px",borderRadius:7,background:"#1A6B8A",border:"none",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                {lang==="zh"?"確認變更":"Review Changes"}
+              </button>
+            ) : (
+              <>
+                <button onClick={applyEdits} style={{flex:1,padding:"10px",borderRadius:7,background:"#4CAF50",border:"none",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                  ✓ {lang==="zh"?"確認儲存":"Confirm & Save"}
+                </button>
+                <button onClick={()=>setConfirming(false)} style={{padding:"10px 16px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>
+                  {lang==="zh"?"重新調整":"Adjust"}
+                </button>
+              </>
+            )}
+            <button onClick={onClose} style={{padding:"10px 16px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>
+              {lang==="zh"?"取消":"Cancel"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollments, attendance, setAttendance, materials, setMaterials, currentUser, lang, setToast }) {
   const t = T[lang];
   const students = users.filter(u=>u.role==="student");
   const getName = id => users.find(u=>u.id===id)?.name||id;
@@ -5285,6 +5525,7 @@ function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollm
   // out of sync.
   const [discontinueTarget, setDiscontinueTarget] = useState(null); // enrollment being discontinued
   const [extendTarget, setExtendTarget] = useState(null); // enrollment being extended with more sessions
+  const [sessionEditorTarget, setSessionEditorTarget] = useState(null); // enrollment being edited session-by-session (admin-only escape hatch)
   const doDiscontinue = (reason) => {
     const enr = discontinueTarget;
     if (!enr) return;
@@ -5484,6 +5725,18 @@ function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollm
           setEnrollments={setEnrollments}
           lang={lang} setToast={setToast}
           onClose={()=>setExtendTarget(null)}
+        />
+      )}
+      {sessionEditorTarget && (
+        <SessionEditorModal
+          enrollment={sessionEditorTarget}
+          course={courses.find(c=>c.id===sessionEditorTarget.courseId)}
+          users={users}
+          materials={materials} setMaterials={setMaterials}
+          setEnrollments={setEnrollments}
+          currentUser={currentUser}
+          lang={lang} setToast={setToast}
+          onClose={()=>setSessionEditorTarget(null)}
         />
       )}
       {/* Attendance recording modal */}
@@ -5707,6 +5960,7 @@ function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollm
                             <button onClick={()=>setExtendTarget(enr)} title={lang==="zh"?"在目前已排的最後面接著往後加開，不會動到已排定的堂次":"Appends new sessions after the current last one — doesn't touch anything already scheduled"} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"1px solid #2E7D32",background:"transparent",color:"#2E7D32",cursor:"pointer",fontWeight:500}}>➕ {lang==="zh"?"加開課堂":"Add Sessions"}</button>
                             <button onClick={()=>startEdit(enr)} title={lang==="zh"?"⚠️ 會重新產生整份排課表，含已上過的堂次也會被覆蓋——調整未來時段請改用左邊按鈕":"⚠️ Regenerates the ENTIRE schedule, including already-happened sessions — use the button on the left to adjust just future sessions"} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>{lang==="zh"?"編輯排課":"Edit"}</button>
                             <button onClick={()=>setDiscontinueTarget(enr)} title={lang==="zh"?"保留所有已發生的出席/完課紀錄，只移除尚未發生的未來排課":"Keeps all past attendance/completion records — only removes sessions that haven't happened yet"} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"1px solid #E65100",background:"transparent",color:"#E65100",cursor:"pointer",fontWeight:500}}>⛔ {lang==="zh"?"中斷課程":"Discontinue"}</button>
+                            <button onClick={()=>setSessionEditorTarget(enr)} title={lang==="zh"?"直接編輯/刪除單一未來堂次（其他工具處理不了的情況才用這個，有編輯歷程可回復）":"Directly edit/delete individual future sessions (for when the other tools don't quite fit — has rollback history)"} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"0.5px solid #9E9E9E",background:"transparent",color:"#546E7A",cursor:"pointer",fontWeight:500}}>🛠 {lang==="zh"?"單堂課編輯":"Session Editor"}</button>
                           </>
                         ) : (
                           <button onClick={()=>restoreEnrollment(enr)} title={lang==="zh"?`依課程原本的固定排課規律，從今天開始重新排入剩餘堂數（原訂總堂數：${enr.totalSessions}）`:`Re-schedules the remaining sessions from today using the course's regular pattern (original total: ${enr.totalSessions})`} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"1px solid #2E7D32",background:"transparent",color:"#2E7D32",cursor:"pointer",fontWeight:500}}>↩ {lang==="zh"?"恢復課程":"Restore"}</button>
@@ -5850,21 +6104,31 @@ function LeaveReview({ users, courses, absences, setAbsences, attendance, setAtt
       session = enrollment.scheduledDates.reduce((max, s) => (s.sessionNo||0) > (max.sessionNo||0) ? s : max, enrollment.scheduledDates[0]);
     }
 
+    // editTarget.date is the original excused/leave date, which already had
+    // an auto-generated compensating make-up session appended for it
+    // (rescheduledFrom: editTarget.date). Since this reschedule now
+    // explicitly resolves that leave with a specific new date, the
+    // auto-compensation is redundant — remove it BEFORE the move (excluding
+    // the entry being moved itself, since in the fallback path above
+    // `session` can actually BE that very compensation entry) so the two
+    // never coexist and leave the student with one extra session. Doing this
+    // before the collision check too, so rescheduling straight onto that
+    // same auto-picked date isn't wrongly blocked as "already taken".
+    const baseSched = (enrollment.scheduledDates||[]).filter(s =>
+      !(s.rescheduledFrom===editTarget.date && !(s.date===session.date && s.sessionNo===session.sessionNo))
+    );
+
     // Guard against creating a duplicate: if this enrollment already has a
     // DIFFERENT session on the target date, moving this one there would make
-    // the same course show up twice on the same day in the schedule. This is
-    // the exact mechanism that was causing duplicate same-day sessions —
-    // most commonly when the fallback above picks the auto-deferred
-    // replacement session and its new date happens to already be used by
-    // another regularly-scheduled occurrence of the same course.
-    const collision = (enrollment.scheduledDates||[]).some(s => s.date===rsDate && !(s.date===session.date && s.sessionNo===session.sessionNo));
+    // the same course show up twice on the same day in the schedule.
+    const collision = baseSched.some(s => s.date===rsDate && !(s.date===session.date && s.sessionNo===session.sessionNo));
     if (collision) {
       setToast(lang==="zh"?`${rsDate} 這堂課已經有排課了，請選擇其他日期`:`This course already has a session on ${rsDate} — pick a different date`);
       return;
     }
 
     const newDayIndex = (new Date(rsDate+"T00:00:00").getDay()+6)%7;
-    const newSched = (enrollment.scheduledDates||[]).map(s =>
+    const newSched = baseSched.map(s =>
       (s.date===session.date && s.sessionNo===session.sessionNo)
         ? { ...s, date: rsDate, dayIndex: newDayIndex, customStart: rsTime, rescheduledFrom: s.rescheduledFrom || (match ? session.date : editTarget.date) }
         : s
@@ -8082,7 +8346,7 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
         ))}
       </div>
       {tab==="courses"&&<CourseManager users={users} courses={courses} setCourses={setCourses} lang={lang} setToast={setToast} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} absences={absences}/>}
-      {tab==="enroll" &&<EnrollmentManager users={users} courses={courses} setCourses={setCourses} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} lang={lang} setToast={setToast}/>}
+      {tab==="enroll" &&<EnrollmentManager users={users} courses={courses} setCourses={setCourses} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} materials={materials} setMaterials={setMaterials} currentUser={currentUser} lang={lang} setToast={setToast}/>}
       {tab==="leave"  &&<LeaveReview users={users} courses={courses} absences={absences} setAbsences={setAbsences} attendance={attendance} setAttendance={setAttendance} enrollments={enrollments} setEnrollments={setEnrollments} lang={lang} setToast={setToast}/>}
       {tab==="feedback"&&<FeedbackCenter users={users} courses={courses} enrollments={enrollments} attendance={attendance} absences={absences} feedback={feedback||[]} setFeedback={setFeedback} lang={lang} setToast={setToast} currentUser={currentUser} materials={materials} setMaterials={setMaterials}/>}
       {tab==="matedit"&&<MaterialEditReview courses={courses} materials={materials||[]} setMaterials={setMaterials} users={users} lang={lang} setToast={setToast}/>}
@@ -8230,11 +8494,25 @@ function FeedbackCenter({ users, courses, enrollments, attendance, absences, fee
   const markMaterialProcessed = (f) => {
     setFeedback(prev => prev.map(x => x.id===f.id ? {...x, materialProcessed:true, materialProcessedAt:new Date().toISOString(), materialProcessedBy:currentUser?.id||""} : x));
   };
+  // Two separate places can carry this answer: the "required field" on the
+  // feedback record itself (nextMaterialStatus, enforced when filling in
+  // feedback), OR the material's own completionStatus (set independently via
+  // 任教學生總覽's per-material selector). A teacher using EITHER interface
+  // should show up here — checking only one was the bug: a teacher who
+  // answered via 任教學生總覽 was invisible to every feedback-review screen.
+  const resolveMaterialStatus = (f) => {
+    if (f.nextMaterialStatus) return {status: f.nextMaterialStatus, note: f.nextMaterialNote};
+    const mat = (materials||[]).find(m=>m.courseId===f.courseId && m.date===f.date && m.completionStatus);
+    if (mat) return {status: mat.completionStatus, note: mat.completionNote};
+    return null;
+  };
   const getMaterialStatusMeta = (f) => {
+    const resolved = resolveMaterialStatus(f);
+    if (!resolved) return null;
     const hasCurrentMat = (materials||[]).some(m=>m.courseId===f.courseId && m.date===f.date);
-    if (f.nextMaterialStatus==="yes") return {bg:"#E8F5E9", color:"#2E7D32", icon:"✅", label:lang==="zh"?"教材已上完（已結束）":"Material completed", note:lang==="zh"?"請協助提供下一堂教材":"Please help prepare the next lesson's material", hasCurrentMat};
-    if (f.nextMaterialStatus==="no_continue") return {bg:"#FFF3E0", color:"#E65100", icon:"🔄", label:lang==="zh"?"尚未完成，沿用教材":"Not finished — reuse material", note: hasCurrentMat ? (lang==="zh"?"下次上課沿用本堂教材":"Reuse this class's material next time") : (lang==="zh"?"（此堂沒有登記教材，無法自動沿用）":"(no material logged for this class — can't auto-carry it forward)"), hasCurrentMat};
-    return {bg:"#FFF3E0", color:"#E65100", icon:"📝", label:lang==="zh"?"尚未完成，下次主題":"Not finished — next topic", note: f.nextMaterialNote||"—", hasCurrentMat};
+    if (resolved.status==="yes") return {bg:"#E8F5E9", color:"#2E7D32", icon:"✅", label:lang==="zh"?"教材已上完（已結束）":"Material completed", note:lang==="zh"?"請協助提供下一堂教材":"Please help prepare the next lesson's material", hasCurrentMat};
+    if (resolved.status==="no_continue") return {bg:"#FFF3E0", color:"#E65100", icon:"🔄", label:lang==="zh"?"尚未完成，沿用教材":"Not finished — reuse material", note: hasCurrentMat ? (lang==="zh"?"下次上課沿用本堂教材":"Reuse this class's material next time") : (lang==="zh"?"（此堂沒有登記教材，無法自動沿用）":"(no material logged for this class — can't auto-carry it forward)"), hasCurrentMat};
+    return {bg:"#FFF3E0", color:"#E65100", icon:"📝", label:lang==="zh"?"尚未完成，下次主題":"Not finished — next topic", note: resolved.note||"—", hasCurrentMat};
   };
 
   const toggleSel = (id) => setSelected(s=>{const n=new Set(s); n.has(id)?n.delete(id):n.add(id); return n;});
@@ -8865,6 +9143,13 @@ function BatchFeedbackModal({ users, courses, enrollments, setFeedback, lang, se
   const [pasteText, setPasteText] = useState("");
   const [parsed, setParsed] = useState([]); // [{date, text, match: {enrollment,session} | null}]
   const [selected, setSelected] = useState(new Set());
+  // This bulk-paste tool was the one gap where feedback could be created
+  // with NO material status at all — FeedbackModal and TeacherFeedbackPanel
+  // both require it, but this separate code path didn't. One status applies
+  // to the whole batch (per-row would be impractical for a bulk import), and
+  // it's required before Import is enabled, same as the other two paths.
+  const [batchNextMat, setBatchNextMat] = useState("");
+  const [batchNextMatNote, setBatchNextMatNote] = useState("");
 
   const course = courses.find(c=>c.id===courseId);
   const teacher = course ? users.find(u=>u.id===course.teacherId) : null;
@@ -8896,6 +9181,7 @@ function BatchFeedbackModal({ users, courses, enrollments, setFeedback, lang, se
   const toggleSel = (i) => setSelected(s=>{const n=new Set(s); n.has(i)?n.delete(i):n.add(i); return n;});
 
   const doImport = () => {
+    if (!batchNextMat || (batchNextMat==="no_scope" && !batchNextMatNote.trim())) return;
     const now = new Date().toISOString();
     const newRecs = [];
     parsed.forEach((row, i) => {
@@ -8911,6 +9197,8 @@ function BatchFeedbackModal({ users, courses, enrollments, setFeedback, lang, se
         dayIndex: session.dayIndex,
         sessionNo: session.sessionNo,
         text: row.text,
+        nextMaterialStatus: batchNextMat,
+        nextMaterialNote: batchNextMat==="no_scope" ? batchNextMatNote.trim() : "",
         // Admin entering feedback is implicitly reviewing it too, so it's
         // auto-approved. An assistant doing the same still needs an admin to
         // actually review it before it reaches the student — same rule as
@@ -9017,7 +9305,13 @@ function BatchFeedbackModal({ users, courses, enrollments, setFeedback, lang, se
                   </tbody>
                 </table>
               </div>
-              <button onClick={doImport} disabled={selected.size===0} style={{marginTop:12,padding:"9px 20px",borderRadius:7,background:selected.size>0?"#2E7D32":"#E0E0E0",border:"none",color:selected.size>0?"#fff":"#9E9E9E",fontSize:13,fontWeight:600,cursor:selected.size>0?"pointer":"not-allowed"}}>
+              <div style={{marginTop:12,background:"#FFF8E1",border:"0.5px solid #FFE082",borderRadius:8,padding:"10px 12px"}}>
+                <div style={{fontSize:11,color:"#E65100",marginBottom:6,fontWeight:600}}>
+                  {lang==="zh"?"這整批匯入套用同一個教材狀況（必填，跟單筆填寫反饋一樣是必要欄位）":"Applies to this whole batch (required — same mandatory field as filling in feedback one at a time)"}
+                </div>
+                <NextMaterialFields value={batchNextMat} note={batchNextMatNote} onValueChange={setBatchNextMat} onNoteChange={setBatchNextMatNote} lang={lang}/>
+              </div>
+              <button onClick={doImport} disabled={selected.size===0 || !batchNextMat || (batchNextMat==="no_scope" && !batchNextMatNote.trim())} style={{marginTop:12,padding:"9px 20px",borderRadius:7,background:(selected.size>0 && batchNextMat && !(batchNextMat==="no_scope" && !batchNextMatNote.trim()))?"#2E7D32":"#E0E0E0",border:"none",color:(selected.size>0 && batchNextMat && !(batchNextMat==="no_scope" && !batchNextMatNote.trim()))?"#fff":"#9E9E9E",fontSize:13,fontWeight:600,cursor:(selected.size>0 && batchNextMat && !(batchNextMat==="no_scope" && !batchNextMatNote.trim()))?"pointer":"not-allowed"}}>
                 ✓ {t.feedbackImport} ({selected.size})
               </button>
             </div>
