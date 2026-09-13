@@ -501,7 +501,7 @@ const TRIAL_COLOR = {bg:"#FFFDE7",border:"#F9A825",text:"#F57F17"};
 // Bumped whenever a meaningful set of changes ships. Shown low-key on the
 // login page so version can be confirmed at a glance; also called out
 // whenever a new file is delivered.
-const APP_VERSION = "v1.2.8.8";
+const APP_VERSION = "v1.2.8.10";
 
 const genId = () => "id_" + Math.random().toString(36).slice(2,9);
 
@@ -742,6 +742,15 @@ function getCourseDays(course) {
 function getCourseStartForDay(course, dayIndex) {
   const entry = getCourseSchedule(course).find(s => s.dayIndex === dayIndex);
   return entry ? entry.start : course?.start;
+}
+// A course can now have more than one time slot on the same day (e.g.
+// back-to-back Saturday sessions), and each one may need its own meeting
+// link (different Zoom room, etc.). Each schedule block can optionally carry
+// its own meetingUrl; if it doesn't, this falls back to the course's single
+// default link — so existing single-slot-per-day courses need no changes.
+function resolveMeetingUrl(course, dayIndex, start) {
+  const entry = getCourseSchedule(course).find(s => s.dayIndex===dayIndex && s.start===start);
+  return (entry && entry.meetingUrl) || course?.meetingUrl || "";
 }
 // A scheduledDates entry's ACTUAL start time — a rescheduled/make-up session
 // (customStart, set via "更換時間補課") always overrides the course's regular
@@ -1030,7 +1039,7 @@ function DiscontinueModal({ course, student, futureCount, lang, onConfirm, onCan
 // ─── Material Panel (modal — full course, all sessions) ──────────────────────
 // Shows ALL materials for a course, optionally pre-filtered to a specific day.
 // Each entry stores: courseId, dayIndex (0-6), date (YYYY-MM-DD), title, url, desc
-function MaterialPanel({ course, initialDate, users, lang, currentUser, materials, setMaterials, setToast, onClose, enrollments, attendance, absences }) {
+function MaterialPanel({ course, initialDate, users, lang, currentUser, materials, setMaterials, setToast, onClose, enrollments, attendance, absences, feedback }) {
   const t = T[lang];
   const canEdit = currentUser.role === "admin" || currentUser.role === "teacher";
 
@@ -1062,6 +1071,45 @@ function MaterialPanel({ course, initialDate, users, lang, currentUser, material
     const hasAttLeave = courseEnrs.some(e => (attendance||[]).some(a => a.enrollmentId===e.id && a.date===dateStr && a.type!=="other"));
     const hasSelfAbs = (absences||[]).some(a => a.courseId===course.id && a.dateStr===dateStr);
     return hasAttLeave || hasSelfAbs;
+  };
+  // Per-date status: what actually happened to the class (so admin browsing
+  // past materials can tell "was this class even held" at a glance), plus
+  // the teacher's own material-status answer for that date, with its review
+  // state (pending/approved/rejected) — this is what lets admin judge
+  // whether reusing this material for the CURRENT class actually makes
+  // sense, right from the material list itself.
+  const todayStr2 = new Date().toISOString().slice(0,10);
+  const dateStatusInfo = (dateStr) => {
+    const attRec = courseEnrs.map(e=>(attendance||[]).find(a=>a.enrollmentId===e.id && a.date===dateStr && a.type!=="other")).find(Boolean);
+    const selfAbs = !attRec ? (absences||[]).find(a=>a.courseId===course.id && a.dateStr===dateStr) : null;
+    let classStatus;
+    if (attRec) {
+      const labelMap = {absent:lang==="zh"?"學生缺席（扣課）":"Student absent (deducted)", excused:lang==="zh"?"學生請假":"Student leave", teacher_leave:lang==="zh"?"老師請假":"Teacher leave"};
+      classStatus = {label: labelMap[attRec.type]||attRec.type, color:"#E65100", bg:"#FFF3E0"};
+    } else if (selfAbs) {
+      classStatus = {label: selfAbs.requesterRole==="teacher"?(lang==="zh"?"老師請假":"Teacher leave"):(lang==="zh"?"學生請假":"Student leave"), color:"#E65100", bg:"#FFF3E0"};
+    } else if (dateStr < todayStr2) {
+      classStatus = {label:lang==="zh"?"已正常上課":"Held as scheduled", color:"#2E7D32", bg:"#E8F5E9"};
+    } else {
+      classStatus = {label:lang==="zh"?"尚未上課":"Upcoming", color:"#9E9E9E", bg:"#F5F5F5"};
+    }
+    // Teacher's material-status answer for this date, if any — checks the
+    // same two sources as the feedback-review screens (feedback record's
+    // nextMaterialStatus, falling back to a material's own completionStatus)
+    const fbRec = (feedback||[]).find(f=>courseEnrs.some(e=>e.id===f.enrollmentId) && f.date===dateStr);
+    let matAnswer = null;
+    if (fbRec?.nextMaterialStatus) matAnswer = {status:fbRec.nextMaterialStatus, reviewStatus:fbRec.status};
+    else {
+      const matWithStatus = (materials||[]).find(m=>m.courseId===course.id && m.date===dateStr && m.completionStatus);
+      if (matWithStatus) matAnswer = {status:matWithStatus.completionStatus, reviewStatus:null}; // set via 任教學生總覽 — no separate review flow
+    }
+    let matLabel = null;
+    if (matAnswer) {
+      const labelMap = {yes:lang==="zh"?"教材已上完":"Material done", no_continue:lang==="zh"?"沿用教材":"Reuse material", no_scope:lang==="zh"?"下次新主題":"New topic next"};
+      const reviewMap = {pending:lang==="zh"?"待審核":"Unreviewed", approved:lang==="zh"?"已審核":"Reviewed", rejected:lang==="zh"?"已退回":"Rejected"};
+      matLabel = labelMap[matAnswer.status] + (matAnswer.reviewStatus ? `（${reviewMap[matAnswer.reviewStatus]||matAnswer.reviewStatus}）` : "");
+    }
+    return {classStatus, matLabel};
   };
 
   // ── filter / sort state ──
@@ -1323,13 +1371,21 @@ function MaterialPanel({ course, initialDate, users, lang, currentUser, material
           )}
 
           {/* Grouped material list */}
-          {groupKeys.map(dateKey => (
+          {groupKeys.map(dateKey => {
+            const info = dateKey !== "—" ? dateStatusInfo(dateKey) : null;
+            return (
             <div key={dateKey} style={{marginBottom:"1rem"}}>
               {/* Date section header */}
-              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6,flexWrap:"wrap"}}>
                 <span style={{fontSize:11,fontWeight:600,color:"#9E9E9E",whiteSpace:"nowrap"}}>
                   {dateKey !== "—" ? new Date(dateKey).toLocaleDateString(lang==="zh"?"zh-TW":"en-US",{month:"short",day:"numeric",weekday:"short"}) : "—"}
                 </span>
+                {info?.classStatus && (
+                  <span style={{fontSize:9,background:info.classStatus.bg,color:info.classStatus.color,borderRadius:4,padding:"1px 7px",fontWeight:600,whiteSpace:"nowrap"}}>{info.classStatus.label}</span>
+                )}
+                {info?.matLabel && (
+                  <span title={lang==="zh"?"老師反饋回報的教材狀況":"Material status reported via teacher feedback"} style={{fontSize:9,background:"#EEF6FB",color:"#1A6B8A",borderRadius:4,padding:"1px 7px",fontWeight:600,whiteSpace:"nowrap"}}>📋 {info.matLabel}</span>
+                )}
                 <div style={{flex:1,height:"0.5px",background:"#E0E0E0"}}/>
                 <span style={{fontSize:10,color:"#9E9E9E",whiteSpace:"nowrap"}}>{T[lang].days[grouped[dateKey][0]?.dayIndex]}</span>
               </div>
@@ -1378,7 +1434,7 @@ function MaterialPanel({ course, initialDate, users, lang, currentUser, material
                 </div>
                 );})}
             </div>
-          ))}
+          );})}
         </div>
       </div>
     </div>
@@ -1386,7 +1442,7 @@ function MaterialPanel({ course, initialDate, users, lang, currentUser, material
 }
 
 // ─── Course Detail Modal ──────────────────────────────────────────────────────
-function CourseDetailModal({ course, dayIndex, date, users, lang, materials, setMaterials, onClose, currentUser, enrollments, attendance, absences, setToast }) {
+function CourseDetailModal({ course, dayIndex, date, sessionNo, users, lang, materials, setMaterials, onClose, currentUser, enrollments, attendance, absences, setToast }) {
   const t = T[lang];
   const teacher = users.find(u=>u.id===course.teacherId);
   const student  = users.find(u=>u.id===course.studentId);
@@ -1397,8 +1453,15 @@ function CourseDetailModal({ course, dayIndex, date, users, lang, materials, set
   // correct updated time, but this modal — and everything derived from it,
   // including "複製課程資訊" — independently recomputed the OLD time from
   // scratch and never looked at the override.
-  const enr = (enrollments||[]).find(e => e.courseId===course.id && (e.scheduledDates||[]).some(s=>s.date===date));
-  const sessionEntry = enr?.scheduledDates?.find(s=>s.date===date);
+  //
+  // Bug fix: a day can have MORE than one session for the same course (e.g.
+  // back-to-back Saturday slots) — matching by date alone always resolved to
+  // whichever entry happened to come first, so every same-day session showed
+  // identical (wrong, for all but the first) info. sessionNo disambiguates
+  // which one was actually clicked; falls back to date-only for any caller
+  // that doesn't have it.
+  const enr = (enrollments||[]).find(e => e.courseId===course.id && (e.scheduledDates||[]).some(s=>s.date===date && (sessionNo==null || s.sessionNo===sessionNo)));
+  const sessionEntry = enr?.scheduledDates?.find(s=>s.date===date && (sessionNo==null || s.sessionNo===sessionNo));
   const startTime = sessionEntry ? resolveSessionStart(course, sessionEntry) : getCourseStartForDay(course, dayIndex);
   const endTime  = addMins(startTime, course.duration);
   const dayMats  = materials.filter(m=>m.courseId===course.id&&(date ? m.date===date : m.dayIndex===dayIndex))
@@ -1525,16 +1588,21 @@ function CourseDetailModal({ course, dayIndex, date, users, lang, materials, set
             </div>
           ))}
 
-          {/* Meeting link */}
-          {course.meetingUrl && (
-            <div style={{display:"flex",gap:10,alignItems:"flex-start",marginBottom:10}}>
-              <span style={{fontSize:15,width:22,flexShrink:0}}>🔗</span>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:10,color:"#9E9E9E",marginBottom:1}}>{lang==="zh"?"上課連結":"Class Link"}</div>
-                <a href={course.meetingUrl} target="_blank" rel="noreferrer" style={{fontSize:12,color:"#1A6B8A",wordBreak:"break-all"}}>{course.meetingUrl}</a>
+          {/* Meeting link — resolved for THIS specific session's time slot,
+              since same-day courses can have a different link per slot */}
+          {(() => {
+            const resolvedUrl = resolveMeetingUrl(course, dayIndex, startTime);
+            if (!resolvedUrl) return null;
+            return (
+              <div style={{display:"flex",gap:10,alignItems:"flex-start",marginBottom:10}}>
+                <span style={{fontSize:15,width:22,flexShrink:0}}>🔗</span>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:10,color:"#9E9E9E",marginBottom:1}}>{lang==="zh"?"上課連結":"Class Link"}</div>
+                  <a href={resolvedUrl} target="_blank" rel="noreferrer" style={{fontSize:12,color:"#1A6B8A",wordBreak:"break-all"}}>{resolvedUrl}</a>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Materials for this day */}
           <div style={{display:"flex",gap:10,alignItems:"flex-start",marginBottom:14}}>
@@ -1704,8 +1772,8 @@ function SlotCalendarView({ slots, users, lang, currentUser, absences, materials
 
   return (
     <div style={{overflowX:"auto"}}>
-      {matTarget&&<MaterialPanel course={matTarget.course} initialDate={matTarget.date} users={users} lang={lang} currentUser={currentUser} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setMatTarget(null)} enrollments={enrollments} attendance={attendance} absences={absences}/>}
-      {detTarget&&<CourseDetailModal course={detTarget.course} dayIndex={detTarget.dayIndex} date={detTarget.date} users={users} lang={lang} materials={materials} setMaterials={setMaterials} onClose={()=>setDetTarget(null)} currentUser={currentUser} enrollments={enrollments} attendance={attendance} absences={absences} setToast={setToast}/>}
+      {matTarget&&<MaterialPanel course={matTarget.course} initialDate={matTarget.date} users={users} lang={lang} currentUser={currentUser} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setMatTarget(null)} enrollments={enrollments} attendance={attendance} absences={absences} feedback={feedback}/>}
+      {detTarget&&<CourseDetailModal course={detTarget.course} dayIndex={detTarget.dayIndex} date={detTarget.date} sessionNo={detTarget.sessionNo} users={users} lang={lang} materials={materials} setMaterials={setMaterials} onClose={()=>setDetTarget(null)} currentUser={currentUser} enrollments={enrollments} attendance={attendance} absences={absences} setToast={setToast}/>}
       {adminEditTarget&&<AdminSessionModal slot={adminEditTarget} users={users} lang={lang} attendance={attendance||[]} setAttendance={setAttendance} enrollments={enrollments||[]} setEnrollments={setEnrollments} courses={courses||[]} setToast={setToast} onClose={()=>setAdminEditTarget(null)}/>}
       {fbTarget&&<FeedbackModal slot={fbTarget} currentUser={currentUser} users={users} lang={lang} feedback={feedback||[]} setFeedback={setFeedback} setToast={setToast} onClose={()=>setFbTarget(null)} readOnly={isStudent}/>}
       <div style={{minWidth:520}}>
@@ -1757,7 +1825,7 @@ function SlotCalendarView({ slots, users, lang, currentUser, absences, materials
                   const fbColor = fbRec ? {pending:"#E65100",approved:"#2E7D32",rejected:"#D32F2F"}[fbRec.status] : "#7B1FA2";
                   return (
                     <div key={sl.course.id+sl.date+sl.sessionNo} style={{background:isAbsent?"#F9F9F9":col.bg,border:`1px solid ${dimBorder}`,borderRadius:6,padding:"5px 6px",marginBottom:3,opacity:isAbsent?0.55:isPast?0.6:1}}>
-                      <div onClick={()=>setDetTarget({course:sl.course,dayIndex:sl.dayIndex,date:sl.date})} style={{cursor:"pointer",marginBottom:2,display:"flex",justifyContent:"space-between",gap:2}}>
+                      <div onClick={()=>setDetTarget({course:sl.course,dayIndex:sl.dayIndex,date:sl.date,sessionNo:sl.sessionNo})} style={{cursor:"pointer",marginBottom:2,display:"flex",justifyContent:"space-between",gap:2}}>
                         <div style={{fontSize:10,fontWeight:600,color:dimText,lineHeight:1.3,wordBreak:"break-word",flex:1}}>{sl.course.subject.length>18?sl.course.subject.slice(0,16)+"…":sl.course.subject}</div>
                         <span style={{fontSize:9,color:dimText,opacity:0.5}}>ℹ</span>
                       </div>
@@ -1769,7 +1837,7 @@ function SlotCalendarView({ slots, users, lang, currentUser, absences, materials
                       {isOngoing&&<div style={{fontSize:8,color:"#4CAF50",fontWeight:600}}>{lang==="zh"?"進行中":"Live"}</div>}
                       {attRec&&<div style={{fontSize:8,color:attRec.type==="absent"?"#D32F2F":attRec.type==="excused"?"#1A6B8A":attRec.type==="teacher_leave"?"#FF9800":"#9E9E9E",fontWeight:600}}>{attRec.type==="absent"?(lang==="zh"?"缺勤":"Absent"):attRec.type==="excused"?(lang==="zh"?"請假":"Leave"):attRec.type==="teacher_leave"?(lang==="zh"?"師假":"T.Leave"):(lang==="zh"?"備註":"Note")}</div>}
                       <div style={{display:"flex",flexWrap:"wrap",gap:2,marginTop:3,alignItems:"center"}}>
-                        {!isAbsent&&!isPast&&sl.course.meetingUrl&&<a href={sl.course.meetingUrl} target="_blank" rel="noreferrer" style={{fontSize:9,fontWeight:500,background:col.border,color:"#fff",borderRadius:3,padding:"2px 5px",textDecoration:"none"}}>{t.join}</a>}
+                        {!isAbsent&&!isPast&&resolveMeetingUrl(sl.course,sl.dayIndex,sl.start)&&<a href={resolveMeetingUrl(sl.course,sl.dayIndex,sl.start)} target="_blank" rel="noreferrer" style={{fontSize:9,fontWeight:500,background:col.border,color:"#fff",borderRadius:3,padding:"2px 5px",textDecoration:"none"}}>{t.join}</a>}
                         {!isAbsent&&(
                           <a
                             href={buildGoogleCalendarUrl({
@@ -2289,8 +2357,8 @@ function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, ma
 
   return (
     <>
-      {showDetail&&<CourseDetailModal course={course} dayIndex={dayIndex} date={date} users={users} lang={lang} materials={materials} setMaterials={setMaterials} onClose={()=>setShowDetail(false)} currentUser={currentUser} enrollments={enrollments} attendance={attendance} absences={absences} setToast={setToast}/>}
-      {showMat&&<MaterialPanel course={course} initialDate={matInitDate} users={users} lang={lang} currentUser={currentUser} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setShowMat(false)} enrollments={enrollments} attendance={attendance} absences={absences}/>}
+      {showDetail&&<CourseDetailModal course={course} dayIndex={dayIndex} date={date} sessionNo={sessionNo} users={users} lang={lang} materials={materials} setMaterials={setMaterials} onClose={()=>setShowDetail(false)} currentUser={currentUser} enrollments={enrollments} attendance={attendance} absences={absences} setToast={setToast}/>}
+      {showMat&&<MaterialPanel course={course} initialDate={matInitDate} users={users} lang={lang} currentUser={currentUser} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setShowMat(false)} enrollments={enrollments} attendance={attendance} absences={absences} feedback={feedback}/>}
       {showAdminEdit&&<AdminSessionModal slot={slot} users={users} lang={lang} attendance={attendance||[]} setAttendance={setAttendance} enrollments={enrollments||[]} setEnrollments={setEnrollments} courses={courses||[]} setToast={setToast} onClose={()=>setShowAdminEdit(false)}/>}
       {showFeedback&&<FeedbackModal slot={slot} currentUser={currentUser} users={users} lang={lang} feedback={feedback||[]} setFeedback={setFeedback} setToast={setToast} onClose={()=>setShowFeedback(false)} readOnly={isStudent}/>}
       <div style={{background:cardBg,border:`1.5px solid ${cardBorder}`,borderRadius:10,padding:"10px 14px",marginBottom:8,opacity:cardOpacity}}>
@@ -2327,7 +2395,7 @@ function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, ma
           <div style={{fontSize:11,color:FB_STATUS[fbRec.status].color,marginTop:4,fontWeight:500}}>💬 {t.feedbackShort}: {FB_STATUS[fbRec.status].label}</div>
         )}
         <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap",alignItems:"center"}}>
-          {!isAbsent&&!isPast&&course.meetingUrl&&<a href={course.meetingUrl} target="_blank" rel="noreferrer" style={{fontSize:13,fontWeight:500,background:col.border,color:"#fff",borderRadius:6,padding:"5px 14px",textDecoration:"none"}}>{t.join}</a>}
+          {!isAbsent&&!isPast&&resolveMeetingUrl(course,dayIndex,start)&&<a href={resolveMeetingUrl(course,dayIndex,start)} target="_blank" rel="noreferrer" style={{fontSize:13,fontWeight:500,background:col.border,color:"#fff",borderRadius:6,padding:"5px 14px",textDecoration:"none"}}>{t.join}</a>}
           {!isAbsent&&(
             <a
               href={buildGoogleCalendarUrl({
@@ -2846,9 +2914,16 @@ function CourseForm({ course, users, onSave, onSaveTrial, onCancel, lang }) {
   const blocksFromCourse = (c) => {
     const sched = getCourseSchedule(c);
     if (!sched.length) return [blankBlock()];
-    const byTime = {};
-    sched.forEach(s=>{ if(!byTime[s.start]) byTime[s.start]=[]; byTime[s.start].push(s.dayIndex); });
-    return Object.entries(byTime).map(([start,days])=>({_bid:genId(), days:days.sort((a,b)=>a-b), start}));
+    // Group by (start + meetingUrl) together — two entries with the same
+    // start time but DIFFERENT links must stay as separate blocks, or one
+    // link would silently get lost when re-opening this form to edit.
+    const byKey = {};
+    sched.forEach(s=>{
+      const key = `${s.start}|${s.meetingUrl||""}`;
+      if(!byKey[key]) byKey[key]={start:s.start, meetingUrl:s.meetingUrl||"", days:[]};
+      byKey[key].days.push(s.dayIndex);
+    });
+    return Object.values(byKey).map(b=>({_bid:genId(), days:b.days.sort((a,b)=>a-b), start:b.start, meetingUrl:b.meetingUrl}));
   };
   const blank = {subject:autoSubject(defS,defT),teacherId:defT,studentId:defS,duration:50,meetingUrl:"",_edited:false,blocks:[blankBlock()]};
   const [form,setForm] = useState(()=>{
@@ -2885,7 +2960,7 @@ function CourseForm({ course, users, onSave, onSaveTrial, onCancel, lang }) {
     // Flatten all blocks into one schedule[] on a SINGLE course record — this
     // is what keeps the course (and its future enrollment) unified across
     // however many day/time combinations it has.
-    const newSchedule = blocks.flatMap(b => (b.days||[]).map(d => ({ dayIndex: d, start: b.start })));
+    const newSchedule = blocks.flatMap(b => (b.days||[]).map(d => ({ dayIndex: d, start: b.start, ...(b.meetingUrl?.trim() ? {meetingUrl:b.meetingUrl.trim()} : {}) })));
     const record = {
       ...shared,
       schedule: newSchedule,
@@ -3051,6 +3126,10 @@ function CourseForm({ course, users, onSave, onSaveTrial, onCancel, lang }) {
                   <label style={{...lStyle,marginTop:0}}>{t.endTime}</label>
                   <div style={{...iStyle,background:"#FFFFFF",color:"#9E9E9E",borderStyle:"dashed",cursor:"not-allowed",display:"flex",alignItems:"center"}}>{blockEnd}</div>
                 </div>
+              </div>
+              <div style={{marginTop:8}}>
+                <label style={{...lStyle,marginTop:0}}>{lang==="zh"?"這個時段專用的會議連結（選填，同一天有多個時段時很有用）":"Meeting link just for this slot (optional — useful when a day has more than one slot)"}</label>
+                <input value={b.meetingUrl||""} onChange={e=>updateBlock(b._bid,{meetingUrl:e.target.value})} placeholder={lang==="zh"?`留空則使用課程主要連結：${form.meetingUrl||"（尚未設定）"}`:`Leave blank to use the course's main link: ${form.meetingUrl||"(not set)"}`} style={iStyle}/>
               </div>
             </div>
           );
@@ -3487,7 +3566,7 @@ function BatchMaterialModal({ users, courses, materials, setMaterials, lang, set
 }
 
 // ─── Course manager ───────────────────────────────────────────────────────────
-function CourseManager({ users, courses, setCourses, lang, setToast, materials, setMaterials, enrollments, setEnrollments, attendance, absences }) {
+function CourseManager({ users, courses, setCourses, lang, setToast, materials, setMaterials, enrollments, setEnrollments, attendance, absences, feedback }) {
   const t = T[lang];
   const [showAdd,setShowAdd] = useState(false);
   const [editing,setEditing] = useState(null);
@@ -3644,7 +3723,7 @@ function CourseManager({ users, courses, setCourses, lang, setToast, materials, 
     <div>
       {confirmDelCourseId && <ConfirmModal title={lang==="zh"?"刪除課程":"Delete Course"} message={lang==="zh"?"確認要刪除此課程？此操作無法復原，相關教材紀錄也將失效。":"Delete this course? This cannot be undone."} confirmLabel={lang==="zh"?"確認刪除":"Delete"} onConfirm={doDelCourse} onCancel={()=>setConfirmDelCourseId(null)} danger/>}
       {confirmArchiveId && <ConfirmModal title={lang==="zh"?"結束課程":"End Course"} message={lang==="zh"?"這堂課會標記為「已結束」，不再出現在進行中名單、不能再新增排課，但完課紀錄、出缺勤、獎牌積分完全不受影響。之後隨時可以在「已結束」分頁恢復。":"This marks the course as ended — it won't appear in the active roster or accept new scheduling, but completed sessions, attendance, and medal points are completely unaffected. You can restore it anytime from the Ended tab."} confirmLabel={lang==="zh"?"確認結束課程":"End Course"} onConfirm={doArchive} onCancel={()=>setConfirmArchiveId(null)}/>}
-      {matTarget && <MaterialPanel course={matTarget} initialDate={null} users={users} lang={lang} currentUser={fakeAdmin} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setMatTarget(null)} enrollments={enrollments} attendance={attendance} absences={absences}/>}
+      {matTarget && <MaterialPanel course={matTarget} initialDate={null} users={users} lang={lang} currentUser={fakeAdmin} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setMatTarget(null)} enrollments={enrollments} attendance={attendance} absences={absences} feedback={feedback}/>}
       {showBatch && <BatchMaterialModal users={users} courses={courses} materials={materials} setMaterials={setMaterials} lang={lang} setToast={setToast} onClose={()=>setShowBatch(false)} enrollments={enrollments}/>}
 
       {/* ── Prominent alert: sessions still missing materials — widens to include next week from Saturday onward ── */}
@@ -4124,6 +4203,17 @@ function TeacherStats({ users, courses, absences, attendance, enrollments, lang,
   // often pay differently than 50-min ones).
   const completed25 = allSessions.filter(s=>s.status==="completed" && s.duration===25).length;
   const completed50 = allSessions.filter(s=>s.status==="completed" && s.duration===50).length;
+  // ── Payable session tallies (for salary specifically) — DIFFERENT from
+  // completed25/50 above. "absent" (缺勤扣課) means the student's session
+  // was deducted with NO makeup — the teacher still held/was available for
+  // that slot, so it should be paid. "excused"/"teacher_leave" (順延) get a
+  // compensating session later, so paying for both would be double-paying —
+  // those stay excluded. Only this salary math changes; 已完課/積分 stats
+  // elsewhere are untouched and correctly still exclude ALL leave types.
+  const payable25 = allSessions.filter(s=>(s.status==="completed"||s.status==="absent") && s.duration===25).length;
+  const payable50 = allSessions.filter(s=>(s.status==="completed"||s.status==="absent") && s.duration===50).length;
+  const absentPayableCount = allSessions.filter(s=>s.status==="absent").length;
+  const payableCount = payable25 + payable50;
 
   // ── Salary calculator — turns the currently-selected teacher/date-range
   // into an actual payment, saved straight into 師生資料庫's salary
@@ -4135,7 +4225,7 @@ function TeacherStats({ users, courses, absences, attendance, enrollments, lang,
     const rate25 = parseFloat(salaryRate25) || 0;
     const rate50 = parseFloat(salaryRate50) || 0;
     const extra = parseFloat(salaryExtra) || 0;
-    return rate25*completed25 + rate50*completed50 + extra;
+    return rate25*payable25 + rate50*payable50 + extra;
   };
   const saveSalaryCalc = async () => {
     const amount = salaryCalcAmount();
@@ -4159,8 +4249,8 @@ function TeacherStats({ users, courses, absences, attendance, enrollments, lang,
         amount: Math.round(amount*100)/100,
         date: new Date().toISOString().slice(0,10),
         note: lang==="zh"
-          ? `老師統計試算（${periodLabel2}）：25分鐘 ${completed25} 堂 × ${rate25} + 50分鐘 ${completed50} 堂 × ${rate50}${extraNote}`
-          : `Auto-calculated from Teacher Stats (${periodLabel2}): 25min ${completed25}×${rate25} + 50min ${completed50}×${rate50}${extraNote}`,
+          ? `老師統計試算（${periodLabel2}）：25分鐘 ${payable25} 堂 × ${rate25} + 50分鐘 ${payable50} 堂 × ${rate50}${extraNote}`
+          : `Auto-calculated from Teacher Stats (${periodLabel2}): 25min ${payable25}×${rate25} + 50min ${payable50}×${rate50}${extraNote}`,
         recordedAt: new Date().toISOString(),
       };
       await window.storage.set("cp3_salary", JSON.stringify([...records, rec]));
@@ -4187,20 +4277,20 @@ function TeacherStats({ users, courses, absences, attendance, enrollments, lang,
   const periodLabel = allTime ? "your full teaching record" : `${fmtEnDate(dateFrom)}–${fmtEnDate(dateTo)}`;
   const lessonBreakdown = () => {
     const parts = [];
-    if (completed25>0) parts.push(`${completed25}×25min`);
-    if (completed50>0) parts.push(`${completed50}×50min`);
+    if (payable25>0) parts.push(`${payable25}×25min`);
+    if (payable50>0) parts.push(`${payable50}×50min`);
     return parts.join("; ") || "0 lessons";
   };
   const salaryTextLong = (amt) =>
 `Good ${greetingWord()}, Teacher ${selectedTeacher?.name||""}!
 
-We've calculated your salary for the period of ${periodLabel}. In total, you taught ${completedCount} lesson${completedCount===1?"":"s"} (${lessonBreakdown()}).
+We've calculated your salary for the period of ${periodLabel}. In total, you taught ${payableCount} lesson${payableCount===1?"":"s"} (${lessonBreakdown()}).
 
 We'll be sending $${amt} to your account (_____). Please confirm this is correct.
 
 Thank you!`;
   const salaryTextShort = (amt) =>
-`Hi ${selectedTeacher?.name||""}! Quick salary summary for ${periodLabel}: ${completedCount} lesson${completedCount===1?"":"s"} total (${lessonBreakdown()}). Sending $${amt} to account _____ — please confirm. Thanks!`;
+`Hi ${selectedTeacher?.name||""}! Quick salary summary for ${periodLabel}: ${payableCount} lesson${payableCount===1?"":"s"} total (${lessonBreakdown()}). Sending $${amt} to account _____ — please confirm. Thanks!`;
   const copySalaryText = (which, amt) => {
     const text = which==="long" ? salaryTextLong(amt) : salaryTextShort(amt);
     const doCopy = () => { setSalaryCopied(which); setTimeout(()=>setSalaryCopied(null),2000); };
@@ -4277,21 +4367,28 @@ Thank you!`;
               </div>
             ) : (
               <>
-                <div style={{fontSize:12,color:"#546E7A",marginBottom:10,lineHeight:1.6}}>
+                <div style={{fontSize:12,color:"#546E7A",marginBottom:6,lineHeight:1.6}}>
                   {lang==="zh"
-                    ? `目前統計區間：${allTime?"全部時間":dateFrom+" ~ "+dateTo}，共 ${completedCount} 堂完課（25分鐘 ${completed25} 堂、50分鐘 ${completed50} 堂）`
-                    : `Current range: ${allTime?"all time":dateFrom+" ~ "+dateTo} — ${completedCount} completed session(s) (25min×${completed25}, 50min×${completed50})`}
+                    ? `目前統計區間：${allTime?"全部時間":dateFrom+" ~ "+dateTo}，共 ${payableCount} 堂可計薪（25分鐘 ${payable25} 堂、50分鐘 ${payable50} 堂）`
+                    : `Current range: ${allTime?"all time":dateFrom+" ~ "+dateTo} — ${payableCount} payable session(s) (25min×${payable25}, 50min×${payable50})`}
                 </div>
+                {absentPayableCount>0 && (
+                  <div style={{fontSize:11,color:"#E65100",marginBottom:10,lineHeight:1.6}}>
+                    {lang==="zh"
+                      ? `（其中含 ${absentPayableCount} 堂學生缺勤扣課但未順延補課——這種情況課堂實際有安排，仍計入薪資；已順延補課的請假不計入，避免補課後重複計薪）`
+                      : `(includes ${absentPayableCount} session(s) where the student was absent — deducted, no makeup — the class was still held so it's still paid; leave that WAS deferred with a makeup is excluded, to avoid paying twice)`}
+                  </div>
+                )}
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
                   <div>
                     <label style={{display:"block",fontSize:11,color:"#9E9E9E",marginBottom:4}}>
-                      {lang==="zh"?`25分鐘每堂金額（共 ${completed25} 堂）`:`Amount per 25min session (${completed25} total)`}
+                      {lang==="zh"?`25分鐘每堂金額（共 ${payable25} 堂）`:`Amount per 25min session (${payable25} total)`}
                     </label>
                     <input type="number" min="0" value={salaryRate25} onChange={e=>{setSalaryRate25(e.target.value);setSalaryCalcPreviewed(false);}} placeholder="0" style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",fontSize:13}}/>
                   </div>
                   <div>
                     <label style={{display:"block",fontSize:11,color:"#9E9E9E",marginBottom:4}}>
-                      {lang==="zh"?`50分鐘每堂金額（共 ${completed50} 堂）`:`Amount per 50min session (${completed50} total)`}
+                      {lang==="zh"?`50分鐘每堂金額（共 ${payable50} 堂）`:`Amount per 50min session (${payable50} total)`}
                     </label>
                     <input type="number" min="0" value={salaryRate50} onChange={e=>{setSalaryRate50(e.target.value);setSalaryCalcPreviewed(false);}} placeholder="0" style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",fontSize:13}}/>
                   </div>
@@ -4312,8 +4409,8 @@ Thank you!`;
                     <div style={{fontSize:12,color:"#2E7D32",marginBottom:2}}>{lang==="zh"?"試算金額":"Calculated amount"}</div>
                     <div style={{fontSize:11,color:"#546E7A",marginBottom:6}}>
                       {lang==="zh"
-                        ? `25分鐘 ${completed25} × ${parseFloat(salaryRate25)||0} ＋ 50分鐘 ${completed50} × ${parseFloat(salaryRate50)||0} ＋ 其他 ${parseFloat(salaryExtra)||0}`
-                        : `25min ${completed25} × ${parseFloat(salaryRate25)||0} + 50min ${completed50} × ${parseFloat(salaryRate50)||0} + other ${parseFloat(salaryExtra)||0}`}
+                        ? `25分鐘 ${payable25} × ${parseFloat(salaryRate25)||0} ＋ 50分鐘 ${payable50} × ${parseFloat(salaryRate50)||0} ＋ 其他 ${parseFloat(salaryExtra)||0}`
+                        : `25min ${payable25} × ${parseFloat(salaryRate25)||0} + 50min ${payable50} × ${parseFloat(salaryRate50)||0} + other ${parseFloat(salaryExtra)||0}`}
                     </div>
                     <div style={{fontSize:22,fontWeight:700,color:"#172F39",marginBottom:10}}>{salaryCalcAmount().toLocaleString(undefined,{maximumFractionDigits:2})}</div>
                     <div style={{display:"flex",gap:8}}>
@@ -8345,7 +8442,7 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
           </button>
         ))}
       </div>
-      {tab==="courses"&&<CourseManager users={users} courses={courses} setCourses={setCourses} lang={lang} setToast={setToast} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} absences={absences}/>}
+      {tab==="courses"&&<CourseManager users={users} courses={courses} setCourses={setCourses} lang={lang} setToast={setToast} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} absences={absences} feedback={feedback}/>}
       {tab==="enroll" &&<EnrollmentManager users={users} courses={courses} setCourses={setCourses} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} materials={materials} setMaterials={setMaterials} currentUser={currentUser} lang={lang} setToast={setToast}/>}
       {tab==="leave"  &&<LeaveReview users={users} courses={courses} absences={absences} setAbsences={setAbsences} attendance={attendance} setAttendance={setAttendance} enrollments={enrollments} setEnrollments={setEnrollments} lang={lang} setToast={setToast}/>}
       {tab==="feedback"&&<FeedbackCenter users={users} courses={courses} enrollments={enrollments} attendance={attendance} absences={absences} feedback={feedback||[]} setFeedback={setFeedback} lang={lang} setToast={setToast} currentUser={currentUser} materials={materials} setMaterials={setMaterials}/>}
@@ -8393,7 +8490,7 @@ function AssistantPanel({ users, setUsers, courses, setCourses, materials, setMa
           </button>
         ))}
       </div>
-      {tab==="courses"&&<CourseManager users={users} courses={courses} setCourses={setCourses} lang={lang} setToast={setToast} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} absences={absences}/>}
+      {tab==="courses"&&<CourseManager users={users} courses={courses} setCourses={setCourses} lang={lang} setToast={setToast} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} absences={absences} feedback={feedback}/>}
       {tab==="feedback"&&<FeedbackCenter users={users} courses={courses} enrollments={enrollments} attendance={attendance} absences={absences} feedback={feedback||[]} setFeedback={setFeedback} lang={lang} setToast={setToast} currentUser={currentUser} materials={materials} setMaterials={setMaterials}/>}
       {tab==="studentmat"&&<StudentMaterialReviewPanel users={users} courses={courses} enrollments={enrollments} materials={materials||[]} setMaterials={setMaterials} studentMatSubs={studentMatSubs||[]} setStudentMatSubs={setStudentMatSubs} currentUser={currentUser} lang={lang} setToast={setToast}/>}
       {tab==="availability"&&<AdminTeacherAvailability users={users} courses={courses} availability={teacherAvailability||[]} setAvailability={setTeacherAvailability} overrides={availabilityOverrides||[]} setOverrides={setAvailabilityOverrides} absences={absences} attendance={attendance} enrollments={enrollments} lang={lang} setToast={setToast} readOnly/>}
@@ -8835,7 +8932,7 @@ function FeedbackCenter({ users, courses, enrollments, attendance, absences, fee
                   </div>
                   {/* Next-lesson material status — important for admin/assistant to know
                       whether they need to go prep material themselves */}
-                  {f.nextMaterialStatus && (() => {
+                  {resolveMaterialStatus(f) && (() => {
                     const matMeta = getMaterialStatusMeta(f);
                     return (
                       <div style={{background:matMeta.bg,borderRadius:7,padding:"8px 12px",marginBottom:10,display:"flex",alignItems:"flex-start",gap:8}}>
@@ -9068,7 +9165,7 @@ function FeedbackCenter({ users, courses, enrollments, attendance, absences, fee
                   const teacher = getUser(r.course.teacherId);
                   const student = getUser(r.studentId);
                   const meta = r.fb ? STATUS_META[r.fb.status] : null;
-                  const matMeta = r.fb?.nextMaterialStatus ? getMaterialStatusMeta(r.fb) : null;
+                  const matMeta = resolveMaterialStatus(r.fb||{courseId:r.course.id,date:r.date}) ? getMaterialStatusMeta(r.fb||{courseId:r.course.id,date:r.date}) : null;
                   return (
                     <div key={i} style={{background:"#FFFFFF",border:`1px solid ${r.leaveInfo?"#E0E0E0":meta?meta.color+"33":"#E0E0E0"}`,borderRadius:9,padding:"10px 14px",marginBottom:8}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,flexWrap:"wrap",marginBottom:(r.leaveInfo||r.fb)?8:0}}>
@@ -10860,7 +10957,7 @@ function StudentSettingsPanel({ currentUser, users, setUsers, dirEntries, saveDi
 // down to sessions still missing feedback, grouped by week. Both let the
 // teacher write/edit feedback directly via the same FeedbackModal used from
 // the schedule view.
-function TeacherFeedbackPanel({ currentUser, users, courses, enrollments, attendance, absences, feedback, setFeedback, lang, setToast }) {
+function TeacherFeedbackPanel({ currentUser, users, courses, enrollments, attendance, absences, feedback, setFeedback, materials, lang, setToast }) {
   const t = T[lang];
   const [subTab, setSubTab] = useState("missing"); // missing | overview — missing-first, since that's the actionable one
   const [sortOldFirst, setSortOldFirst] = useState(true); // default: old → new, top to bottom
@@ -10987,6 +11084,17 @@ function TeacherFeedbackPanel({ currentUser, users, courses, enrollments, attend
     if (status==="no_scope") return {icon:"📝", label:lang==="zh"?"下次主題":"Next topic", color:"#E65100", bg:"#FFF3E0"};
     return null;
   };
+  // Same fix as FeedbackCenter's admin-side views: a teacher can answer this
+  // via TWO different places — the required field on the feedback record
+  // itself, OR (independently) via 任教學生總覽's own per-material selector,
+  // which writes to materials[].completionStatus instead. Checking only the
+  // feedback record was the bug — this checks both.
+  const resolveMatStatus = (s) => {
+    if (s.feedbackRec?.nextMaterialStatus) return {status: s.feedbackRec.nextMaterialStatus, note: s.feedbackRec.nextMaterialNote};
+    const mat = (materials||[]).find(m=>m.courseId===s.course.id && m.date===s.date && m.completionStatus);
+    if (mat) return {status: mat.completionStatus, note: mat.completionNote};
+    return null;
+  };
 
   const renderSessionRow = (s, i) => {
     const student = users.find(u=>u.id===s.course.studentId);
@@ -11011,8 +11119,8 @@ function TeacherFeedbackPanel({ currentUser, users, courses, enrollments, attend
               : meta && !isEditingExisting && (
                 <span style={{fontSize:10,background:meta.bg,color:meta.color,borderRadius:5,padding:"2px 9px",fontWeight:600}}>● {meta.label}</span>
               )}
-            {!s.leaveInfo && s.feedbackRec && !isEditingExisting && matBadgeFor(s.feedbackRec.nextMaterialStatus) && (() => {
-              const mb = matBadgeFor(s.feedbackRec.nextMaterialStatus);
+            {!s.leaveInfo && s.feedbackRec && !isEditingExisting && matBadgeFor(resolveMatStatus(s)?.status) && (() => {
+              const mb = matBadgeFor(resolveMatStatus(s)?.status);
               return <span style={{fontSize:10,background:mb.bg,color:mb.color,borderRadius:5,padding:"2px 9px",fontWeight:600,whiteSpace:"nowrap"}}>{mb.icon} {mb.label}</span>;
             })()}
           </div>
@@ -11031,8 +11139,8 @@ function TeacherFeedbackPanel({ currentUser, users, courses, enrollments, attend
             <div style={{background:"#F5F5F5",borderRadius:7,padding:"9px 12px",fontSize:12,color:"#172F39",lineHeight:1.7,whiteSpace:"pre-wrap",marginBottom:6}}>
               {s.feedbackRec.text}
             </div>
-            <NextMaterialFields value={s.feedbackRec.nextMaterialStatus} note={s.feedbackRec.nextMaterialNote} lang={lang} readOnly/>
-            <button onClick={()=>setDrafts(d=>({...d,[keyFor(s)]:{text:s.feedbackRec.text, nextMat:s.feedbackRec.nextMaterialStatus||"", nextMatNote:s.feedbackRec.nextMaterialNote||"", confirmed:false, checked:false}}))} style={{fontSize:11,padding:"4px 11px",borderRadius:6,background:"transparent",border:"1px solid #7B1FA2",color:"#7B1FA2",cursor:"pointer",fontWeight:500,marginTop:8}}>
+            <NextMaterialFields value={resolveMatStatus(s)?.status} note={resolveMatStatus(s)?.note} lang={lang} readOnly/>
+            <button onClick={()=>setDrafts(d=>({...d,[keyFor(s)]:{text:s.feedbackRec.text, nextMat:resolveMatStatus(s)?.status||"", nextMatNote:resolveMatStatus(s)?.note||"", confirmed:false, checked:false}}))} style={{fontSize:11,padding:"4px 11px",borderRadius:6,background:"transparent",border:"1px solid #7B1FA2",color:"#7B1FA2",cursor:"pointer",fontWeight:500,marginTop:8}}>
               ✏️ {t.feedbackEdit}
             </button>
           </div>
@@ -11806,7 +11914,7 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, setCourse
             : isTeacher && sideTab==="students"
               ? <TeacherStudentsPanel currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} attendance={attendance} lang={lang} dirEntries={dirEntries} absences={absences}/>
             : isTeacher && sideTab==="teacherFeedback"
-              ? <TeacherFeedbackPanel currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} attendance={attendance} absences={absences} feedback={feedback} setFeedback={setFeedback} lang={lang} setToast={setToast}/>
+              ? <TeacherFeedbackPanel currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} attendance={attendance} absences={absences} feedback={feedback} setFeedback={setFeedback} materials={materials} lang={lang} setToast={setToast}/>
             : isTeacher && currentUser.canUseStudentOverview && sideTab==="studentOverview"
               ? <TeacherStudentOverview currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} materials={materials} setMaterials={setMaterials} feedback={feedback} setFeedback={setFeedback} attendance={attendance} absences={absences} lang={lang} setToast={setToast}/>
             : isTeacher && sideTab==="availability"
