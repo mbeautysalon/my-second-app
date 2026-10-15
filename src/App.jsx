@@ -501,7 +501,7 @@ const TRIAL_COLOR = {bg:"#FFFDE7",border:"#F9A825",text:"#F57F17"};
 // Bumped whenever a meaningful set of changes ships. Shown low-key on the
 // login page so version can be confirmed at a glance; also called out
 // whenever a new file is delivered.
-const APP_VERSION = "v1.2.8.10";
+const APP_VERSION = "v1.2.9.1";
 
 const genId = () => "id_" + Math.random().toString(36).slice(2,9);
 
@@ -749,7 +749,12 @@ function getCourseStartForDay(course, dayIndex) {
 // its own meetingUrl; if it doesn't, this falls back to the course's single
 // default link — so existing single-slot-per-day courses need no changes.
 function resolveMeetingUrl(course, dayIndex, start) {
-  const entry = getCourseSchedule(course).find(s => s.dayIndex===dayIndex && s.start===start);
+  const sched = getCourseSchedule(course);
+  let entry = sched.find(s => s.dayIndex===dayIndex && s.start===start);
+  // A rescheduled session (customStart) has a start that matches no weekly
+  // block — if its original weekday has exactly ONE block, that block's link
+  // is unambiguous, so use it instead of silently dropping to the course default.
+  if (!entry) { const sameDay = sched.filter(s => s.dayIndex===dayIndex); if (sameDay.length===1) entry = sameDay[0]; }
   return (entry && entry.meetingUrl) || course?.meetingUrl || "";
 }
 // A scheduledDates entry's ACTUAL start time — a rescheduled/make-up session
@@ -1109,7 +1114,40 @@ function MaterialPanel({ course, initialDate, users, lang, currentUser, material
       const reviewMap = {pending:lang==="zh"?"待審核":"Unreviewed", approved:lang==="zh"?"已審核":"Reviewed", rejected:lang==="zh"?"已退回":"Rejected"};
       matLabel = labelMap[matAnswer.status] + (matAnswer.reviewStatus ? `（${reviewMap[matAnswer.reviewStatus]||matAnswer.reviewStatus}）` : "");
     }
-    return {classStatus, matLabel};
+    return {classStatus, matLabel, isLeave: !!(attRec || selfAbs)};
+  };
+
+  // ── 教材依序順延 — when a class didn't happen (leave), whatever material
+  // was assigned to that date never got used. This shifts it — and every
+  // material after it — forward by one slot in the course's actual
+  // scheduled-date sequence, so the sequence stays in order without the
+  // admin having to manually re-date every material one by one.
+  const [cascadeConfirm, setCascadeConfirm] = useState(null); // dateStr being confirmed
+  const cascadeMaterialsForward = (leaveDate) => {
+    const futureDates = [...new Set(
+      courseEnrs.flatMap(e => (e.scheduledDates||[]).map(s=>s.date)).filter(d => d >= leaveDate)
+    )].sort();
+    const matForDate = (d) => (materials||[]).find(m=>m.courseId===course.id && m.date===d);
+    // Walk from the END backward so each move target is free before we place
+    // something new there (otherwise an earlier move could get overwritten).
+    const moves = [];
+    for (let i = futureDates.length - 1; i >= 0; i--) {
+      const mat = matForDate(futureDates[i]);
+      if (!mat) continue;
+      if (i + 1 >= futureDates.length) continue; // nothing after it — leave in place, nowhere to push to
+      moves.push({ id: mat.id, newDate: futureDates[i+1], newDayIndex: dateDayIndex(futureDates[i+1]) });
+    }
+    if (!moves.length) {
+      setToast(lang==="zh"?"沒有後續可挪動的堂次（已經是最後一堂）":"Nothing to shift — this was already the last scheduled session");
+      setCascadeConfirm(null);
+      return;
+    }
+    setMaterials(prev => prev.map(m => {
+      const mv = moves.find(x=>x.id===m.id);
+      return mv ? {...m, date:mv.newDate, dayIndex:mv.newDayIndex} : m;
+    }));
+    setToast(lang==="zh"?`已將 ${moves.length} 筆教材依序順延一堂`:`Shifted ${moves.length} material(s) forward by one session`);
+    setCascadeConfirm(null);
   };
 
   // ── filter / sort state ──
@@ -1262,6 +1300,23 @@ function MaterialPanel({ course, initialDate, users, lang, currentUser, material
           </div>
         );
       })()}
+      {cascadeConfirm && (() => {
+        const futureDates = [...new Set(
+          courseEnrs.flatMap(e => (e.scheduledDates||[]).map(s=>s.date)).filter(d => d >= cascadeConfirm)
+        )].sort();
+        const affectedCount = futureDates.filter(d => (materials||[]).some(m=>m.courseId===course.id && m.date===d)).length;
+        return (
+          <ConfirmModal
+            title={lang==="zh"?"確認教材順延":"Confirm Material Shift"}
+            message={lang==="zh"
+              ? `確認 ${cascadeConfirm} 這堂課沒上到、教材沒被使用？確認後這堂（如果有教材）跟之後每一筆有教材的堂次，都會依序往後挪一堂（影響約 ${affectedCount} 筆教材）。此操作可以之後再手動調整回來，但不會自動復原。`
+              : `Confirm the class on ${cascadeConfirm} didn't happen and its material wasn't used? This will shift it (if any) and every material after it forward by one session (affects about ${affectedCount} material(s)). You can manually adjust dates back later, but there's no automatic undo.`}
+            confirmLabel={lang==="zh"?"確認順延":"Confirm Shift"}
+            onConfirm={()=>cascadeMaterialsForward(cascadeConfirm)}
+            onCancel={()=>setCascadeConfirm(null)}
+          />
+        );
+      })()}
       <div style={{background:"#FFFFFF",borderRadius:"18px 18px 0 0",width:"100%",maxWidth:560,maxHeight:"90vh",display:"flex",flexDirection:"column",boxSizing:"border-box"}}>
 
         {/* ── Header ── */}
@@ -1385,6 +1440,11 @@ function MaterialPanel({ course, initialDate, users, lang, currentUser, material
                 )}
                 {info?.matLabel && (
                   <span title={lang==="zh"?"老師反饋回報的教材狀況":"Material status reported via teacher feedback"} style={{fontSize:9,background:"#EEF6FB",color:"#1A6B8A",borderRadius:4,padding:"1px 7px",fontWeight:600,whiteSpace:"nowrap"}}>📋 {info.matLabel}</span>
+                )}
+                {canEdit && info?.isLeave && dateKey!=="—" && (grouped[dateKey]||[]).length>0 && (
+                  <button onClick={()=>setCascadeConfirm(dateKey)} title={lang==="zh"?"這堂課沒上到，這裡的教材沒被用過——確認後這筆跟之後每一筆教材都會往後挪一堂":"This class didn't happen — the material here was never used. Confirming shifts it, and everything after it, forward by one session"} style={{fontSize:9,padding:"2px 8px",borderRadius:4,border:"1px solid #7B1FA2",background:"transparent",color:"#7B1FA2",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>
+                    ⏭ {lang==="zh"?"確認未使用，教材順延":"Confirm unused, shift forward"}
+                  </button>
                 )}
                 <div style={{flex:1,height:"0.5px",background:"#E0E0E0"}}/>
                 <span style={{fontSize:10,color:"#9E9E9E",whiteSpace:"nowrap"}}>{T[lang].days[grouped[dateKey][0]?.dayIndex]}</span>
@@ -1522,10 +1582,14 @@ function CourseDetailModal({ course, dayIndex, date, sessionNo, users, lang, mat
   const classDate = date || getDateForDow(dayIndex); // YYYY-MM-DD
 
   // Latest material for this day (or first overall)
-  const latestMat = dayMats[0] || materials.filter(m=>m.courseId===course.id)[0];
-  const matLine = latestMat
-    ? (latestMat.title && latestMat.title !== latestMat.url ? `${latestMat.title}\n ** ${latestMat.url}` : latestMat.url)
+  // Bug fix: this used to (a) fall back to an ARBITRARY other-day material of
+  // the course when this day had none, and (b) include only the first of
+  // several materials — while the info panel above showed "—" / all of them.
+  // The copied text must say exactly what the panel shows.
+  const matLine = dayMats.length
+    ? dayMats.map(m => (m.title && m.title !== m.url ? `${m.title}\n ** ${m.url}` : m.url)).join("\n ** ")
     : "—";
+  const resolvedMeetingUrl = resolveMeetingUrl(course, dayIndex, startTime);
 
   const copyText =
 `===== ES English Today =====
@@ -1542,7 +1606,7 @@ function CourseDetailModal({ course, dayIndex, date, sessionNo, users, lang, mat
  ** ${matLine}
 
  Class Link / 上課連結
- ${course.meetingUrl||"—"}
+ ${resolvedMeetingUrl||"—"}
 
 
  Let's have a great class together! 上課順利！
@@ -1591,7 +1655,7 @@ function CourseDetailModal({ course, dayIndex, date, sessionNo, users, lang, mat
           {/* Meeting link — resolved for THIS specific session's time slot,
               since same-day courses can have a different link per slot */}
           {(() => {
-            const resolvedUrl = resolveMeetingUrl(course, dayIndex, startTime);
+            const resolvedUrl = resolvedMeetingUrl;
             if (!resolvedUrl) return null;
             return (
               <div style={{display:"flex",gap:10,alignItems:"flex-start",marginBottom:10}}>
@@ -1733,7 +1797,7 @@ function SlotCalendarView({ slots, users, lang, currentUser, absences, materials
         const sStart = s.customStart || getCourseStartForDay(c, s.dayIndex);
         const attRec = (attendance||[]).find(a=>a.enrollmentId===enr.id && a.date===date);
         const absRec = (absences||[]).find(a=>a.courseId===c.id && a.dateStr===date);
-        daySessions.push({ course:c, start:sStart, isExcused: (attRec && attRec.type!=="other") || !!absRec });
+        daySessions.push({ course:c, dayIndex:s.dayIndex, start:sStart, isExcused: (attRec && attRec.type!=="other") || !!absRec });
       });
     });
     daySessions.sort((a,b)=>a.start.localeCompare(b.start));
@@ -1752,7 +1816,7 @@ function SlotCalendarView({ slots, users, lang, currentUser, absences, materials
         lines.push(lang==="zh"?"（請假）":"(On Leave)");
         return;
       }
-      lines.push(sl.course.meetingUrl || "");
+      lines.push(resolveMeetingUrl(sl.course, sl.dayIndex, sl.start) || "");
       materials.filter(m=>m.courseId===sl.course.id && m.date===date).forEach(m => {
         lines.push("Material");
         lines.push(m.url || "");
@@ -1845,8 +1909,8 @@ function SlotCalendarView({ slots, users, lang, currentUser, absences, materials
                               dateStr: sl.date,
                               startTime: sl.start,
                               durationMins: sl.course.duration,
-                              details: `${lang==="zh"?"老師":"Teacher"}: ${teacher?.name||"—"}\n${lang==="zh"?"學生":"Student"}: ${student?.name||"—"}${sl.course.meetingUrl?`\n${lang==="zh"?"上課連結":"Meeting link"}: ${sl.course.meetingUrl}`:""}`,
-                              location: sl.course.meetingUrl||"",
+                              details: `${lang==="zh"?"老師":"Teacher"}: ${teacher?.name||"—"}\n${lang==="zh"?"學生":"Student"}: ${student?.name||"—"}${resolveMeetingUrl(sl.course,sl.dayIndex,sl.start)?`\n${lang==="zh"?"上課連結":"Meeting link"}: ${resolveMeetingUrl(sl.course,sl.dayIndex,sl.start)}`:""}`,
+                              location: resolveMeetingUrl(sl.course,sl.dayIndex,sl.start)||"",
                             })}
                             target="_blank" rel="noreferrer" title={t.addToGCal}
                             style={{fontSize:9,background:"transparent",border:`1px solid ${dimBorder}`,color:dimText,borderRadius:3,padding:"2px 5px",textDecoration:"none"}}
@@ -2297,7 +2361,7 @@ function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, ma
         const sStart = s.customStart || getCourseStartForDay(c, s.dayIndex);
         const attRec = (attendance||[]).find(a=>a.enrollmentId===enr.id && a.date===date);
         const absRec = (absences||[]).find(a=>a.courseId===c.id && a.dateStr===date);
-        daySessions.push({ course:c, enrollment:enr, start:sStart, isExcused: (attRec && attRec.type!=="other") || !!absRec });
+        daySessions.push({ course:c, dayIndex:s.dayIndex, enrollment:enr, start:sStart, isExcused: (attRec && attRec.type!=="other") || !!absRec });
       });
     });
     daySessions.sort((a,b)=>a.start.localeCompare(b.start));
@@ -2315,7 +2379,7 @@ function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, ma
         lines.push(lang==="zh"?"（請假）":"(On Leave)");
         return;
       }
-      lines.push(sl.course.meetingUrl || "");
+      lines.push(resolveMeetingUrl(sl.course, sl.dayIndex, sl.start) || "");
       materials.filter(m=>m.courseId===sl.course.id && m.date===date).forEach(m => {
         lines.push("Material");
         lines.push(m.url || "");
@@ -2403,8 +2467,8 @@ function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, ma
                 dateStr: date,
                 startTime: start,
                 durationMins: course.duration,
-                details: `${lang==="zh"?"老師":"Teacher"}: ${teacher?.name||"—"}\n${lang==="zh"?"學生":"Student"}: ${student?.name||"—"}${course.meetingUrl?`\n${lang==="zh"?"上課連結":"Meeting link"}: ${course.meetingUrl}`:""}`,
-                location: course.meetingUrl||"",
+                details: `${lang==="zh"?"老師":"Teacher"}: ${teacher?.name||"—"}\n${lang==="zh"?"學生":"Student"}: ${student?.name||"—"}${resolveMeetingUrl(course,dayIndex,start)?`\n${lang==="zh"?"上課連結":"Meeting link"}: ${resolveMeetingUrl(course,dayIndex,start)}`:""}`,
+                location: resolveMeetingUrl(course,dayIndex,start)||"",
               })}
               target="_blank" rel="noreferrer"
               title={t.addToGCal}
@@ -2483,8 +2547,8 @@ function WeekExportModal({ weekSlots, absences, lang, setToast, onClose }) {
       dateStr: sl.date,
       startTime: sl.start,
       durationMins: sl.course.duration,
-      details: sl.course.meetingUrl ? `${lang==="zh"?"上課連結":"Meeting link"}: ${sl.course.meetingUrl}` : "",
-      location: sl.course.meetingUrl || "",
+      details: resolveMeetingUrl(sl.course,sl.dayIndex,sl.start) ? `${lang==="zh"?"上課連結":"Meeting link"}: ${resolveMeetingUrl(sl.course,sl.dayIndex,sl.start)}` : "",
+      location: resolveMeetingUrl(sl.course,sl.dayIndex,sl.start) || "",
       uid: `${sl.course.id}-${sl.date}-${sl.sessionNo}`,
     }));
     downloadICS(events, `schedule_${weekSlots[0]?.date||""}.ics`);
@@ -2567,7 +2631,7 @@ function BulkCopyModal({ weekSlots, materials, users, lang, onClose }) {
  Time&Student / 時間&學生: ${sl.start}-${endTime}  ${student}
  Teacher / 老師: ${teacher}
  Lesson Material / 課程教材: ${matLine}
- Class Link / 上課連結: ${sl.course.meetingUrl||"—"}
+ Class Link / 上課連結: ${resolveMeetingUrl(sl.course, sl.dayIndex, sl.start)||"—"}
 ========================`
     );
   };
@@ -2736,6 +2800,27 @@ function ScheduleView({ currentUser, users, courses, lang, absences, setAbsences
     setToast(t.notifySuccess);
   };
 
+  // ── Admin weekly summary line: planned 25/50-min sessions, done so far, leave ──
+  // "Planned" = sessions that are actually expected to happen (leave/absence
+  // sessions excluded — they're counted separately as 請假). "Done" = planned
+  // sessions whose end time has already passed.
+  const weekSummary = isAdmin ? (() => {
+    const byDur = {}; let planned = 0, done = 0, leave = 0, leavePast = 0;
+    weekSlots.forEach(sl => {
+      const attRec = (attendance||[]).find(a=>a.enrollmentId===sl.enrollment?.id && a.date===sl.date);
+      const absRec = (absences||[]).find(a=>a.courseId===sl.course.id && a.dateStr===sl.date);
+      const over = isSessionOver(sl.date, sl.start, sl.course.duration);
+      if ((attRec && attRec.type!=="other") || absRec) { leave++; if (over) leavePast++; return; }
+      planned++; if (over) done++;
+      byDur[sl.course.duration] = (byDur[sl.course.duration]||0) + 1;
+    });
+    const durs = Object.keys(byDur).map(Number).sort((a,b)=>{ const r=d=>d===25?0:d===50?1:2; return r(a)-r(b) || a-b; });
+    const durText = (durs.length ? durs : [25,50]).map(d => lang==="zh" ? `${d}分鐘 ${byDur[d]||0} 堂` : `${d}-min × ${byDur[d]||0}`).join(lang==="zh"?"、":", ");
+    return lang==="zh"
+      ? `本週預計：${durText}（共 ${planned} 堂）｜目前已完成 ${done} 堂｜請假 ${leave} 堂（已過 ${leavePast}、未到 ${leave-leavePast}）`
+      : `This week planned: ${durText} (${planned} total) | Completed so far: ${done} | On leave: ${leave} (past ${leavePast}, upcoming ${leave-leavePast})`;
+  })() : null;
+
   const btnStyle = (active) => ({padding:"6px 13px",borderRadius:6,border:active?"none":"0.5px solid #CFD8DC",background:active?"#1A6B8A":"transparent",color:active?"#fff":"#546E7A",fontSize:12,cursor:"pointer"});
   const iStyle = {padding:"6px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:12,cursor:"pointer"};
 
@@ -2792,6 +2877,12 @@ function ScheduleView({ currentUser, users, courses, lang, absences, setAbsences
           ))}
         </div>
       </div>
+
+      {weekSummary && (
+        <div style={{background:"#EEF6FB",border:"1px solid #B3D9EA",borderRadius:8,padding:"8px 12px",marginBottom:"0.75rem",fontSize:12.5,color:"#172F39",lineHeight:1.6}}>
+          📊 {weekSummary}
+        </div>
+      )}
 
       {/* ── Admin filter bar ── */}
       {isAdmin && (
@@ -3947,6 +4038,74 @@ function CourseManager({ users, courses, setCourses, lang, setToast, materials, 
 }
 
 // ─── User manager ─────────────────────────────────────────────────────────────
+const SUSPEND_DEFAULT_MSG = {
+  zh: "您好，因目前課程已結束，您的學員帳號將暫時停用。如未來有續課或重新安排課程的需求，歡迎隨時與我們聯繫，我們將很樂意為您提供協助，謝謝您的支持與配合。",
+  en: "Hello, as your current course has ended, your student account will be temporarily deactivated. If you would like to renew or arrange new lessons in the future, please feel free to contact us at any time — we would be happy to help. Thank you for your support and understanding.",
+};
+
+// Full-screen blocking notice for a suspended account. Nothing behind it is
+// reachable: the App root returns THIS instead of the normal UI.
+function SuspendedScreen({ user, lang, setLang, onLogout, onResumeRequest }) {
+  const zh = lang==="zh";
+  const custom = ((zh ? user.suspendMsgZh : user.suspendMsgEn) || "").trim();
+  const message = custom || SUSPEND_DEFAULT_MSG[zh?"zh":"en"];
+  const [showForm, setShowForm] = useState(false);
+  const todayStr = new Date().toISOString().slice(0,10);
+  const [resumeDate, setResumeDate] = useState(user.resumeRequest?.date || "");
+  const sent = user.resumeRequest?.date;
+  const submit = () => { if (!resumeDate) return; onResumeRequest(resumeDate); setShowForm(false); };
+  return (
+    <div style={{position:"fixed",inset:0,zIndex:20000,background:"rgba(23,47,57,0.96)",display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem",overflowY:"auto"}}>
+      <div style={{background:"#FFFFFF",borderRadius:16,width:"100%",maxWidth:480,boxSizing:"border-box",boxShadow:"0 10px 50px rgba(0,0,0,0.5)",overflow:"hidden"}}>
+        <div style={{background:"#172F39",padding:"14px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{color:"#fff",fontSize:15,fontWeight:600}}>{zh?"帳號已停用":"Account Deactivated"}</span>
+          <div style={{display:"flex",gap:4}}>
+            {["zh","en"].map(l=>(
+              <button key={l} onClick={()=>setLang(l)} style={{fontSize:11,padding:"3px 9px",borderRadius:5,border:"1px solid rgba(255,255,255,0.3)",background:lang===l?"#fff":"transparent",color:lang===l?"#172F39":"#fff",cursor:"pointer"}}>{l==="zh"?"中文":"EN"}</button>
+            ))}
+          </div>
+        </div>
+        <div style={{padding:"22px 22px 20px"}}>
+          <div style={{fontSize:40,textAlign:"center",marginBottom:8}}>⛔</div>
+          <div style={{fontSize:14,color:"#172F39",lineHeight:1.9,whiteSpace:"pre-wrap",textAlign:"left"}}>{message}</div>
+
+          {sent && !showForm && (
+            <div style={{marginTop:14,background:"#E8F5E9",border:"1px solid #A5D6A7",borderRadius:8,padding:"9px 12px",fontSize:12.5,color:"#2E7D32",lineHeight:1.6}}>
+              ✓ {zh?`已送出復課申請，預計恢復日期：${sent}。管理員 John 會與您聯繫。`:`Resume request sent — expected date: ${sent}. Admin John will contact you.`}
+            </div>
+          )}
+
+          {showForm && (
+            <div style={{marginTop:14,background:"#F5F9FB",border:"1px solid #B3D9EA",borderRadius:10,padding:"12px 14px"}}>
+              <label style={{display:"block",fontSize:12.5,color:"#172F39",fontWeight:600,marginBottom:6}}>{zh?"預計恢復課程日期":"Expected date to resume lessons"}</label>
+              <input type="date" min={todayStr} value={resumeDate} onChange={e=>setResumeDate(e.target.value)} style={{width:"100%",boxSizing:"border-box",padding:"9px 10px",borderRadius:7,border:"0.5px solid #CFD8DC",fontSize:14}}/>
+              <div style={{fontSize:12,color:"#546E7A",marginTop:8,lineHeight:1.6}}>
+                📞 {zh?"送出後，請聯繫管理員 John 進一步安排課程。":"After submitting, please contact admin John to arrange your lessons."}
+              </div>
+              <div style={{display:"flex",gap:8,marginTop:10}}>
+                <button onClick={submit} disabled={!resumeDate} style={{flex:1,padding:"9px",borderRadius:7,border:"none",background:resumeDate?"#1A6B8A":"#B0BEC5",color:"#fff",fontSize:13,fontWeight:600,cursor:resumeDate?"pointer":"default"}}>{zh?"送出":"Submit"}</button>
+                <button onClick={()=>setShowForm(false)} style={{padding:"9px 14px",borderRadius:7,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",fontSize:13,cursor:"pointer"}}>{zh?"取消":"Cancel"}</button>
+              </div>
+            </div>
+          )}
+
+          {!showForm && (
+            <div style={{display:"flex",flexDirection:"column",gap:4,marginTop:18}}>
+              {user.role==="student" && (
+                <button onClick={()=>setShowForm(true)} style={{width:"100%",padding:"11px",borderRadius:8,border:"none",background:"#1A6B8A",color:"#fff",fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:6}}>
+                  🙋 {zh?"我想復課":"I'd like to resume lessons"}
+                </button>
+              )}
+              <div style={{fontSize:12,color:"#546E7A",textAlign:"center",marginBottom:8}}>{zh?"如需協助，請聯繫管理員 John。":"For help, please contact admin John."}</div>
+              <button onClick={onLogout} style={{width:"100%",padding:"10px",borderRadius:8,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",fontSize:13,cursor:"pointer"}}>{zh?"登出":"Log out"}</button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function UserManager({ users, setUsers, lang, setToast, onImpersonate }) {
   const t = T[lang];
   const [showAdd,setShowAdd] = useState(false);
@@ -3977,7 +4136,12 @@ function UserManager({ users, setUsers, lang, setToast, onImpersonate }) {
       const { hash, salt } = await hashPassword(editing.newPwd);
       pwdPatch = { passwordHash: hash, passwordSalt: salt, password: undefined };
     }
-    setUsers(users.map(u=>u.id!==editing.id?u:{...u,name:editing.name,username:editing.username,...pwdPatch,...(u.role!=="admin"?{role:editing.role}:{}),canAssist:editing.role==="teacher"?!!editing.canAssist:undefined,canUseStudentOverview:editing.role==="teacher"?!!editing.canUseStudentOverview:undefined,canSubmitMaterials:editing.role==="student"?!!editing.canSubmitMaterials:undefined}));
+    setUsers(users.map(u=>u.id!==editing.id?u:{...u,name:editing.name,username:editing.username,...pwdPatch,...(u.role!=="admin"?{role:editing.role}:{}),canAssist:editing.role==="teacher"?!!editing.canAssist:undefined,canUseStudentOverview:editing.role==="teacher"?!!editing.canUseStudentOverview:undefined,canSubmitMaterials:editing.role==="student"?!!editing.canSubmitMaterials:undefined,
+      suspended: !!editing.suspended,
+      suspendMsgZh: editing.suspended ? (editing.suspendMsgZh||"").trim() : undefined,
+      suspendMsgEn: editing.suspended ? (editing.suspendMsgEn||"").trim() : undefined,
+      // un-suspending closes out any pending resume request
+      resumeRequest: editing.suspended ? u.resumeRequest : undefined}));
     setEditing(null); setToast(t.userUpdated);
   };
 
@@ -4031,6 +4195,23 @@ function UserManager({ users, setUsers, lang, setToast, onImpersonate }) {
               📚 {lang==="zh"?"開放自行準備教材（審核制，側邊欄會多一個入口）":"Allow self-submitted materials (review-gated, adds a sidebar item)"}
             </label>
           )}
+          {editing.role!=="admin" && (
+            <div style={{marginTop:14,padding:"10px 12px",borderRadius:8,border:`1px solid ${editing.suspended?"#EF9A9A":"#E0E0E0"}`,background:editing.suspended?"#FFF5F5":"#FAFAFA"}}>
+              <label style={{display:"flex",alignItems:"center",gap:7,fontSize:12.5,color:editing.suspended?"#C62828":"#172F39",cursor:"pointer",fontWeight:600}}>
+                <input type="checkbox" checked={!!editing.suspended} onChange={e=>setEditing(v=>({...v,suspended:e.target.checked}))}/>
+                ⛔ {lang==="zh"?"停用此帳號（登入後只會看到停用通知視窗，無法使用任何功能）":"Suspend this account (after login only a notice window is shown — nothing else is accessible)"}
+              </label>
+              {editing.suspended && (
+                <div>
+                  <div style={{fontSize:11,color:"#546E7A",margin:"8px 0 3px"}}>{lang==="zh"?"停用通知內容 — 中文版（留空 = 使用預設）":"Notice text — Chinese (blank = default)"}</div>
+                  <textarea value={editing.suspendMsgZh||""} onChange={e=>setEditing(v=>({...v,suspendMsgZh:e.target.value}))} rows={3} placeholder={SUSPEND_DEFAULT_MSG.zh} style={{...iStyle,resize:"vertical",lineHeight:1.6,fontFamily:"inherit"}}/>
+                  <div style={{fontSize:11,color:"#546E7A",margin:"8px 0 3px"}}>{lang==="zh"?"停用通知內容 — 英文版（留空 = 使用預設）":"Notice text — English (blank = default)"}</div>
+                  <textarea value={editing.suspendMsgEn||""} onChange={e=>setEditing(v=>({...v,suspendMsgEn:e.target.value}))} rows={3} placeholder={SUSPEND_DEFAULT_MSG.en} style={{...iStyle,resize:"vertical",lineHeight:1.6,fontFamily:"inherit"}}/>
+                  <div style={{fontSize:10.5,color:"#9E9E9E",marginTop:4}}>{lang==="zh"?"使用者介面切換中／英文時，會顯示對應語言的版本。":"The version matching the user's language toggle is shown."}</div>
+                </div>
+              )}
+            </div>
+          )}
           <div style={{display:"flex",gap:8,marginTop:14}}>
             <button onClick={saveEdit} style={{flex:1,background:"#1A6B8A",border:"none",borderRadius:6,color:"#fff",padding:"9px",fontSize:13,cursor:"pointer"}}>{t.save}</button>
             <button onClick={()=>setEditing(null)} style={{flex:1,background:"#F5F5F5",border:"0.5px solid #CFD8DC",borderRadius:6,color:"#172F39",padding:"9px",fontSize:13,cursor:"pointer"}}>{t.cancel}</button>
@@ -4045,6 +4226,8 @@ function UserManager({ users, setUsers, lang, setToast, onImpersonate }) {
               <span style={{fontSize:12,color:"#546E7A",marginLeft:8}}>@{u.username}</span>
               <span style={{fontSize:11,marginLeft:8,background:u.role==="admin"?"#EDE7F6":u.role==="teacher"?"#E3F2FD":u.role==="assistant"?"#FFF3E0":"#E8F5E9",color:u.role==="admin"?"#311B92":u.role==="teacher"?"#1565C0":u.role==="assistant"?"#E65100":"#2E7D32",borderRadius:4,padding:"2px 7px"}}>{t[`role_${u.role}`]}</span>
               {u.role==="teacher"&&u.canAssist&&<span style={{fontSize:11,marginLeft:4,background:"#FFF3E0",color:"#E65100",borderRadius:4,padding:"2px 7px"}}>🛠 {lang==="zh"?"兼助教":"+Assistant"}</span>}
+              {u.suspended && <span style={{fontSize:11,marginLeft:6,background:"#FFEBEE",color:"#C62828",borderRadius:4,padding:"2px 7px",fontWeight:600}}>⛔ {lang==="zh"?"已停用":"Suspended"}</span>}
+              {u.suspended && u.resumeRequest?.date && <span style={{fontSize:11,marginLeft:6,background:"#E3F2FD",color:"#1565C0",borderRadius:4,padding:"2px 7px",fontWeight:600}}>📩 {lang==="zh"?`申請復課：${u.resumeRequest.date}`:`Resume request: ${u.resumeRequest.date}`}</span>}
             </div>
             <div style={{display:"flex",gap:6}}>
               {u.role!=="admin"&&<button onClick={()=>onImpersonate(u)} title={lang==="zh"?"不需密碼，直接切換成此帳號的視角":"No password needed — switch straight into this account's view"} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"0.5px solid #4A9FD4",background:"transparent",color:"#1A6B8A",cursor:"pointer",fontWeight:500}}>🔑 {lang==="zh"?"以此身分登入":"Login as"}</button>}
@@ -4272,6 +4455,7 @@ function TeacherStats({ users, courses, absences, attendance, enrollments, lang,
   // teacher, not a UI string.
   const [salaryCopied, setSalaryCopied] = useState(null); // "long" | "short" | null
   const selectedTeacher = teachers.find(te=>te.id===selId);
+  const gcashNumber = ((dirEntries||[]).find(d=>d.linkedUserId===selId)?.gcash||"").trim();
   const greetingWord = () => { const h=new Date().getHours(); return h<12?"morning":h<18?"afternoon":"evening"; };
   const fmtEnDate = (ds) => new Date(ds+"T00:00:00").toLocaleDateString("en-US",{month:"long",day:"numeric"});
   const periodLabel = allTime ? "your full teaching record" : `${fmtEnDate(dateFrom)}–${fmtEnDate(dateTo)}`;
@@ -4286,11 +4470,11 @@ function TeacherStats({ users, courses, absences, attendance, enrollments, lang,
 
 We've calculated your salary for the period of ${periodLabel}. In total, you taught ${payableCount} lesson${payableCount===1?"":"s"} (${lessonBreakdown()}).
 
-We'll be sending $${amt} to your account (_____). Please confirm this is correct.
+We'll be sending $${amt} to your GCash account (${gcashNumber||"_____"}). Please confirm this is correct.
 
 Thank you!`;
   const salaryTextShort = (amt) =>
-`Hi ${selectedTeacher?.name||""}! Quick salary summary for ${periodLabel}: ${payableCount} lesson${payableCount===1?"":"s"} total (${lessonBreakdown()}). Sending $${amt} to account _____ — please confirm. Thanks!`;
+`Hi ${selectedTeacher?.name||""}! Quick salary summary for ${periodLabel}: ${payableCount} lesson${payableCount===1?"":"s"} total (${lessonBreakdown()}). Sending $${amt} to GCash ${gcashNumber||"_____"} — please confirm. Thanks!`;
   const copySalaryText = (which, amt) => {
     const text = which==="long" ? salaryTextLong(amt) : salaryTextShort(amt);
     const doCopy = () => { setSalaryCopied(which); setTimeout(()=>setSalaryCopied(null),2000); };
@@ -4351,7 +4535,9 @@ Thank you!`;
                   ✓ {lang==="zh"?`已儲存 ${justSavedAmount.toLocaleString(undefined,{maximumFractionDigits:2})}`:`Saved ${justSavedAmount.toLocaleString(undefined,{maximumFractionDigits:2})}`}
                 </div>
                 <div style={{fontSize:11,color:"#546E7A",marginBottom:10,lineHeight:1.6}}>
-                  {lang==="zh"?"薪資通知文字（已帶入這次儲存的金額，帳號欄位留白自行填寫）：":"Salary notification text (this saved amount is filled in — account number is left blank for you):"}
+                  {gcashNumber
+                    ? (lang==="zh"?`薪資通知文字（已帶入儲存金額與 GCash：${gcashNumber}）：`:`Salary notification text (amount and GCash ${gcashNumber} filled in):`)
+                    : (lang==="zh"?"薪資通知文字（已帶入儲存金額；此老師尚未填 GCash，帳號欄位留白，請至師生資料庫補填）：":"Salary notification text (amount filled in; no GCash saved for this teacher — account left blank, add it in the Teacher Directory):")}
                 </div>
                 <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:8}}>
                   <button onClick={()=>copySalaryText("long", justSavedAmount)} style={{fontSize:12,padding:"7px 14px",borderRadius:6,background:salaryCopied==="long"?"#4CAF50":"#1A6B8A",border:"none",color:"#fff",cursor:"pointer",fontWeight:500,transition:"background 0.2s"}}>
@@ -4620,7 +4806,7 @@ function StudentStats({ users, courses, absences, attendance, enrollments, setEn
   // whole tab. Clicking a row drills into the existing single-student detail
   // view below.
   const todayStr = new Date().toISOString().slice(0,10);
-  const overviewRows = enrollments
+  const overviewRowsRaw = enrollments
     .map(enr => {
       const student = users.find(u=>u.id===enr.studentId);
       const course = courses.find(c=>c.id===enr.courseId);
@@ -4651,8 +4837,28 @@ function StudentStats({ users, courses, absences, attendance, enrollments, setEn
     .filter(Boolean)
     .sort((a,b) => getName(a.student.id).localeCompare(getName(b.student.id)) || (a.enr.startDate||"").localeCompare(b.enr.startDate||""));
 
-  const updateEnrollExtra = (enrId, key, val) => {
-    setEnrollments(es => es.map(e => e.id===enrId ? {...e, [key]:val} : e));
+  // Bug fix: the same enrollment could show up as several IDENTICAL rows when
+  // duplicate enrollment records exist (same student + course + dates + paid
+  // sessions — e.g. saved twice). Rows that are indistinguishable in every
+  // column are collapsed into one (edits to 介紹人／學費收益 apply to all of
+  // them so nothing diverges), and a notice shows how many were merged.
+  const _seenRows = new Map();
+  overviewRowsRaw.forEach(r => {
+    const ds = (r.enr.scheduledDates||[]).map(x=>x.date).filter(Boolean).sort();
+    const key = [r.enr.studentId, r.enr.courseId, r.enr.startDate||"", r.enr.payDate||"", r.enr.totalSessions||"", ds.length, ds[0]||"", ds[ds.length-1]||"", r.enr.status||""].join("|");
+    if (_seenRows.has(key)) _seenRows.get(key).dupIds.push(r.enr.id);
+    else { r.dupIds = []; _seenRows.set(key, r); }
+  });
+  const overviewRows = [..._seenRows.values()];
+  const mergedDupCount = overviewRowsRaw.length - overviewRows.length;
+  // Two DIFFERENT student accounts with the same display name look like a
+  // duplicated student — show the @username to tell them apart.
+  const studentNameCount = {};
+  students.forEach(u => { studentNameCount[u.name] = (studentNameCount[u.name]||0)+1; });
+
+  const updateEnrollExtra = (enrIds, key, val) => {
+    const ids = Array.isArray(enrIds) ? enrIds : [enrIds];
+    setEnrollments(es => es.map(e => ids.includes(e.id) ? {...e, [key]:val} : e));
   };
 
   return (
@@ -4663,6 +4869,11 @@ function StudentStats({ users, courses, absences, attendance, enrollments, setEn
             <h3 style={{fontSize:15,fontWeight:600,color:"#172F39",margin:0}}>{lang==="zh"?"學生總表":"Student Overview"}</h3>
             <span style={{fontSize:12,color:"#9E9E9E"}}>{lang==="zh"?`共 ${overviewRows.length} 筆排課週期`:`${overviewRows.length} enrollment cycle(s)`}</span>
           </div>
+          {mergedDupCount>0 && (
+            <div style={{background:"#FFF8E1",border:"1px solid #FFE082",borderRadius:7,padding:"7px 12px",marginBottom:10,fontSize:12,color:"#8D6E00"}}>
+              ⚠️ {lang==="zh"?`偵測到 ${mergedDupCount} 筆內容完全相同的重複排課資料，已合併顯示（可至「付費與排課」確認並刪除多餘的）。`:`${mergedDupCount} exact-duplicate enrollment record(s) detected and merged in this view (check 付費與排課 to remove the extras).`}
+            </div>
+          )}
           {overviewRows.length===0 ? (
             <p style={{color:"#9E9E9E",fontSize:13,textAlign:"center",padding:"2rem 0"}}>—</p>
           ) : (
@@ -4686,6 +4897,9 @@ function StudentStats({ users, courses, absences, attendance, enrollments, setEn
                         <button onClick={()=>{setSelId(row.student.id);setViewMode("detail");}} style={{background:"transparent",border:"none",color:"#1A6B8A",cursor:"pointer",fontWeight:600,fontSize:12,padding:0,textDecoration:"underline"}}>
                           {row.student.name}
                         </button>
+                        {studentNameCount[row.student.name]>1 && <span style={{marginLeft:5,fontSize:10,color:"#9E9E9E"}}>@{row.student.username}</span>}
+                        {row.enr.status==="discontinued" && <span style={{marginLeft:5,fontSize:10,background:"#ECEFF1",color:"#546E7A",borderRadius:4,padding:"1px 6px"}}>{lang==="zh"?"已中斷":"Stopped"}</span>}
+                        {(row.enr.isTrial||row.course.isTrial) && <span style={{marginLeft:5,fontSize:10,background:"#FFF3E0",color:"#E65100",borderRadius:4,padding:"1px 6px"}}>{lang==="zh"?"試聽":"Trial"}</span>}
                       </td>
                       <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}>{row.nameCn||"—"}</td>
                       <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}>{row.age||"—"}</td>
@@ -4704,7 +4918,7 @@ function StudentStats({ users, courses, absences, attendance, enrollments, setEn
                       <td style={{padding:"4px 6px",whiteSpace:"nowrap"}}>
                         <input
                           defaultValue={row.enr.referrer||""}
-                          onBlur={e=>{ if(e.target.value!==(row.enr.referrer||"")) updateEnrollExtra(row.enr.id,"referrer",e.target.value); }}
+                          onBlur={e=>{ if(e.target.value!==(row.enr.referrer||"")) updateEnrollExtra([row.enr.id,...row.dupIds],"referrer",e.target.value); }}
                           placeholder={lang==="zh"?"選填":"optional"}
                           style={{width:80,boxSizing:"border-box",padding:"5px 7px",borderRadius:5,border:"0.5px solid #E0E0E0",background:"#FAFAFA",fontSize:12,color:"#172F39"}}
                         />
@@ -4712,7 +4926,7 @@ function StudentStats({ users, courses, absences, attendance, enrollments, setEn
                       <td style={{padding:"4px 6px",whiteSpace:"nowrap"}}>
                         <input
                           defaultValue={row.enr.tuitionRevenue||""}
-                          onBlur={e=>{ if(e.target.value!==(row.enr.tuitionRevenue||"")) updateEnrollExtra(row.enr.id,"tuitionRevenue",e.target.value); }}
+                          onBlur={e=>{ if(e.target.value!==(row.enr.tuitionRevenue||"")) updateEnrollExtra([row.enr.id,...row.dupIds],"tuitionRevenue",e.target.value); }}
                           placeholder={lang==="zh"?"選填":"optional"}
                           style={{width:80,boxSizing:"border-box",padding:"5px 7px",borderRadius:5,border:"0.5px solid #E0E0E0",background:"#FAFAFA",fontSize:12,color:"#172F39"}}
                         />
@@ -7643,6 +7857,12 @@ function TeacherDirectory({ users, setUsers, lang, setToast, hideSalary, readOnl
                 <input style={iStyle} value={addForm[k]||""} onChange={e=>setAddForm(f=>({...f,[k]:e.target.value}))} placeholder={ph}/>
               </div>
             ))}
+            {!hideSalary && (
+              <div>
+                <label style={lStyle}>{lang==="zh"?"GCash 收款帳號（選填）":"GCash Number (optional)"}</label>
+                <input style={iStyle} value={addForm.gcash||""} onChange={e=>setAddForm(f=>({...f,gcash:e.target.value}))} placeholder="09XX XXX XXXX"/>
+              </div>
+            )}
             <div>
               <label style={lStyle}>{lang==="zh"?"連結帳號（選填）":"Link Account (optional)"}</label>
               <select style={iStyle} value={addForm.linkedUserId||""} onChange={e=>setAddForm(f=>({...f,linkedUserId:e.target.value}))}>
@@ -7750,6 +7970,12 @@ function TeacherDirectory({ users, setUsers, lang, setToast, hideSalary, readOnl
                       </tr>
                       <tr key={entryId+"_bio"} style={{background:"#EEF6FB"}}>
                         <td colSpan={7} style={{...tdStyle,paddingTop:0}}>
+                          {!hideSalary && (
+                            <div style={{marginBottom:8,maxWidth:280}}>
+                              <label style={{fontSize:11,color:"#546E7A"}}>💳 {lang==="zh"?"GCash 收款帳號":"GCash Number"}</label>
+                              {inEd("gcash","09XX XXX XXXX")}
+                            </div>
+                          )}
                           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
                             <label style={{fontSize:11,color:"#546E7A"}}>{t.teacherBio}</label>
                             <button onClick={()=>setEditForm(f=>({...f,bio:DEFAULT_TEACHER_BIO[lang]||DEFAULT_TEACHER_BIO.en}))} style={{fontSize:10,padding:"2px 8px",borderRadius:4,border:"0.5px solid #1A6B8A",background:"transparent",color:"#1A6B8A",cursor:"pointer"}}>
@@ -7786,6 +8012,7 @@ function TeacherDirectory({ users, setUsers, lang, setToast, hideSalary, readOnl
                             <div style={{fontSize:10,color:lastPaid?"#546E7A":"#9E9E9E",marginBottom:4}}>
                               {lang==="zh"?"上次付款：":"Last paid: "}{lastPaid||"—"}
                             </div>
+                            <div style={{fontSize:10,color:d.gcash?"#546E7A":"#B0BEC5",marginBottom:4}}>💳 GCash: {d.gcash||(lang==="zh"?"未填":"not set")}</div>
                             <button onClick={()=>setSalaryTarget({id:entryId,nameEn:d.nameEn,linkedUserId:d.linkedUserId})} style={{fontSize:11,padding:"4px 10px",borderRadius:5,border:"0.5px solid #2E7D32",background:"transparent",color:"#2E7D32",cursor:"pointer",fontWeight:500}}>
                               💰 {t.salaryManage}
                             </button>
@@ -8408,7 +8635,7 @@ function TrialApplicationsPanel({ users, setUsers, lang, setToast, trialApplicat
 }
 
 
-function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, lang, setToast, introText, setIntroText, feedback, setFeedback, teacherAvailability, setTeacherAvailability, availabilityOverrides, setAvailabilityOverrides, profileChanges, setProfileChanges, onImpersonate, trialApplications, setTrialApplications, englishLevels, setEnglishLevels, learningPurposes, setLearningPurposes, initialTab, currentUser, studentMatSubs, setStudentMatSubs }) {
+function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, lang, setToast, introText, setIntroText, feedback, setFeedback, teacherAvailability, setTeacherAvailability, availabilityOverrides, setAvailabilityOverrides, profileChanges, setProfileChanges, onImpersonate, trialApplications, setTrialApplications, englishLevels, setEnglishLevels, learningPurposes, setLearningPurposes, initialTab, currentUser, studentMatSubs, setStudentMatSubs, teacherGuidelines, setTeacherGuidelines }) {
   const t = T[lang];
   const [tab, setTab] = useState(initialTab || "courses");
   const pendingFbCount = (feedback||[]).filter(f=>f.status==="pending").length;
@@ -8426,9 +8653,10 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
     {key:"availability", label:t.availability},
     {key:"peopledir", label:t.peopleDir, badge:pendingChangeCount},
     {key:"trial", label:lang==="zh"?"試聽申請":"Trial Applications", badge:pendingTrialCount},
-    {key:"users",   label:t.manageUsers},
+    {key:"users",   label:t.manageUsers, badge:(users||[]).filter(u=>u.suspended && u.resumeRequest?.date).length},
     {key:"sstats",  label:t.studentStats},
     {key:"studentOverview", label:lang==="zh"?"任教學生總覽":"Student Overview"},
+    {key:"teacherGuidelines",label:lang==="zh"?"老師守則":"Teacher Guidelines"},
     {key:"settings",label:lang==="zh"?"網站設定":"Site Settings"},
   ];
   return (
@@ -8454,6 +8682,7 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
       {tab==="users"  &&<UserManager users={users} setUsers={setUsers} lang={lang} setToast={setToast} onImpersonate={onImpersonate}/>}
       {tab==="sstats" &&<StudentStats users={users} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} setEnrollments={setEnrollments} lang={lang}/>}
       {tab==="studentOverview" &&<AdminStudentOverview currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} materials={materials} setMaterials={setMaterials} feedback={feedback} setFeedback={setFeedback} attendance={attendance} absences={absences} lang={lang} setToast={setToast}/>}
+      {tab==="teacherGuidelines"&&<TeacherGuidelinesEditor teacherGuidelines={teacherGuidelines} setTeacherGuidelines={setTeacherGuidelines} lang={lang} setToast={setToast}/>}
       {tab==="settings"&&<SiteSettings introText={introText} setIntroText={setIntroText} lang={lang} setToast={setToast}/>}
     </div>
   );
@@ -8506,6 +8735,40 @@ function AssistantPanel({ users, setUsers, courses, setCourses, materials, setMa
 // one click to Approve (becomes visible to the student) or Reject.
 // Compute completed sessions that have no feedback entry at all yet (excludes
 // sessions marked absent/excused/teacher_leave, since feedback isn't expected there)
+// Enrollments whose LAST scheduled session ends within `withinDays` from now
+// (and hasn't ended yet). Skips discontinued enrollments, archived courses,
+// trial lessons, and cycles already renewed by a later enrollment for the
+// same student + course. Sorted soonest-ending first.
+function computeEndingSoon(courses, enrollments, withinDays) {
+  const now = Date.now();
+  const lastEndOf = (enr, course) => {
+    let best = null;
+    (enr.scheduledDates||[]).forEach(s => {
+      if (!s.date) return;
+      const [h,m] = (resolveSessionStart(course, s)||"00:00").split(":").map(Number);
+      const st = new Date(s.date+"T00:00:00"); st.setHours(h||0, m||0, 0, 0);
+      const end = st.getTime() + (course.duration||50)*60000;
+      if (best===null || end>best) best = end;
+    });
+    return best;
+  };
+  const list = [];
+  (enrollments||[]).forEach(enr => {
+    const course = (courses||[]).find(c=>c.id===enr.courseId);
+    if (!course || course.status==="archived" || course.isTrial || enr.isTrial || enr.status==="discontinued") return;
+    const end = lastEndOf(enr, course);
+    if (end===null) return;
+    const renewed = (enrollments||[]).some(o => o.id!==enr.id && o.courseId===enr.courseId && o.studentId===enr.studentId
+      && o.status!=="discontinued" && (lastEndOf(o, course)||0) > end);
+    if (renewed) return;
+    if (end > now && end - now <= withinDays*86400000) {
+      const lastDate = [...(enr.scheduledDates||[])].map(x=>x.date).sort().slice(-1)[0];
+      list.push({ enrollment: enr, course, endMs: end, lastDate, daysLeft: Math.ceil((end-now)/86400000) });
+    }
+  });
+  return list.sort((a,b)=>a.endMs-b.endMs);
+}
+
 function computeMissingFeedback(courses, enrollments, feedback, attendance, absences) {
   const missing = [];
   (enrollments||[]).forEach(enr => {
@@ -9449,6 +9712,66 @@ function SiteSettings({ introText, setIntroText, lang, setToast }) {
           </button>
         {dirty && <span style={{fontSize:11,color:"#E65100"}}>{lang==="zh"?"尚未儲存":"Unsaved changes"}</span>}
       </div>
+    </div>
+  );
+}
+
+// ─── Teacher Guidelines (老師守則) — admin edits & previews before
+// publishing; teachers see the published version in their own sidebar. ─────
+function TeacherGuidelinesEditor({ teacherGuidelines, setTeacherGuidelines, lang, setToast }) {
+  const [draft, setDraft] = useState(teacherGuidelines||"");
+  const [previewing, setPreviewing] = useState(false);
+  useEffect(()=>{ setDraft(teacherGuidelines||""); }, [teacherGuidelines]);
+  const dirty = draft !== (teacherGuidelines||"");
+  const publish = () => {
+    setTeacherGuidelines(draft);
+    setToast(lang==="zh"?"已發布，老師端會立即看到最新內容":"Published — teachers will see the update immediately");
+    setPreviewing(false);
+  };
+  return (
+    <div>
+      <h3 style={{fontSize:15,fontWeight:600,color:"#172F39",margin:"0 0 4px"}}>{lang==="zh"?"老師守則":"Teacher Guidelines"}</h3>
+      <p style={{fontSize:12,color:"#9E9E9E",margin:"0 0 12px"}}>
+        {lang==="zh"
+          ? "顯示在老師端側邊欄專屬分頁的公告內容（例如上課規範、注意事項）。編輯後請先預覽，確認沒問題再發布。"
+          : "Shown in a dedicated sidebar tab on the teacher side (e.g. class rules, things to keep in mind). Preview before publishing to make sure it reads the way you want."}
+      </p>
+
+      {!previewing ? (
+        <>
+          <textarea
+            value={draft}
+            onChange={e=>{setDraft(e.target.value);}}
+            rows={12}
+            placeholder={lang==="zh"?"例如：\n1. 請提前 5 分鐘登入準備上課\n2. 每堂課結束後 24 小時內完成課後反饋\n3. 如需請假請提前告知管理員":"e.g.:\n1. Please log in 5 minutes before class\n2. Submit feedback within 24 hours of each class\n3. Notify admin in advance for any leave"}
+            style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,border:"0.5px solid #CFD8DC",background:"#FFFFFF",color:"#172F39",fontSize:13,lineHeight:1.7,resize:"vertical",fontFamily:"inherit"}}
+          />
+          <div style={{display:"flex",gap:8,marginTop:10,alignItems:"center"}}>
+            <button onClick={()=>setPreviewing(true)} disabled={!draft.trim()} style={{padding:"8px 20px",borderRadius:7,background:draft.trim()?"#1A6B8A":"#E0E0E0",border:"none",color:draft.trim()?"#fff":"#9E9E9E",fontSize:13,fontWeight:500,cursor:draft.trim()?"pointer":"not-allowed"}}>
+              🔍 {lang==="zh"?"預覽":"Preview"}
+            </button>
+            {dirty && <span style={{fontSize:11,color:"#E65100"}}>{lang==="zh"?"尚未發布":"Not published yet"}</span>}
+          </div>
+        </>
+      ) : (
+        <>
+          <div style={{fontSize:11,color:"#546E7A",marginBottom:8}}>
+            {lang==="zh"?"以下是老師端會看到的樣子：":"This is what teachers will see:"}
+          </div>
+          <div style={{background:"#FAFAFA",border:"0.5px solid #E0E0E0",borderRadius:10,padding:"18px 20px",marginBottom:14}}>
+            <div style={{fontSize:14,fontWeight:600,color:"#172F39",marginBottom:10}}>📋 {lang==="zh"?"老師守則":"Teacher Guidelines"}</div>
+            <div style={{fontSize:13,color:"#172F39",lineHeight:1.8,whiteSpace:"pre-wrap"}}>{draft}</div>
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={publish} style={{padding:"9px 20px",borderRadius:7,background:"#4CAF50",border:"none",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+              ✓ {lang==="zh"?"確認發布":"Confirm & Publish"}
+            </button>
+            <button onClick={()=>setPreviewing(false)} style={{padding:"9px 16px",borderRadius:7,background:"transparent",border:"0.5px solid #CFD8DC",color:"#546E7A",fontSize:13,cursor:"pointer"}}>
+              {lang==="zh"?"返回編輯":"Back to Edit"}
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -11760,7 +12083,7 @@ function StudentTeacherIntroPanel({ currentUser, users, courses, teacherDirEntri
   );
 }
 
-function StudentTeacherLayout({ currentUser, users, setUsers, courses, setCourses, lang, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, setToast, feedback, setFeedback, teacherAvailability, setTeacherAvailability, availabilityOverrides, setAvailabilityOverrides, profileChanges, setProfileChanges, dirEntries, saveDirEntries, dirLoaded, teacherDirEntries, saveTeacherDirEntries, teacherDirLoaded, trialApplications, setTrialApplications, englishLevels, learningPurposes, sideTabRequest, studentMatSubs, setStudentMatSubs }) {
+function StudentTeacherLayout({ currentUser, users, setUsers, courses, setCourses, lang, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, setToast, feedback, setFeedback, teacherAvailability, setTeacherAvailability, availabilityOverrides, setAvailabilityOverrides, profileChanges, setProfileChanges, dirEntries, saveDirEntries, dirLoaded, teacherDirEntries, saveTeacherDirEntries, teacherDirLoaded, trialApplications, setTrialApplications, englishLevels, learningPurposes, sideTabRequest, studentMatSubs, setStudentMatSubs, teacherGuidelines }) {
   const t = T[lang];
   const isStudent = currentUser.role==="student";
   const isTeacher = currentUser.role==="teacher";
@@ -11805,6 +12128,7 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, setCourse
         ...(currentUser.canUseStudentOverview ? [{ key:"studentOverview", icon:"📊", zh:"任教學生總覽", en:"Student Overview" }] : []),
         { key:"availability",  icon:"🗓", zh:"可安排時段", en:"Availability" },
         ...(currentUser.canAssist ? [{ key:"assistantTools", icon:"🛠", zh:"助教工具", en:"Assistant Tools" }] : []),
+        { key:"guidelines",    icon:"📋", zh:"老師守則", en:"Teacher Guidelines" },
         { key:"settings",      icon:"⚙️", zh:"基本資訊與設定", en:"Basic Info & Settings" },
         { key:"schedule_side", icon:"📅", zh:"課表",     en:"Schedule"   },
       ];
@@ -11922,6 +12246,20 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, setCourse
             : isTeacher && currentUser.canAssist && sideTab==="assistantTools"
               ? <div style={{padding:"1.5rem"}}>
                   <AssistantPanel users={users} setUsers={setUsers} courses={courses} setCourses={setCourses} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} lang={lang} setToast={setToast} currentUser={currentUser} feedback={feedback} setFeedback={setFeedback} teacherAvailability={teacherAvailability} setTeacherAvailability={setTeacherAvailability} availabilityOverrides={availabilityOverrides} setAvailabilityOverrides={setAvailabilityOverrides} absences={absences} trialApplications={trialApplications} setTrialApplications={setTrialApplications} englishLevels={englishLevels} learningPurposes={learningPurposes}/>
+                </div>
+            : isTeacher && sideTab==="guidelines"
+              ? <div style={{padding:"1.5rem 1rem"}}>
+                  {teacherGuidelines && teacherGuidelines.trim() ? (
+                    <div style={{background:"#FFFFFF",border:"0.5px solid #E0E0E0",borderRadius:10,padding:"18px 20px"}}>
+                      <div style={{fontSize:14,fontWeight:600,color:"#172F39",marginBottom:10}}>📋 {lang==="zh"?"老師守則":"Teacher Guidelines"}</div>
+                      <div style={{fontSize:13,color:"#172F39",lineHeight:1.8,whiteSpace:"pre-wrap"}}>{teacherGuidelines}</div>
+                    </div>
+                  ) : (
+                    <div style={{textAlign:"center",padding:"2.5rem 0",color:"#9E9E9E"}}>
+                      <div style={{fontSize:28,marginBottom:8}}>📋</div>
+                      <div style={{fontSize:13}}>{lang==="zh"?"目前尚未發布內容":"Nothing published yet"}</div>
+                    </div>
+                  )}
                 </div>
             : isTeacher && sideTab==="settings"
               ? <StudentSettingsPanel currentUser={currentUser} users={users} setUsers={setUsers} dirEntries={teacherDirEntries} saveDirEntries={saveTeacherDirEntries} dirLoaded={teacherDirLoaded} profileChanges={profileChanges} setProfileChanges={setProfileChanges} lang={lang} setToast={setToast} role="teacher"/>
@@ -12107,6 +12445,8 @@ export default function App() {
   // reliable way (single shared state, not a separate self-fetch copy).
   const [teacherDirEntries,setTeacherDirEntries,tdLoaded]=useStorage("cp3_teacher_dir",[]);
   const [introText,setIntroText,introLoaded]=useStorage("cp3_intro_text","");
+  const [teacherGuidelines,setTeacherGuidelines]=useStorage("cp3_teacher_guidelines","");
+  const [endingAlertDays,setEndingAlertDays]=useStorage("cp3_ending_alert_days",7);
   // Trial-lesson applications submitted from the public login page, plus the
   // two admin-editable dropdown option lists used on that form.
   const [trialApplications,setTrialApplications,trialLoaded]=useStorage("cp3_trial_applications",[]);
@@ -12151,6 +12491,9 @@ export default function App() {
   const globalMissingFeedback = (isTeacherRole||isAdmin||isAssistant)
     ? computeMissingFeedback(courses, enrollments, feedback, attendance, absences).filter(m => isTeacherRole ? m.course.teacherId===currentUser.id : true)
     : [];
+  const endingSoonList = isAdmin ? computeEndingSoon(courses, enrollments, Number(endingAlertDays)||7) : [];
+  const endingBannerH = endingSoonList.length>0 ? 40 : 0;
+  const goToEnrollmentReminder = () => { setActiveTab("admin"); setAdminInitialTab("enroll"); };
   const goToFeedbackReminder = () => {
     if (isAdmin) { setActiveTab("admin"); setAdminInitialTab("feedback"); }
     else if (isAssistant) { setActiveTab("assistant"); }
@@ -12181,6 +12524,17 @@ export default function App() {
     setActiveTab("admin");
     setAdminInitialTab("users");
   };
+
+  // Suspended accounts (admin-set) get ONLY the blocking notice — read from the
+  // live users list so a suspension applies even to an already-open session.
+  // Admins are never blockable; an admin "viewing as" someone bypasses it so the
+  // return-to-admin banner stays reachable.
+  const liveCurrentUser = users.find(u=>u.id===currentUser.id) || currentUser;
+  if (liveCurrentUser.suspended && liveCurrentUser.role!=="admin" && !impersonatorAdmin) {
+    return <SuspendedScreen user={liveCurrentUser} lang={lang} setLang={setLang}
+      onLogout={()=>{setCurrentUser(null);setImpersonatorAdmin(null);}}
+      onResumeRequest={(date)=>{ setUsers(prev => prev.map(u => u.id===liveCurrentUser.id ? {...u, resumeRequest:{date, at:new Date().toISOString()}} : u)); }}/>;
+  }
 
   return (
     <div className="es-app-root" style={{minHeight:"100vh",background:"#FAFAFA",fontFamily:"system-ui, -apple-system, sans-serif",overflowX:"hidden"}}>
@@ -12219,8 +12573,19 @@ export default function App() {
           </button>
         </div>
       )}
+      {endingSoonList.length > 0 && (
+        <div style={{background:"#B71C1C",color:"#fff",padding:"8px 1.25rem",display:"flex",alignItems:"center",justifyContent:"center",gap:10,flexWrap:"wrap",fontSize:13,fontWeight:600,position:"sticky",top:58+(impersonatorAdmin?48:0),zIndex:101,borderBottom:"2px solid #FF8A80",minHeight:40,boxSizing:"border-box"}}>
+          <span>🚨 {lang==="zh"
+            ? `${endingSoonList.length} 位學生的課程即將結束：${endingSoonList.slice(0,3).map(x=>`${(users.find(u=>u.id===x.enrollment.studentId)||{}).name||"?"}（${x.lastDate}，剩 ${x.daysLeft} 天）`).join("、")}${endingSoonList.length>3?" …":""}，請盡快聯繫續約`
+            : `${endingSoonList.length} student course(s) ending soon: ${endingSoonList.slice(0,3).map(x=>`${(users.find(u=>u.id===x.enrollment.studentId)||{}).name||"?"} (${x.lastDate}, ${x.daysLeft}d left)`).join(", ")}${endingSoonList.length>3?" …":""} — follow up on renewal`}</span>
+          <button onClick={goToEnrollmentReminder} style={{background:"#fff",color:"#B71C1C",border:"none",borderRadius:5,padding:"3px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>{lang==="zh"?"前往處理 →":"Go →"}</button>
+          <select value={endingAlertDays} onChange={e=>setEndingAlertDays(Number(e.target.value))} title={lang==="zh"?"提前提醒天數":"Alert window"} style={{fontSize:11,borderRadius:4,border:"none",padding:"2px 4px"}}>
+            {[3,7,10,14,21].map(n=><option key={n} value={n}>{lang==="zh"?`提前 ${n} 天`:`${n} days ahead`}</option>)}
+          </select>
+        </div>
+      )}
       {globalMissingFeedback.length > 0 && (
-        <div style={{background:"#FFF3E0",color:"#E65100",padding:"7px 1.25rem",display:"flex",alignItems:"center",justifyContent:"center",gap:10,flexWrap:"wrap",fontSize:12,position:"sticky",top:impersonatorAdmin?106:58,zIndex:98,borderBottom:"1px solid #FFCC80"}}>
+        <div style={{background:"#FFF3E0",color:"#E65100",padding:"7px 1.25rem",display:"flex",alignItems:"center",justifyContent:"center",gap:10,flexWrap:"wrap",fontSize:12,position:"sticky",top:(impersonatorAdmin?106:58)+endingBannerH,zIndex:98,borderBottom:"1px solid #FFCC80"}}>
           <span>⚠️ {isTeacherRole
             ? (lang==="zh"?`你有 ${globalMissingFeedback.length} 堂課尚未填寫課後反饋`:`You have ${globalMissingFeedback.length} session(s) still needing feedback`)
             : (lang==="zh"?`全站共有 ${globalMissingFeedback.length} 堂課尚未填寫課後反饋`:`${globalMissingFeedback.length} session(s) across all classes still need feedback`)}</span>
@@ -12230,7 +12595,7 @@ export default function App() {
         </div>
       )}
       {newStudentLeaveCount > 0 && (
-        <div style={{background:"#E3F2FD",color:"#1565C0",padding:"7px 1.25rem",display:"flex",alignItems:"center",justifyContent:"center",gap:10,flexWrap:"wrap",fontSize:12,position:"sticky",top:58+(impersonatorAdmin?48:0)+(globalMissingFeedback.length>0?36:0),zIndex:97,borderBottom:"1px solid #90CAF9"}}>
+        <div style={{background:"#E3F2FD",color:"#1565C0",padding:"7px 1.25rem",display:"flex",alignItems:"center",justifyContent:"center",gap:10,flexWrap:"wrap",fontSize:12,position:"sticky",top:58+(impersonatorAdmin?48:0)+endingBannerH+(globalMissingFeedback.length>0?36:0),zIndex:97,borderBottom:"1px solid #90CAF9"}}>
           <span>🔔 {lang==="zh"?`有 ${newStudentLeaveCount} 筆學生請假通知（無須審核，僅供知悉）`:`${newStudentLeaveCount} new student leave notice(s) (no action needed, awareness only)`}</span>
           {isAdmin && (
             <button onClick={goToLeaveReminder} style={{background:"#1565C0",color:"#fff",border:"none",borderRadius:5,padding:"3px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
@@ -12259,7 +12624,7 @@ export default function App() {
         {isAdmin && (
           <div className="es-content-card" style={{background:"#FFFFFF",borderRadius:14,border:"0.5px solid #E0E0E0",boxShadow:"0 2px 12px rgba(23,47,57,0.06)",padding:"1.5rem"}}>
             {activeTab==="schedule"&&<ScheduleView currentUser={currentUser} users={users} courses={courses} lang={lang} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} setToast={setToast} feedback={feedback} setFeedback={setFeedback}/>}
-            {activeTab==="admin"&&<AdminPanel users={users} setUsers={setUsers} courses={courses} setCourses={setCourses} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} lang={lang} setToast={setToast} introText={introText} setIntroText={setIntroText} feedback={feedback} setFeedback={setFeedback} teacherAvailability={teacherAvailability} setTeacherAvailability={setTeacherAvailability} availabilityOverrides={availabilityOverrides} setAvailabilityOverrides={setAvailabilityOverrides} profileChanges={profileChanges} setProfileChanges={setProfileChanges} onImpersonate={startImpersonating} trialApplications={trialApplications} setTrialApplications={setTrialApplications} englishLevels={englishLevels} setEnglishLevels={setEnglishLevels} learningPurposes={learningPurposes} setLearningPurposes={setLearningPurposes} initialTab={adminInitialTab} currentUser={currentUser} studentMatSubs={studentMatSubs} setStudentMatSubs={setStudentMatSubs}/>}
+            {activeTab==="admin"&&<AdminPanel users={users} setUsers={setUsers} courses={courses} setCourses={setCourses} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} lang={lang} setToast={setToast} introText={introText} setIntroText={setIntroText} feedback={feedback} setFeedback={setFeedback} teacherAvailability={teacherAvailability} setTeacherAvailability={setTeacherAvailability} availabilityOverrides={availabilityOverrides} setAvailabilityOverrides={setAvailabilityOverrides} profileChanges={profileChanges} setProfileChanges={setProfileChanges} onImpersonate={startImpersonating} trialApplications={trialApplications} setTrialApplications={setTrialApplications} englishLevels={englishLevels} setEnglishLevels={setEnglishLevels} learningPurposes={learningPurposes} setLearningPurposes={setLearningPurposes} initialTab={adminInitialTab} currentUser={currentUser} studentMatSubs={studentMatSubs} setStudentMatSubs={setStudentMatSubs} teacherGuidelines={teacherGuidelines} setTeacherGuidelines={setTeacherGuidelines}/>}
           </div>
         )}
 
@@ -12289,6 +12654,7 @@ export default function App() {
             englishLevels={englishLevels} learningPurposes={learningPurposes}
             sideTabRequest={sideTabRequest}
             studentMatSubs={studentMatSubs} setStudentMatSubs={setStudentMatSubs}
+            teacherGuidelines={teacherGuidelines}
             setToast={setToast}
           />
         )}
