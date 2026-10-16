@@ -501,7 +501,7 @@ const TRIAL_COLOR = {bg:"#FFFDE7",border:"#F9A825",text:"#F57F17"};
 // Bumped whenever a meaningful set of changes ships. Shown low-key on the
 // login page so version can be confirmed at a glance; also called out
 // whenever a new file is delivered.
-const APP_VERSION = "v1.2.9.2";
+const APP_VERSION = "v1.2.9.3";
 
 const genId = () => "id_" + Math.random().toString(36).slice(2,9);
 
@@ -979,15 +979,50 @@ function AbsenceModal({ course, dayIndex, resolvedStart, users, lang, currentUse
 }
 
 // ─── Confirm Modal ────────────────────────────────────────────────────────────
+// ─── Recycle bin (30-day soft delete) ─────────────────────────────────────────
+// Deleting an enrollment / course first copies everything it is about to remove
+// into cp3_recycle_bin (read-modify-write straight against storage, so it can
+// never overwrite the bin with a stale copy). Entries expire after 30 days.
+const RECYCLE_DAYS = 30;
+async function recycleBinPush(items) {
+  let cur = [];
+  try { const r = await window.storage.get("cp3_recycle_bin"); if (r?.value) cur = JSON.parse(r.value); } catch {}
+  const now = Date.now();
+  cur = cur.filter(x => x.expiresAt > now);
+  const stamped = items.map(it => ({ ...it, id: it.id || genId(), deletedAt: new Date(now).toISOString(), expiresAt: now + RECYCLE_DAYS*86400000 }));
+  const res = await window.storage.set("cp3_recycle_bin", JSON.stringify([...stamped, ...cur]));
+  if (!res) throw new Error("recycle bin save failed");
+  try { window.dispatchEvent(new Event("cp3-bin-changed")); } catch {}
+}
+// Compact "what will be affected" list for the delete-confirm dialogs.
+function ImpactList({ lang, deletes, keeps }) {
+  const zh = lang==="zh";
+  return (
+    <div style={{fontSize:12.5,lineHeight:1.65}}>
+      <div style={{background:"#FFEBEE",border:"1px solid #EF9A9A",borderRadius:8,padding:"8px 11px",marginBottom:8}}>
+        <div style={{fontWeight:700,color:"#C62828",marginBottom:2}}>{zh?"🗑 將一併移除：":"🗑 Will be removed:"}</div>
+        {deletes.map((d,i)=><div key={i} style={{color:"#172F39"}}>• {d}</div>)}
+      </div>
+      {keeps.length>0 && (
+        <div style={{background:"#E8F5E9",border:"1px solid #A5D6A7",borderRadius:8,padding:"8px 11px",marginBottom:8}}>
+          <div style={{fontWeight:700,color:"#2E7D32",marginBottom:2}}>{zh?"✅ 不受影響：":"✅ Not affected:"}</div>
+          {keeps.map((d,i)=><div key={i} style={{color:"#172F39"}}>• {d}</div>)}
+        </div>
+      )}
+      <div style={{color:"#546E7A",fontSize:12}}>♻️ {zh?`刪除後會先放進「回收桶」，${RECYCLE_DAYS} 天內可以在 後台管理 → 回收桶 還原。`:`Deleted items go to the Recycle Bin first and can be restored within ${RECYCLE_DAYS} days (Admin → Recycle Bin).`}</div>
+    </div>
+  );
+}
+
 function ConfirmModal({ title, message, confirmLabel, onConfirm, onCancel, danger }) {
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:99999,padding:"1rem"}}>
-      <div style={{background:"#FFFFFF",borderRadius:12,width:"100%",maxWidth:360,boxSizing:"border-box",boxShadow:"0 8px 32px rgba(23,47,57,0.18)",overflow:"hidden"}}>
+      <div style={{background:"#FFFFFF",borderRadius:12,width:"100%",maxWidth:400,boxSizing:"border-box",boxShadow:"0 8px 32px rgba(23,47,57,0.18)",overflow:"hidden",maxHeight:"90vh",overflowY:"auto"}}>
         <div style={{background:"#172F39",padding:"13px 18px"}}>
           <span style={{fontSize:14,fontWeight:600,color:"#FFFFFF"}}>{title || "確認"}</span>
         </div>
         <div style={{padding:"18px 18px 14px"}}>
-          <p style={{margin:"0 0 18px",fontSize:14,color:"#172F39",lineHeight:1.6}}>{message}</p>
+          <div style={{margin:"0 0 18px",fontSize:14,color:"#172F39",lineHeight:1.6}}>{message}</div>
           <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
             <button onClick={onCancel} style={{padding:"8px 18px",borderRadius:7,border:"0.5px solid #CFD8DC",background:"#F5F5F5",color:"#546E7A",fontSize:13,cursor:"pointer"}}>
               取消 / Cancel
@@ -1502,6 +1537,31 @@ function MaterialPanel({ course, initialDate, users, lang, currentUser, material
 }
 
 // ─── Course Detail Modal ──────────────────────────────────────────────────────
+// ─── Class-info copy template (separator lines + rotating closing greetings) ──
+const CLASS_INFO_DEFAULT = {
+  header: "===== ES English Today =====",
+  footer: "========================",
+  greetings: [
+    "Let's have a great class together! 上課順利！",
+    "Wishing you a fun and productive class! 祝你上課愉快、學習順利！",
+    "Have a wonderful lesson today! 今天也要開心學習喔！",
+    "Enjoy your class and keep up the great work! 享受課堂，繼續加油！",
+    "See you in class — let's learn something new today! 課堂見，一起學點新東西吧！",
+    "Happy learning! Have a great lesson! 學習愉快，上課順利！",
+    "Ready, set, learn! Have an awesome class! 準備好了嗎？祝你上課精彩！",
+    "Every lesson is a step forward — enjoy it! 每一堂課都是進步，好好享受吧！",
+  ],
+};
+// Stable per-session pick: the same class always gets the same greeting (so the
+// preview and the copied text never disagree), different classes vary.
+function pickGreetingIndex(list, seedStr) {
+  if (!list.length) return 0;
+  let h = 2166136261; // FNV-1a + final avalanche, so near-identical seeds (consecutive dates) still spread evenly
+  for (let i=0;i<seedStr.length;i++) { h ^= seedStr.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  h ^= h >>> 16; h = Math.imul(h, 2246822507) >>> 0; h ^= h >>> 13; h = Math.imul(h, 3266489909) >>> 0; h ^= h >>> 16;
+  return (h >>> 0) % list.length;
+}
+
 function CourseDetailModal({ course, dayIndex, date, sessionNo, users, lang, materials, setMaterials, onClose, currentUser, enrollments, attendance, absences, setToast }) {
   const t = T[lang];
   const teacher = users.find(u=>u.id===course.teacherId);
@@ -1528,6 +1588,17 @@ function CourseDetailModal({ course, dayIndex, date, sessionNo, users, lang, mat
     .sort((a,b)=>(b.date||"").localeCompare(a.date||""));
   const [copied, setCopied] = useState(false);
   const [continuedNow, setContinuedNow] = useState(false);
+  // Admin-editable header/footer lines + greeting list (cp3_class_info_template)
+  const [tpl, setTpl] = useState(CLASS_INFO_DEFAULT);
+  const [greetOverride, setGreetOverride] = useState(null); // admin's manual 🎲 pick for THIS open modal only
+  useEffect(()=>{
+    (async()=>{
+      try {
+        const r = await window.storage.get("cp3_class_info_template");
+        if (r?.value) { const v = JSON.parse(r.value); setTpl({ header: v.header ?? CLASS_INFO_DEFAULT.header, footer: v.footer ?? CLASS_INFO_DEFAULT.footer, greetings: (v.greetings&&v.greetings.length)?v.greetings:CLASS_INFO_DEFAULT.greetings }); }
+      } catch {}
+    })();
+  },[]);
 
   // Admin/assistant only: if this session has no material yet, show the
   // most recent PAST session's material as a muted reference, with a
@@ -1591,8 +1662,16 @@ function CourseDetailModal({ course, dayIndex, date, sessionNo, users, lang, mat
     : "—";
   const resolvedMeetingUrl = resolveMeetingUrl(course, dayIndex, startTime);
 
+  const greetList = tpl.greetings;
+  const greetIdx = greetOverride!==null && greetOverride<greetList.length ? greetOverride : pickGreetingIndex(greetList, `${course.id}|${date||dayIndex}|${sessionNo??""}`);
+  const greeting = greetList[greetIdx] || "";
+  const shuffleGreeting = () => {
+    if (greetList.length<2) return;
+    let n; do { n = Math.floor(Math.random()*greetList.length); } while (n===greetIdx);
+    setGreetOverride(n);
+  };
   const copyText =
-`===== ES English Today =====
+`${tpl.header}
 
  Date / 日期
 **${classDate}
@@ -1609,9 +1688,9 @@ function CourseDetailModal({ course, dayIndex, date, sessionNo, users, lang, mat
  ${resolvedMeetingUrl||"—"}
 
 
- Let's have a great class together! 上課順利！
+ ${greeting}
 
-========================`;
+${tpl.footer}`;
 
   const handleCopy = () => {
     navigator.clipboard?.writeText(copyText).then(()=>{
@@ -1708,6 +1787,11 @@ function CourseDetailModal({ course, dayIndex, date, sessionNo, users, lang, mat
             {copyText}
           </div>
 
+          {currentUser?.role==="admin" && greetList.length>1 && (
+            <button onClick={shuffleGreeting} style={{width:"100%",background:"#F5F9FB",border:"0.5px solid #B3D9EA",borderRadius:8,color:"#1A6B8A",padding:"8px",fontSize:12.5,cursor:"pointer",marginBottom:8}}>
+              🎲 {lang==="zh"?"隨機切換祝賀語":"Shuffle closing greeting"}
+            </button>
+          )}
           {/* Copy button */}
           <button onClick={handleCopy} style={{width:"100%",background:copied?"#4CAF50":"#1A6B8A",border:"none",borderRadius:8,color:"#fff",padding:"11px",fontSize:14,fontWeight:600,cursor:"pointer",transition:"background 0.2s",letterSpacing:"0.02em"}}>
             {copied ? (lang==="zh"?"✓ 已複製！":"✓ Copied!") : (lang==="zh"?"📋 複製課程資訊":"📋 Copy Class Info")}
@@ -3721,9 +3805,19 @@ function CourseManager({ users, courses, setCourses, lang, setToast, materials, 
   const hasHistory = (courseId) => (enrollments||[]).some(e=>e.courseId===courseId && (e.scheduledDates||[]).length>0);
 
   const del = id => { setConfirmDelCourseId(id); };
-  const doDelCourse = () => {
+  const doDelCourse = async () => {
+    const c = courses.find(x=>x.id===confirmDelCourseId);
+    if (c) {
+      try {
+        await recycleBinPush([{ type:"course", label:c.subject||"", deletedBy:"admin", payload:{ course:c } }]);
+      } catch (e) {
+        setToast(lang==="zh"?"無法寫入回收桶，已取消刪除（資料未動）":"Couldn't write to the recycle bin — delete cancelled");
+        setConfirmDelCourseId(null);
+        return;
+      }
+    }
     setCourses(courses.filter(c=>c.id!==confirmDelCourseId));
-    setToast(t.courseDeleted);
+    setToast(lang==="zh"?"課程已刪除，已放入回收桶（30 天內可還原）":"Course deleted — moved to the recycle bin (restorable for 30 days)");
     setConfirmDelCourseId(null);
   };
   // Archiving ("結束課程") — NEVER touches enrollments/attendance/materials/
@@ -3840,7 +3934,26 @@ function CourseManager({ users, courses, setCourses, lang, setToast, materials, 
 
   return (
     <div>
-      {confirmDelCourseId && <ConfirmModal title={lang==="zh"?"刪除課程":"Delete Course"} message={lang==="zh"?"確認要刪除此課程？此操作無法復原，相關教材紀錄也將失效。":"Delete this course? This cannot be undone."} confirmLabel={lang==="zh"?"確認刪除":"Delete"} onConfirm={doDelCourse} onCancel={()=>setConfirmDelCourseId(null)} danger/>}
+      {confirmDelCourseId && (() => {
+        const c = courses.find(x=>x.id===confirmDelCourseId);
+        const enrs = (enrollments||[]).filter(e=>e.courseId===confirmDelCourseId);
+        const sess = enrs.reduce((n,e)=>n+(e.scheduledDates||[]).length,0);
+        const matCount = (materials||[]).filter(m=>m.courseId===confirmDelCourseId).length;
+        const zh = lang==="zh";
+        return <ConfirmModal title={zh?"刪除課程":"Delete Course"}
+          message={<>
+            <div style={{marginBottom:8,fontWeight:600}}>{c?.subject||""}</div>
+            <ImpactList lang={lang}
+              deletes={[zh?"課程本身（名稱、老師、學生、時段、連結）":"The course itself (name, teacher, student, slots, links)"]}
+              keeps={[]}/>
+            {(enrs.length>0||matCount>0) && (
+              <div style={{background:"#FFF3E0",border:"1px solid #FFCC80",borderRadius:8,padding:"8px 11px",margin:"8px 0",fontSize:12.5,color:"#E65100",lineHeight:1.6}}>
+                ⚠️ {zh?`這門課還有 ${enrs.length} 筆排課（共 ${sess} 堂）和 ${matCount} 份教材綁在它上面——它們不會被刪，但失去課程後會無法正常顯示。有歷史紀錄的課程建議改用「結束課程」。`:`${enrs.length} enrollment(s) (${sess} sessions) and ${matCount} material(s) still point to this course — they aren't deleted but won't display properly without it. For a course with history, prefer "End Course".`}
+              </div>
+            )}
+          </>}
+          confirmLabel={zh?"移到回收桶":"Move to Recycle Bin"} onConfirm={doDelCourse} onCancel={()=>setConfirmDelCourseId(null)} danger/>;
+      })()}
       {confirmArchiveId && <ConfirmModal title={lang==="zh"?"結束課程":"End Course"} message={lang==="zh"?"這堂課會標記為「已結束」，不再出現在進行中名單、不能再新增排課，但完課紀錄、出缺勤、獎牌積分完全不受影響。之後隨時可以在「已結束」分頁恢復。":"This marks the course as ended — it won't appear in the active roster or accept new scheduling, but completed sessions, attendance, and medal points are completely unaffected. You can restore it anytime from the Ended tab."} confirmLabel={lang==="zh"?"確認結束課程":"End Course"} onConfirm={doArchive} onCancel={()=>setConfirmArchiveId(null)}/>}
       {matTarget && <MaterialPanel course={matTarget} initialDate={null} users={users} lang={lang} currentUser={fakeAdmin} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setMatTarget(null)} enrollments={enrollments} attendance={attendance} absences={absences} feedback={feedback}/>}
       {showBatch && <BatchMaterialModal users={users} courses={courses} materials={materials} setMaterials={setMaterials} lang={lang} setToast={setToast} onClose={()=>setShowBatch(false)} enrollments={enrollments}/>}
@@ -5332,24 +5445,51 @@ function sessionStatusFor(course, s, attRec, absRec) {
   return isSessionOver(s.date, resolveSessionStart(course, s), course.duration) ? "completed" : "upcoming";
 }
 function calcStudentRemaining(studentId, enrollments, courses, attendance, absences) {
-  const out = { purchased:0, completed:0, absent:0, leave:0, remaining:0 };
+  // Headline numbers (purchased / completed / absent / leave / remaining) cover
+  // the student's CURRENT (still-active) purchase cycles only — summing every
+  // cycle ever bought (old renewals, discontinued ones, trial lessons) is what
+  // made 購買堂數 look wrong. `all` keeps the lifetime totals and `cycles` has
+  // the per-cycle breakdown so every number can be reconciled.
+  // Trial lessons are not a purchase and are excluded from all of it.
+  const out = { purchased:0, completed:0, absent:0, leave:0, remaining:0,
+                all:{ purchased:0, completed:0, absent:0, leave:0 }, cycles:[] };
   (enrollments||[]).filter(e=>e.studentId===studentId).forEach(e => {
     const c = (courses||[]).find(x=>x.id===e.courseId);
     if (!c) return; // orphaned enrollment (course deleted) — nothing real to count
+    if (c.isTrial || e.isTrial) return;
     const total = parseInt(e.totalSessions)||0;
-    let done = 0, abs = 0;
+    let done = 0, abs = 0, leave = 0, upcoming = 0;
     (e.scheduledDates||[]).forEach(s => {
       const attRec = (attendance||[]).find(a=>a.enrollmentId===e.id && a.date===s.date);
       const absRec = (absences||[]).find(a=>a.courseId===c.id && a.dateStr===s.date);
       const st = sessionStatusFor(c, s, attRec, absRec);
       if (st==="completed") done++;
       else if (st==="absent") abs++;
-      else if (st==="excused" || st==="teacher_leave") out.leave++;
+      else if (st==="excused" || st==="teacher_leave") leave++;
+      else upcoming++;
     });
-    out.purchased += total; out.completed += done; out.absent += abs;
     const inactive = e.status==="discontinued" || c.status==="archived";
-    out.remaining += inactive ? 0 : Math.max(0, total - done - abs);
+    const remaining = inactive ? 0 : Math.max(0, total - done - abs);
+    out.cycles.push({ enrollment:e, course:c, total, done, absent:abs, leave, upcoming, remaining, inactive });
+    out.all.purchased += total; out.all.completed += done; out.all.absent += abs; out.all.leave += leave;
+    if (!inactive) { out.purchased += total; out.completed += done; out.absent += abs; out.leave += leave; out.remaining += remaining; }
   });
+  out.cycles.sort((x,y)=>(y.enrollment.payDate||y.enrollment.startDate||"").localeCompare(x.enrollment.payDate||x.enrollment.startDate||""));
+  return out;
+}
+// Admin manual correction (user.sessionAdjust) layered on top of the computed
+// numbers — blank fields fall through to the system value. Used by every
+// student-facing view so what the student sees == what the admin set.
+function applySessionAdjust(calc, user) {
+  const adj = user?.sessionAdjust;
+  if (!adj) return { ...calc, adjusted:false };
+  const pick = (v, sys) => (v===undefined || v===null || v==="" || isNaN(Number(v))) ? sys : Math.max(0, Number(v));
+  const out = { ...calc,
+    purchased: pick(adj.purchased, calc.purchased),
+    completed: pick(adj.completed, calc.completed),
+    remaining: pick(adj.remaining, calc.remaining),
+  };
+  out.adjusted = ["purchased","completed","remaining"].some(k => adj[k]!==undefined && adj[k]!==null && adj[k]!=="");
   return out;
 }
 function deferExcusedSession(course, enrollment, excusedDate) {
@@ -5992,10 +6132,21 @@ function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollm
   };
 
   const deleteEnrollment = (id) => { setConfirmDelEnrollId(id); };
-  const doDelEnrollment = () => {
+  const doDelEnrollment = async () => {
+    const enr = enrollments.find(e=>e.id===confirmDelEnrollId);
+    if (enr) {
+      const course = courses.find(c=>c.id===enr.courseId);
+      try {
+        await recycleBinPush([{ type:"enrollment", label:`${getName(enr.studentId)} · ${course?.subject||""}`, deletedBy:currentUser?.name||"admin", payload:{ enrollment:enr, attendance:attendance.filter(a=>a.enrollmentId===enr.id) } }]);
+      } catch (e) {
+        setToast(lang==="zh"?"無法寫入回收桶，已取消刪除（資料未動）":"Couldn't write to the recycle bin — delete cancelled, nothing changed");
+        setConfirmDelEnrollId(null);
+        return;
+      }
+    }
     setEnrollments(es=>es.filter(e=>e.id!==confirmDelEnrollId));
     setAttendance(as=>as.filter(a=>a.enrollmentId!==confirmDelEnrollId));
-    setToast(t.enrollDeleted);
+    setToast(lang==="zh"?"已刪除，已放入回收桶（30 天內可還原）":"Deleted — moved to the recycle bin (restorable for 30 days)");
     setConfirmDelEnrollId(null);
   };
 
@@ -6166,13 +6317,28 @@ function EnrollmentManager({ users, courses, setCourses, enrollments, setEnrollm
       {confirmDelEnrollId && (() => {
         const enr = enrollments.find(e=>e.id===confirmDelEnrollId);
         const course = courses.find(c=>c.id===enr?.courseId);
-        const pastCount = (enr?.scheduledDates||[]).filter(s=>s.date < new Date().toISOString().slice(0,10)).length;
+        const todayS = new Date().toISOString().slice(0,10);
+        const dates = enr?.scheduledDates||[];
+        const pastCount = dates.filter(s=>s.date < todayS).length;
+        const attCount = attendance.filter(a=>a.enrollmentId===enr?.id).length;
+        const matCount = (materials||[]).filter(m=>m.courseId===enr?.courseId).length;
+        const zh = lang==="zh";
         return <ConfirmModal
-          title={lang==="zh"?"刪除排課紀錄":"Delete Enrollment"}
-          message={lang==="zh"
-            ? `確認刪除「${course?.subject||""}」的排課紀錄？${pastCount>0?`這堂課已經有 ${pastCount} 堂完成紀錄，將`:"將"}連同所有出缺勤記錄一併永久刪除，此操作無法復原。若學生只是因故無法繼續上課，建議改用「中斷課程」——那個功能會保留所有已完成的紀錄。`
-            : `Delete enrollment for "${course?.subject||""}"? ${pastCount>0?`This has ${pastCount} completed session(s) — they'll`:"This will"} be permanently deleted along with all attendance records, and cannot be undone. If the student simply can't continue, use "Discontinue" instead — it preserves all completed records.`}
-          confirmLabel={lang==="zh"?"確認刪除":"Delete"}
+          title={zh?"刪除排課紀錄":"Delete Enrollment"}
+          message={<>
+            <div style={{marginBottom:8,fontWeight:600}}>{getName(enr?.studentId)} · {course?.subject||""}</div>
+            <ImpactList lang={lang}
+              deletes={[
+                zh?`整筆排課：購買 ${enr?.totalSessions||0} 堂、共排 ${dates.length} 堂（已發生 ${pastCount}、未來 ${dates.length-pastCount}）`:`The whole enrollment: ${enr?.totalSessions||0} purchased, ${dates.length} scheduled (${pastCount} past, ${dates.length-pastCount} upcoming)`,
+                zh?`出缺勤紀錄 ${attCount} 筆`:`${attCount} attendance record(s)`,
+              ]}
+              keeps={[
+                zh?"課程本身（不會刪除）":"The course record itself",
+                zh?`教材 ${matCount} 份、老師反饋、請假申請`:`${matCount} material(s), teacher feedback, leave requests`,
+              ]}/>
+            <div style={{fontSize:12,color:"#8D6E00",marginTop:6}}>{zh?"若學生只是無法繼續上課，建議改用「中斷課程」，已發生的紀錄會完整保留。":"If the student just can't continue, use 'Discontinue' instead — all past records stay intact."}</div>
+          </>}
+          confirmLabel={zh?"移到回收桶":"Move to Recycle Bin"}
           onConfirm={doDelEnrollment}
           onCancel={()=>setConfirmDelEnrollId(null)}
           danger/>;
@@ -7106,14 +7272,31 @@ function ScheduleShareModal({ ownerEntry, users, dirEntries, saveDirEntries, lan
 // (which is what actually carries teacherId/studentId, and is what the
 // student's own "任教老師" list is built from) is never touched. That
 // orphaned course then keeps showing a teacher the admin thought was gone.
-function StudentCoursesModal({ studentId, users, courses, setCourses, enrollments, lang, setToast, onClose }) {
+function StudentCoursesModal({ studentId, users, setUsers, courses, setCourses, enrollments, lang, setToast, onClose }) {
   const student = users.find(u=>u.id===studentId);
   const [confirmDelId, setConfirmDelId] = useState(null);
   const myCourses = courses.filter(c=>c.studentId===studentId);
 
-  const doDelete = () => {
+  // Display-only hide: the student's own 「我的授課老師」 list skips these
+  // teachers. NOTHING is deleted — courses, enrollments, attendance, feedback
+  // and materials all stay exactly as they are.
+  const hiddenIds = student?.hiddenTeacherIds || [];
+  const teacherIdsHere = [...new Set(myCourses.map(c=>c.teacherId))].filter(id=>users.some(u=>u.id===id));
+  const toggleHideTeacher = (tid) => {
+    const next = hiddenIds.includes(tid) ? hiddenIds.filter(x=>x!==tid) : [...hiddenIds, tid];
+    setUsers(us => us.map(u => u.id===studentId ? {...u, hiddenTeacherIds: next} : u));
+    setToast(lang==="zh"
+      ? (hiddenIds.includes(tid) ? "已恢復顯示該老師" : "已從學生帳號隱藏該老師（課程紀錄完整保留）")
+      : (hiddenIds.includes(tid) ? "Teacher shown again" : "Teacher hidden from the student's account (all records kept)"));
+  };
+  const doDelete = async () => {
+    const c = courses.find(x=>x.id===confirmDelId);
+    if (c) {
+      try { await recycleBinPush([{ type:"course", label:`${student?.name||""} · ${c.subject||""}`, deletedBy:"admin", payload:{ course:c } }]); }
+      catch (e) { setToast(lang==="zh"?"無法寫入回收桶，已取消刪除":"Recycle bin write failed — cancelled"); setConfirmDelId(null); return; }
+    }
     setCourses(cs => cs.filter(c=>c.id!==confirmDelId));
-    setToast(lang==="zh"?"已刪除該課程紀錄":"Course record deleted");
+    setToast(lang==="zh"?"已刪除該課程紀錄，已放入回收桶（30 天內可還原）":"Course record deleted — in the recycle bin for 30 days");
     setConfirmDelId(null);
   };
 
@@ -7130,6 +7313,23 @@ function StudentCoursesModal({ studentId, users, courses, setCourses, enrollment
               ? "這裡列出這位學生底下所有的課程紀錄。如果之前在「付費與排課」用過刪除，只會刪掉排課本身，課程紀錄（含老師關聯）會留下來變成孤立資料——學生自己看到的「任教老師」仍然會抓到這裡沒清乾淨的紀錄。「無排課紀錄」的項目通常就是這種殘留，可以在這裡直接刪除。"
               : "Every course record under this student. Deleting an enrollment in 付費與排課 only removes the enrollment itself — the course record (including its teacher link) is left behind as orphaned data, which is why the student's own \"My Teachers\" list can still show it. Entries marked \"No enrollment\" are usually this kind of leftover — delete them directly here."}
           </p>
+          {teacherIdsHere.length>0 && (
+            <div style={{background:"#EEF6FB",border:"1px solid #B3D9EA",borderRadius:9,padding:"10px 14px",marginBottom:14}}>
+              <div style={{fontSize:12,fontWeight:600,color:"#172F39",marginBottom:2}}>👁 {lang==="zh"?"學生帳號顯示的授課老師":"Teachers shown in the student's account"}</div>
+              <div style={{fontSize:11,color:"#546E7A",marginBottom:8,lineHeight:1.5}}>{lang==="zh"?"只控制學生「我的授課老師」頁面要不要顯示這位老師，不會刪除任何課程、排課、出勤或反饋紀錄。":"Only controls whether the student's \"My Teachers\" page lists this teacher — no course, enrollment, attendance or feedback record is deleted."}</div>
+              {teacherIdsHere.map(tid=>{
+                const tu = users.find(u=>u.id===tid); const hidden = hiddenIds.includes(tid);
+                return (
+                  <div key={tid} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"5px 0",borderTop:"0.5px solid #D6E8F0"}}>
+                    <span style={{fontSize:12.5,color:hidden?"#9E9E9E":"#172F39",textDecoration:hidden?"line-through":"none"}}>{tu?.name}</span>
+                    <button onClick={()=>toggleHideTeacher(tid)} style={{fontSize:11,padding:"4px 11px",borderRadius:5,cursor:"pointer",border:`0.5px solid ${hidden?"#2E7D32":"#546E7A"}`,background:"transparent",color:hidden?"#2E7D32":"#546E7A"}}>
+                      {hidden ? (lang==="zh"?"👁 恢復顯示":"👁 Show again") : (lang==="zh"?"🙈 從學生帳號隱藏":"🙈 Hide from student")}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
           {myCourses.length===0 ? (
             <p style={{color:"#9E9E9E",fontSize:13,textAlign:"center",padding:"1.5rem 0"}}>—</p>
           ) : myCourses.map(c => {
@@ -7165,14 +7365,107 @@ function StudentCoursesModal({ studentId, users, courses, setCourses, enrollment
           <ConfirmModal
             title={lang==="zh"?"刪除課程紀錄":"Delete Course Record"}
             message={hasEnrollment
-              ? (lang==="zh"?`「${c?.subject||""}」目前還有排課紀錄，確定要刪除嗎？這個操作無法復原。`:`"${c?.subject||""}" still has an enrollment attached — delete anyway? This cannot be undone.`)
-              : (lang==="zh"?`確認刪除「${c?.subject||""}」這筆孤立的課程紀錄？此操作無法復原。`:`Delete the orphaned course record "${c?.subject||""}"? This cannot be undone.`)}
+              ? (lang==="zh"?`「${c?.subject||""}」目前還有排課紀錄，確定要刪除嗎？（會放進回收桶，30 天內可還原）`:`"${c?.subject||""}" still has an enrollment attached — delete anyway? (goes to the recycle bin, restorable for 30 days)`)
+              : (lang==="zh"?`確認刪除「${c?.subject||""}」這筆孤立的課程紀錄？（會放進回收桶，30 天內可還原）`:`Delete the orphaned course record "${c?.subject||""}"? (goes to the recycle bin, restorable for 30 days)`)}
             confirmLabel={lang==="zh"?"確認刪除":"Delete"}
             onConfirm={doDelete}
             onCancel={()=>setConfirmDelId(null)}
             danger/>
         );
       })()}
+    </div>
+  );
+}
+
+// ─── Admin: a student's session counts (system-computed vs manual correction) ─
+// Shows exactly how 購買／已完課／剩餘 are derived (per purchase cycle), and lets
+// the admin override any of the three headline numbers when the underlying
+// records were damaged (e.g. an enrollment deleted by mistake). Overrides are
+// stored on the student account (user.sessionAdjust), never touch the
+// enrollment data, and can be cleared at any time to go back to the computed
+// values. Every change is logged (last 20) so a bad edit can be traced/undone.
+function StudentSessionCountModal({ studentId, users, setUsers, courses, enrollments, attendance, absences, lang, setToast, onClose, adminName }) {
+  const student = users.find(u=>u.id===studentId);
+  const calc = calcStudentRemaining(studentId, enrollments, courses, attendance, absences);
+  const adj = student?.sessionAdjust || {};
+  const [form, setForm] = useState({ purchased: adj.purchased??"", completed: adj.completed??"", remaining: adj.remaining??"", note: adj.note||"" });
+  const zh = lang==="zh";
+  const iStyle = {width:"100%",boxSizing:"border-box",padding:"7px 9px",borderRadius:6,border:"0.5px solid #CFD8DC",fontSize:13};
+  const save = () => {
+    const clean = v => (v===""||v===null||v===undefined) ? null : Math.max(0, parseInt(v)||0);
+    const next = { purchased:clean(form.purchased), completed:clean(form.completed), remaining:clean(form.remaining), note:(form.note||"").trim(), updatedAt:new Date().toISOString(), updatedBy:adminName||"admin" };
+    const hasAny = next.purchased!==null || next.completed!==null || next.remaining!==null;
+    const logEntry = { at:next.updatedAt, by:next.updatedBy, from:{purchased:adj.purchased??null,completed:adj.completed??null,remaining:adj.remaining??null}, to:{purchased:next.purchased,completed:next.completed,remaining:next.remaining}, note:next.note };
+    const log = [logEntry, ...(adj.log||[])].slice(0,20);
+    setUsers(us => us.map(u => u.id===studentId ? {...u, sessionAdjust: hasAny ? {...next, log} : (adj.log?.length ? {log, purchased:null, completed:null, remaining:null} : undefined)} : u));
+    setToast(zh ? (hasAny?"已儲存校正值":"已清除校正，恢復系統計算") : (hasAny?"Correction saved":"Correction cleared"));
+  };
+  const clearAll = () => { setForm({purchased:"",completed:"",remaining:"",note:""}); };
+  // plain function (NOT a component) so the inputs keep focus while typing
+  const Row = ({label, sys, k}) => (
+    <div style={{display:"grid",gridTemplateColumns:"1fr 80px 110px",gap:8,alignItems:"center",padding:"6px 0",borderTop:"0.5px solid #ECEFF1"}}>
+      <span style={{fontSize:12.5,color:"#172F39",fontWeight:500}}>{label}</span>
+      <span style={{fontSize:12,color:"#546E7A",textAlign:"center"}}>{zh?"系統":"System"}: <b>{sys}</b></span>
+      <input type="number" min={0} value={form[k]} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} placeholder={zh?"校正值（留空=用系統值）":"override"} style={iStyle}/>
+    </div>
+  );
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9300,padding:"1rem"}}>
+      <div style={{background:"#fff",borderRadius:16,width:"100%",maxWidth:600,boxSizing:"border-box",maxHeight:"88vh",display:"flex",flexDirection:"column",overflow:"hidden",boxShadow:"0 8px 36px rgba(23,47,57,0.25)"}}>
+        <div style={{background:"#172F39",padding:"13px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+          <span style={{fontSize:14,fontWeight:600,color:"#fff"}}>🔢 {zh?`${student?.name||""} 的堂數`:`${student?.name||""}'s session counts`}</span>
+          <button onClick={onClose} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",color:"#fff",fontSize:16}}>×</button>
+        </div>
+        <div style={{padding:"14px 18px",overflowY:"auto",flex:1,minHeight:0}}>
+          <div style={{fontSize:11.5,color:"#546E7A",lineHeight:1.6,marginBottom:10}}>
+            {zh?"系統值由「付費與排課」和出勤紀錄即時計算（只統計進行中的購買，試聽不計）。如果紀錄被誤刪或不準，可在右側填入校正值，學生看到的就是校正後的數字；清空即恢復系統計算。校正不會改動任何排課資料。"
+               :"System values are computed live from 付費與排課 and attendance (active purchases only, trials excluded). If records were deleted by mistake, type a correction on the right — the student sees the corrected number; clear it to go back. Corrections never touch enrollment data."}
+          </div>
+          {Row({label:zh?"目前購買堂數":"Purchased (current)", sys:calc.purchased, k:"purchased"})}
+          {Row({label:zh?"已完課堂":"Completed", sys:calc.completed, k:"completed"})}
+          {Row({label:zh?"剩餘堂數":"Remaining", sys:calc.remaining, k:"remaining"})}
+          <div style={{fontSize:11,color:"#9E9E9E",margin:"4px 0 0"}}>{zh?`缺勤扣課 ${calc.absent}、請假 ${calc.leave}（僅供參考，不可校正）　｜　歷史累計：購買 ${calc.all.purchased}、完課 ${calc.all.completed}`:`Absent ${calc.absent}, leave ${calc.leave} (read-only) | Lifetime: ${calc.all.purchased} bought, ${calc.all.completed} done`}</div>
+          <label style={{display:"block",fontSize:12,color:"#546E7A",margin:"12px 0 3px"}}>{zh?"校正原因／備註":"Reason / note"}</label>
+          <input value={form.note} onChange={e=>setForm(f=>({...f,note:e.target.value}))} placeholder={zh?"例如：2026/9 續約 20 堂，排課被誤刪":"e.g. renewal records deleted by mistake"} style={iStyle}/>
+          <div style={{display:"flex",gap:8,marginTop:12}}>
+            <button onClick={save} style={{flex:1,padding:"9px",borderRadius:7,border:"none",background:"#1A6B8A",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer"}}>{zh?"儲存校正":"Save"}</button>
+            <button onClick={clearAll} style={{padding:"9px 14px",borderRadius:7,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",fontSize:13,cursor:"pointer"}}>{zh?"清空欄位":"Clear fields"}</button>
+          </div>
+          <div style={{fontSize:10.5,color:"#9E9E9E",marginTop:4}}>{zh?"清空欄位後按「儲存校正」才會恢復系統計算。":"Clear the fields, then press Save to go back to system values."}</div>
+
+          <div style={{fontSize:13,fontWeight:600,color:"#172F39",margin:"18px 0 6px"}}>🧾 {zh?"各次購買明細（系統）":"Purchase breakdown (system)"}</div>
+          {calc.cycles.length===0 ? <div style={{fontSize:12,color:"#9E9E9E"}}>—</div> : (
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:11.5,minWidth:480}}>
+                <thead><tr style={{color:"#546E7A",textAlign:"left",borderBottom:"1px solid #E0E0E0"}}>
+                  {[zh?"付款日":"Paid",zh?"課程":"Course",zh?"購買":"Bought",zh?"完課":"Done",zh?"缺勤":"Abs",zh?"請假":"Leave",zh?"剩餘":"Left",zh?"狀態":"Status"].map((h,i)=><th key={i} style={{padding:"5px 6px"}}>{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {calc.cycles.map(cy=>(
+                    <tr key={cy.enrollment.id} style={{borderBottom:"0.5px solid #F0F0F0",opacity:cy.inactive?0.55:1}}>
+                      <td style={{padding:"5px 6px",whiteSpace:"nowrap"}}>{cy.enrollment.payDate||"—"}</td>
+                      <td style={{padding:"5px 6px",maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cy.course.subject}</td>
+                      <td style={{padding:"5px 6px"}}>{cy.total}</td><td style={{padding:"5px 6px"}}>{cy.done}</td><td style={{padding:"5px 6px"}}>{cy.absent}</td><td style={{padding:"5px 6px"}}>{cy.leave}</td><td style={{padding:"5px 6px",fontWeight:600}}>{cy.remaining}</td>
+                      <td style={{padding:"5px 6px",whiteSpace:"nowrap"}}>{cy.inactive?(zh?"已結束/中斷":"Ended"):(zh?"進行中":"Active")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {(adj.log||[]).length>0 && (
+            <>
+              <div style={{fontSize:13,fontWeight:600,color:"#172F39",margin:"18px 0 6px"}}>🕘 {zh?"校正紀錄":"Correction log"}</div>
+              {adj.log.map((l,i)=>(
+                <div key={i} style={{fontSize:11,color:"#546E7A",padding:"4px 0",borderTop:"0.5px solid #F0F0F0",lineHeight:1.5}}>
+                  {new Date(l.at).toLocaleString()} · {l.by} — {zh?"購買":"Bought"} {l.from.purchased??"系統"}→{l.to.purchased??"系統"}，{zh?"完課":"Done"} {l.from.completed??"系統"}→{l.to.completed??"系統"}，{zh?"剩餘":"Left"} {l.from.remaining??"系統"}→{l.to.remaining??"系統"}{l.note?`（${l.note}）`:""}
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -7222,6 +7515,7 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
   const [addForm, setAddForm] = useState({nameEn:"",nameCn:"",age:"",regYear:String(new Date().getFullYear()),regDate:"",startDate:"",duration:"",manualSessions:"",linkedUserId:""});
   const [confirmDelDirId, setConfirmDelDirId] = useState(null);
   const [shareTarget, setShareTarget] = useState(null); // dir entry whose schedule-sharing is being edited
+  const [countsTarget, setCountsTarget] = useState(null); // student user id whose session counts are being reviewed/corrected
   const [coursesTarget, setCoursesTarget] = useState(null); // linkedUserId whose courses/teachers are being reviewed
   const [sortField, setSortField] = useState(null); // "age" | "regYear" | "duration" | "points" | null
   const [sortDir, setSortDir] = useState("asc"); // "asc" | "desc"
@@ -7387,7 +7681,8 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
     <div>
       {confirmDelDirId && <ConfirmModal title={lang==="zh"?"刪除學生資料":"Delete Student"} message={lang==="zh"?"確認刪除此學生的資料？":"Delete this student record?"} confirmLabel={lang==="zh"?"確認刪除":"Delete"} onConfirm={doDelDir} onCancel={()=>setConfirmDelDirId(null)} danger/>}
       {shareTarget && <ScheduleShareModal ownerEntry={shareTarget} users={users} dirEntries={dirEntries} saveDirEntries={saveDirEntries} lang={lang} setToast={setToast} onClose={()=>setShareTarget(null)}/>}
-      {coursesTarget && setCourses && <StudentCoursesModal studentId={coursesTarget} users={users} courses={courses} setCourses={setCourses} enrollments={enrollments} lang={lang} setToast={setToast} onClose={()=>setCoursesTarget(null)}/>}
+      {countsTarget && setCourses && !readOnly && <StudentSessionCountModal studentId={countsTarget} users={users} setUsers={setUsers} courses={courses} enrollments={enrollments} attendance={attendance||[]} absences={absences||[]} lang={lang} setToast={setToast} adminName={"admin"} onClose={()=>setCountsTarget(null)}/>}
+      {coursesTarget && setCourses && <StudentCoursesModal studentId={coursesTarget} users={users} setUsers={setUsers} courses={courses} setCourses={setCourses} enrollments={enrollments} lang={lang} setToast={setToast} onClose={()=>setCoursesTarget(null)}/>}
 
       {/* Header */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"0.6rem",flexWrap:"wrap",gap:8}}>
@@ -7673,6 +7968,11 @@ function StudentDirectory({ users, setUsers, lang, setToast, enrollments, attend
                           {linkedUser && (
                             <button onClick={()=>setShareTarget(d)} title={t.scheduleShareBtn} style={{padding:"4px 9px",borderRadius:4,border:`0.5px solid ${(d.sharedWith||[]).length?"#1A6B8A":"#CFD8DC"}`,background:(d.sharedWith||[]).length?"#EEF6FB":"transparent",color:"#1A6B8A",fontSize:11,cursor:"pointer"}}>
                               🔗{(d.sharedWith||[]).length>0?` ${(d.sharedWith||[]).length}`:""}
+                            </button>
+                          )}
+                          {linkedUser && setCourses && !readOnly && (
+                            <button onClick={()=>setCountsTarget(linkedUser.id)} title={lang==="zh"?"檢視／校正堂數（購買、完課、剩餘）":"View / correct session counts"} style={{padding:"4px 9px",borderRadius:4,border:"0.5px solid #1A6B8A",background:"transparent",color:"#1A6B8A",fontSize:11,cursor:"pointer"}}>
+                              🔢
                             </button>
                           )}
                           {linkedUser && setCourses && (
@@ -8809,6 +9109,121 @@ function TrialApplicationsPanel({ users, setUsers, lang, setToast, trialApplicat
 }
 
 
+// ─── Admin: class-info template editor (separators + greetings) ──────────────
+function ClassInfoTemplateEditor({ lang, setToast }) {
+  const zh = lang==="zh";
+  const [tpl, setTpl] = useState(CLASS_INFO_DEFAULT);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(()=>{
+    (async()=>{
+      try { const r = await window.storage.get("cp3_class_info_template"); if (r?.value) { const v = JSON.parse(r.value); setTpl({ header: v.header ?? CLASS_INFO_DEFAULT.header, footer: v.footer ?? CLASS_INFO_DEFAULT.footer, greetings: (v.greetings&&v.greetings.length)?v.greetings:CLASS_INFO_DEFAULT.greetings }); } } catch {}
+      setLoaded(true);
+    })();
+  },[]);
+  const MAX = 10;
+  const setG = (i,v) => setTpl(t=>({...t, greetings:t.greetings.map((g,j)=>j===i?v:g)}));
+  const save = async () => {
+    const greetings = tpl.greetings.map(g=>g.trim()).filter(Boolean);
+    if (!greetings.length) { setToast(zh?"至少要保留一句祝賀語":"Keep at least one greeting"); return; }
+    const next = { header: tpl.header, footer: tpl.footer, greetings };
+    try { await window.storage.set("cp3_class_info_template", JSON.stringify(next)); setTpl(next); setToast(zh?"已儲存課程資訊範本":"Template saved"); }
+    catch { setToast(zh?"儲存失敗，請重試":"Save failed"); }
+  };
+  const iStyle = {width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,border:"0.5px solid #CFD8DC",fontSize:13,fontFamily:"inherit"};
+  if (!loaded) return <div style={{color:"#9E9E9E",fontSize:13}}>…</div>;
+  const previewGreeting = tpl.greetings.find(g=>g.trim()) || "";
+  return (
+    <div>
+      <h3 style={{fontSize:15,fontWeight:600,color:"#172F39",margin:"0 0 4px"}}>✨ {zh?"課程資訊範本":"Class Info Template"}</h3>
+      <p style={{fontSize:12,color:"#546E7A",margin:"0 0 12px",lineHeight:1.6}}>{zh?"「複製課程資訊」文字的上下分隔線與結尾祝賀語。每堂課會自動從下面的祝賀語挑一句（同一堂課固定同一句）；管理員在課程資訊視窗可按 🎲 隨機切換。建議保留 5–10 句。":"The separator lines and closing greeting of the copied class info. Each class automatically gets one of the greetings below (the same class always the same one); admins can press 🎲 in the class-info window to shuffle. 5–10 greetings recommended."}</p>
+      <label style={{fontSize:12,color:"#546E7A"}}>{zh?"上方分隔線（標題列）":"Top separator / title line"}</label>
+      <input value={tpl.header} onChange={e=>setTpl(t=>({...t,header:e.target.value}))} style={{...iStyle,marginBottom:10,fontFamily:"monospace"}}/>
+      <label style={{fontSize:12,color:"#546E7A"}}>{zh?"下方分隔線":"Bottom separator"}</label>
+      <input value={tpl.footer} onChange={e=>setTpl(t=>({...t,footer:e.target.value}))} style={{...iStyle,marginBottom:14,fontFamily:"monospace"}}/>
+      <div style={{fontSize:12,color:"#546E7A",marginBottom:6}}>{zh?`祝賀語（${tpl.greetings.length}／${MAX}）`:`Greetings (${tpl.greetings.length}/${MAX})`}</div>
+      {tpl.greetings.map((g,i)=>(
+        <div key={i} style={{display:"flex",gap:6,marginBottom:6,alignItems:"center"}}>
+          <span style={{fontSize:11,color:"#9E9E9E",width:18,textAlign:"right"}}>{i+1}</span>
+          <input value={g} onChange={e=>setG(i,e.target.value)} style={iStyle}/>
+          <button onClick={()=>setTpl(t=>({...t,greetings:t.greetings.filter((_,j)=>j!==i)}))} disabled={tpl.greetings.length<=1} title={zh?"刪除這句":"Remove"} style={{fontSize:12,padding:"6px 9px",borderRadius:5,border:"0.5px solid #D32F2F",background:"transparent",color:"#D32F2F",cursor:tpl.greetings.length<=1?"default":"pointer",opacity:tpl.greetings.length<=1?0.4:1}}>🗑</button>
+        </div>
+      ))}
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",margin:"8px 0 14px"}}>
+        <button onClick={()=>setTpl(t=>({...t,greetings:[...t.greetings,""]}))} disabled={tpl.greetings.length>=MAX} style={{fontSize:12,padding:"6px 14px",borderRadius:6,border:"0.5px solid #1A6B8A",background:"transparent",color:"#1A6B8A",cursor:tpl.greetings.length>=MAX?"default":"pointer",opacity:tpl.greetings.length>=MAX?0.4:1}}>＋ {zh?"新增一句":"Add"}</button>
+        <button onClick={()=>setTpl(CLASS_INFO_DEFAULT)} style={{fontSize:12,padding:"6px 14px",borderRadius:6,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>{zh?"載入預設 8 句（尚未儲存）":"Load the 8 defaults (unsaved)"}</button>
+      </div>
+      <div style={{fontSize:12,color:"#546E7A",marginBottom:4}}>{zh?"預覽（結尾部分）":"Preview (ending)"}</div>
+      <pre style={{background:"#FAFAFA",border:"0.5px solid #E0E0E0",borderRadius:8,padding:"10px 12px",fontSize:11,color:"#546E7A",whiteSpace:"pre-wrap",margin:"0 0 12px"}}>{` ${previewGreeting}\n\n${tpl.footer}`}</pre>
+      <button onClick={save} style={{padding:"9px 24px",borderRadius:7,border:"none",background:"#1A6B8A",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer"}}>{zh?"儲存":"Save"}</button>
+    </div>
+  );
+}
+
+// ─── Recycle bin panel (admin) ───────────────────────────────────────────────
+function RecycleBinPanel({ lang, setToast, courses, setCourses, enrollments, setEnrollments, attendance, setAttendance }) {
+  const zh = lang==="zh";
+  const [items, setItems] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [confirmPurge, setConfirmPurge] = useState(null);
+  const load = async () => {
+    try {
+      const r = await window.storage.get("cp3_recycle_bin");
+      const all = r?.value ? JSON.parse(r.value) : [];
+      const live = all.filter(x=>x.expiresAt > Date.now());
+      setItems(live);
+      if (live.length !== all.length) { try { await window.storage.set("cp3_recycle_bin", JSON.stringify(live)); } catch {} } // purge expired
+    } catch {}
+    setLoaded(true);
+  };
+  useEffect(()=>{ load(); window.addEventListener("cp3-bin-changed", load); return ()=>window.removeEventListener("cp3-bin-changed", load); },[]);
+  const saveItems = async (next) => { setItems(next); try { await window.storage.set("cp3_recycle_bin", JSON.stringify(next)); } catch {} };
+  const restore = async (it) => {
+    if (it.type==="course") {
+      const c = it.payload.course;
+      if ((courses||[]).some(x=>x.id===c.id)) { setToast(zh?"這門課程已經存在，不需要還原":"This course already exists"); }
+      else { setCourses(cs=>[...cs, c]); setToast(zh?"已還原課程":"Course restored"); }
+    } else if (it.type==="enrollment") {
+      const { enrollment, attendance:atts } = it.payload;
+      if ((enrollments||[]).some(e=>e.id===enrollment.id)) { setToast(zh?"這筆排課已經存在，不需要還原":"This enrollment already exists"); }
+      else {
+        setEnrollments(es=>[...es, enrollment]);
+        setAttendance(as=>[...as, ...(atts||[]).filter(a=>!as.some(x=>x.id===a.id))]);
+        const courseMissing = !(courses||[]).some(c=>c.id===enrollment.courseId);
+        setToast(zh?`已還原排課與 ${(atts||[]).length} 筆出缺勤紀錄${courseMissing?"（注意：對應的課程目前不存在，請一併從回收桶還原課程）":""}`:`Enrollment and ${(atts||[]).length} attendance record(s) restored${courseMissing?" (note: its course is missing — restore the course too)":""}`);
+      }
+    }
+    await saveItems(items.filter(x=>x.id!==it.id));
+  };
+  const daysLeft = (it) => Math.max(0, Math.ceil((it.expiresAt - Date.now())/86400000));
+  const TYPE = { enrollment:{icon:"📅",zh:"排課紀錄",en:"Enrollment"}, course:{icon:"📚",zh:"課程",en:"Course"} };
+  return (
+    <div>
+      <h3 style={{fontSize:15,fontWeight:600,color:"#172F39",margin:"0 0 4px"}}>🗑 {zh?"回收桶":"Recycle Bin"}</h3>
+      <p style={{fontSize:12,color:"#546E7A",margin:"0 0 12px",lineHeight:1.6}}>{zh?`刪除的排課與課程會在這裡保留 ${RECYCLE_DAYS} 天，期間可以一鍵還原；超過期限會自動清除。`:`Deleted enrollments and courses are kept here for ${RECYCLE_DAYS} days and can be restored in one click; after that they're purged automatically.`}</p>
+      {!loaded ? <div style={{color:"#9E9E9E",fontSize:13}}>…</div> : items.length===0 ? (
+        <div style={{textAlign:"center",color:"#9E9E9E",padding:"2rem 0",fontSize:13}}>♻️ {zh?"回收桶是空的":"The recycle bin is empty"}</div>
+      ) : items.map(it=>(
+        <div key={it.id} style={{background:"#fff",border:"0.5px solid #E0E0E0",borderRadius:10,padding:"11px 14px",marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:600,color:"#172F39"}}>{TYPE[it.type]?.icon} {it.label||"—"}</div>
+            <div style={{fontSize:11,color:"#78909C",marginTop:2,lineHeight:1.5}}>
+              {zh?TYPE[it.type]?.zh:TYPE[it.type]?.en} · {zh?"刪除於":"Deleted"} {new Date(it.deletedAt).toLocaleString()} · {it.deletedBy||""}
+              {it.type==="enrollment" && <> · {zh?`含 ${(it.payload.enrollment.scheduledDates||[]).length} 堂排課、${(it.payload.attendance||[]).length} 筆出缺勤`:`${(it.payload.enrollment.scheduledDates||[]).length} sessions, ${(it.payload.attendance||[]).length} attendance`}</>}
+            </div>
+            <div style={{fontSize:11,color:daysLeft(it)<=5?"#D32F2F":"#9E9E9E",marginTop:1}}>⏳ {zh?`還剩 ${daysLeft(it)} 天可還原`:`${daysLeft(it)} day(s) left to restore`}</div>
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={()=>restore(it)} style={{fontSize:12,padding:"6px 14px",borderRadius:6,border:"none",background:"#2E7D32",color:"#fff",cursor:"pointer",fontWeight:600}}>↩ {zh?"還原":"Restore"}</button>
+            <button onClick={()=>setConfirmPurge(it.id)} style={{fontSize:12,padding:"6px 12px",borderRadius:6,border:"0.5px solid #D32F2F",background:"transparent",color:"#D32F2F",cursor:"pointer"}}>{zh?"永久刪除":"Delete forever"}</button>
+          </div>
+        </div>
+      ))}
+      {confirmPurge && <ConfirmModal title={zh?"永久刪除":"Delete forever"} message={zh?"永久刪除後就無法還原了，確定嗎？":"This can no longer be restored. Continue?"} confirmLabel={zh?"永久刪除":"Delete forever"} danger
+        onConfirm={async()=>{ await saveItems(items.filter(x=>x.id!==confirmPurge)); setConfirmPurge(null); setToast(zh?"已永久刪除":"Deleted forever"); }} onCancel={()=>setConfirmPurge(null)}/>}
+    </div>
+  );
+}
+
 function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, lang, setToast, introText, setIntroText, feedback, setFeedback, teacherAvailability, setTeacherAvailability, availabilityOverrides, setAvailabilityOverrides, profileChanges, setProfileChanges, onImpersonate, trialApplications, setTrialApplications, englishLevels, setEnglishLevels, learningPurposes, setLearningPurposes, initialTab, currentUser, studentMatSubs, setStudentMatSubs, teacherGuidelines, setTeacherGuidelines }) {
   const t = T[lang];
   const [tab, setTab] = useState(initialTab || "courses");
@@ -8831,6 +9246,8 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
     {key:"sstats",  label:t.studentStats},
     {key:"studentOverview", label:lang==="zh"?"任教學生總覽":"Student Overview"},
     {key:"teacherGuidelines",label:lang==="zh"?"老師守則":"Teacher Guidelines"},
+    {key:"classinfo",label:lang==="zh"?"課程資訊範本":"Class Info Template"},
+    {key:"recycle",label:lang==="zh"?"🗑 回收桶":"🗑 Recycle Bin"},
     {key:"settings",label:lang==="zh"?"網站設定":"Site Settings"},
   ];
   return (
@@ -8856,6 +9273,8 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
       {tab==="users"  &&<UserManager users={users} setUsers={setUsers} lang={lang} setToast={setToast} onImpersonate={onImpersonate}/>}
       {tab==="sstats" &&<StudentStats users={users} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} setEnrollments={setEnrollments} lang={lang}/>}
       {tab==="studentOverview" &&<AdminStudentOverview currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} materials={materials} setMaterials={setMaterials} feedback={feedback} setFeedback={setFeedback} attendance={attendance} absences={absences} lang={lang} setToast={setToast}/>}
+      {tab==="recycle"&&<RecycleBinPanel lang={lang} setToast={setToast} courses={courses} setCourses={setCourses} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance}/>}
+      {tab==="classinfo"&&<ClassInfoTemplateEditor lang={lang} setToast={setToast}/>}
       {tab==="teacherGuidelines"&&<TeacherGuidelinesEditor teacherGuidelines={teacherGuidelines} setTeacherGuidelines={setTeacherGuidelines} lang={lang} setToast={setToast}/>}
       {tab==="settings"&&<SiteSettings introText={introText} setIntroText={setIntroText} lang={lang} setToast={setToast}/>}
     </div>
@@ -10561,7 +10980,7 @@ function StudentClassHistory({ currentUser, enrollments, attendance, courses, us
   // into 付費與排課's 購買堂數 field. completedCount/absentCount are counted
   // directly from that same enrollment's scheduledDates, so the numbers are
   // guaranteed to reconcile: purchased = completed + absent + upcoming.
-  const _calc = calcStudentRemaining(currentUser.id, enrollments, courses, attendance, absences);
+  const _calc = applySessionAdjust(calcStudentRemaining(currentUser.id, enrollments, courses, attendance, absences), users.find(u=>u.id===currentUser.id)||currentUser);
   const totalPurchased = _calc.purchased;
   const completedCount = _calc.completed;
   const excusedCount   = _calc.leave;
@@ -10597,7 +11016,7 @@ function StudentClassHistory({ currentUser, enrollments, attendance, courses, us
         {[
           {icon:"✅",label:lang==="zh"?"已完課堂":  "Completed",  val:completedCount,    color:"#2E7D32",bg:"#E8F5E9"},
           {icon:"⏳",label:lang==="zh"?"剩餘課堂":  "Remaining",  val:remainingCount,    color:"#1A6B8A",bg:"#E3F2FD"},
-          {icon:"📦",label:lang==="zh"?"購買總堂":  "Purchased",  val:totalPurchased,    color:"#546E7A",bg:"#F5F5F5"},
+          {icon:"📦",label:lang==="zh"?"目前購買堂數":  "Purchased (current)",  val:totalPurchased,    color:"#546E7A",bg:"#F5F5F5"},
           {icon:"📋",label:lang==="zh"?"正規請假":  "Excused",    val:excusedCount,      color:"#E65100",bg:"#FFF8E1"},
           {icon:"❌",label:lang==="zh"?"缺勤扣課":  "Absent",     val:absentCount,       color:"#D32F2F",bg:"#FFEBEE"},
         ].map(c=>(
@@ -10608,6 +11027,47 @@ function StudentClassHistory({ currentUser, enrollments, attendance, courses, us
           </div>
         ))}
       </div>
+
+      {_calc.adjusted && (
+        <div style={{fontSize:11,color:"#8D6E00",background:"#FFF8E1",border:"1px solid #FFE082",borderRadius:7,padding:"5px 10px",marginBottom:10}}>
+          ✏️ {lang==="zh"?"部分堂數已由管理員校正":"Some session counts were corrected by the admin"}
+        </div>
+      )}
+
+      {/* ── Per-purchase-cycle breakdown: every number above reconciles with these ── */}
+      {_calc.cycles.length>0 && (
+        <div style={{background:"#FFFFFF",border:"0.5px solid #E0E0E0",borderRadius:10,padding:"12px 14px",marginBottom:"1.5rem"}}>
+          <div style={{fontSize:13,fontWeight:600,color:"#172F39",marginBottom:2}}>🧾 {lang==="zh"?"各次購買明細":"Purchase Breakdown"}</div>
+          <div style={{fontSize:11,color:"#9E9E9E",marginBottom:8,lineHeight:1.5}}>
+            {lang==="zh"
+              ? `上方卡片只統計「進行中」的購買；已結束／中斷的購買列在下方供對照。剩餘 = 購買 − 已完課 − 缺勤扣課（請假不扣堂數，會補課）。試聽課不計入。歷史累計：購買 ${_calc.all.purchased} 堂、已完課 ${_calc.all.completed} 堂。`
+              : `Cards above count ACTIVE purchases only; ended/stopped ones are listed for reference. Remaining = purchased − completed − absent (leave doesn't use a session — it's made up). Trial lessons excluded. Lifetime: ${_calc.all.purchased} purchased, ${_calc.all.completed} completed.`}
+          </div>
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:11.5,minWidth:520}}>
+              <thead>
+                <tr style={{color:"#546E7A",textAlign:"left",borderBottom:"1px solid #E0E0E0"}}>
+                  {[lang==="zh"?"付款日":"Paid",lang==="zh"?"課程":"Course",lang==="zh"?"購買":"Bought",lang==="zh"?"已完課":"Done",lang==="zh"?"缺勤":"Absent",lang==="zh"?"請假":"Leave",lang==="zh"?"剩餘":"Left",lang==="zh"?"狀態":"Status"].map((h,i)=><th key={i} style={{padding:"5px 6px",fontWeight:600,whiteSpace:"nowrap"}}>{h}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {_calc.cycles.map(cy=>(
+                  <tr key={cy.enrollment.id} style={{borderBottom:"0.5px solid #F0F0F0",opacity:cy.inactive?0.55:1}}>
+                    <td style={{padding:"6px",whiteSpace:"nowrap"}}>{cy.enrollment.payDate||"—"}</td>
+                    <td style={{padding:"6px",maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cy.course.subject}</td>
+                    <td style={{padding:"6px"}}>{cy.total}</td>
+                    <td style={{padding:"6px",color:"#2E7D32",fontWeight:600}}>{cy.done}</td>
+                    <td style={{padding:"6px",color:cy.absent?"#D32F2F":"inherit"}}>{cy.absent}</td>
+                    <td style={{padding:"6px"}}>{cy.leave}</td>
+                    <td style={{padding:"6px",color:"#1A6B8A",fontWeight:600}}>{cy.remaining}</td>
+                    <td style={{padding:"6px",whiteSpace:"nowrap"}}>{cy.inactive?(lang==="zh"?"已結束／中斷":"Ended"):(lang==="zh"?"進行中":"Active")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* ── Remaining sessions breakdown ── */}
       {upcoming.length>0 && (
@@ -12229,7 +12689,8 @@ function StudentTeacherIntroPanel({ currentUser, users, courses, teacherDirEntri
   }
 
   // Find the student's own teacher(s) via their courses
-  const myTeacherIds = [...new Set(courses.filter(c=>c.studentId===currentUser.id).map(c=>c.teacherId))];
+  const _hiddenTeachers = (users.find(u=>u.id===currentUser.id)?.hiddenTeacherIds) || currentUser.hiddenTeacherIds || [];
+  const myTeacherIds = [...new Set(courses.filter(c=>c.studentId===currentUser.id).map(c=>c.teacherId))].filter(id=>!_hiddenTeachers.includes(id));
   const myTeachers = myTeacherIds.map(id=>users.find(u=>u.id===id)).filter(Boolean);
 
   return (
@@ -12348,7 +12809,7 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, setCourse
               // "剩餘堂數" (bottom box) — literal, non-weighted count anchored 1:1 to
               // 付費與排課 payment records: purchased − (completed + absent).
               // Deliberately independent from the medal number above.
-              const remaining=calcStudentRemaining(currentUser.id,enrollments,courses,attendance,absences).remaining;
+              const remaining=applySessionAdjust(calcStudentRemaining(currentUser.id,enrollments,courses,attendance,absences), users.find(u=>u.id===currentUser.id)||currentUser).remaining;
               return (
                 <div style={{margin:"6px 10px",display:"flex",flexDirection:"column",gap:5}}>
                   <div onClick={()=>setSideTab("progress")} style={{background:medal.bg,borderRadius:8,padding:"9px 11px",cursor:"pointer",border:`1px solid ${medal.color}33`}}>
