@@ -501,7 +501,7 @@ const TRIAL_COLOR = {bg:"#FFFDE7",border:"#F9A825",text:"#F57F17"};
 // Bumped whenever a meaningful set of changes ships. Shown low-key on the
 // login page so version can be confirmed at a glance; also called out
 // whenever a new file is delivered.
-const APP_VERSION = "v1.2.9.1";
+const APP_VERSION = "v1.2.9.2";
 
 const genId = () => "id_" + Math.random().toString(36).slice(2,9);
 
@@ -2805,20 +2805,46 @@ function ScheduleView({ currentUser, users, courses, lang, absences, setAbsences
   // sessions excluded — they're counted separately as 請假). "Done" = planned
   // sessions whose end time has already passed.
   const weekSummary = isAdmin ? (() => {
-    const byDur = {}; let planned = 0, done = 0, leave = 0, leavePast = 0;
+    // bucket: 25 / 50 / other durations / trial — for both planned & completed
+    const mk = () => ({ d25:0, d50:0, trial:0, other:{} });
+    const planned = mk(), done = mk();
+    const leave = { teacher:0, student:0, past:0 };
+    const add = (bk, sl) => {
+      if (sl.course.isTrial) bk.trial++;
+      else if (sl.course.duration===25) bk.d25++;
+      else if (sl.course.duration===50) bk.d50++;
+      else bk.other[sl.course.duration] = (bk.other[sl.course.duration]||0)+1;
+    };
+    const total = bk => bk.d25+bk.d50+bk.trial+Object.values(bk.other).reduce((x,y)=>x+y,0);
     weekSlots.forEach(sl => {
       const attRec = (attendance||[]).find(a=>a.enrollmentId===sl.enrollment?.id && a.date===sl.date);
       const absRec = (absences||[]).find(a=>a.courseId===sl.course.id && a.dateStr===sl.date);
       const over = isSessionOver(sl.date, sl.start, sl.course.duration);
-      if ((attRec && attRec.type!=="other") || absRec) { leave++; if (over) leavePast++; return; }
-      planned++; if (over) done++;
-      byDur[sl.course.duration] = (byDur[sl.course.duration]||0) + 1;
+      const isLeaveAtt = attRec && attRec.type!=="other";
+      if (isLeaveAtt || absRec) {
+        // who left: teacher_leave / teacher-reported = teacher; everything else = student
+        const byTeacher = isLeaveAtt ? attRec.type==="teacher_leave" : absRec.requesterRole==="teacher";
+        if (byTeacher) leave.teacher++; else leave.student++;
+        if (over) leave.past++;
+        return;
+      }
+      add(planned, sl);
+      if (over) add(done, sl);
     });
-    const durs = Object.keys(byDur).map(Number).sort((a,b)=>{ const r=d=>d===25?0:d===50?1:2; return r(a)-r(b) || a-b; });
-    const durText = (durs.length ? durs : [25,50]).map(d => lang==="zh" ? `${d}分鐘 ${byDur[d]||0} 堂` : `${d}-min × ${byDur[d]||0}`).join(lang==="zh"?"、":", ");
-    return lang==="zh"
-      ? `本週預計：${durText}（共 ${planned} 堂）｜目前已完成 ${done} 堂｜請假 ${leave} 堂（已過 ${leavePast}、未到 ${leave-leavePast}）`
-      : `This week planned: ${durText} (${planned} total) | Completed so far: ${done} | On leave: ${leave} (past ${leavePast}, upcoming ${leave-leavePast})`;
+    const fmt = bk => {
+      const parts = [];
+      parts.push(lang==="zh" ? `25分鐘：${bk.d25} 堂` : `25-min: ${bk.d25}`);
+      parts.push(lang==="zh" ? `50分鐘：${bk.d50} 堂` : `50-min: ${bk.d50}`);
+      Object.keys(bk.other).sort((x,y)=>x-y).forEach(d => parts.push(lang==="zh" ? `${d}分鐘：${bk.other[d]} 堂` : `${d}-min: ${bk.other[d]}`));
+      parts.push(lang==="zh" ? `試聽課程：${bk.trial} 堂` : `Trial: ${bk.trial}`);
+      return parts.join(lang==="zh" ? "；" : "; ");
+    };
+    const lv = leave.teacher + leave.student;
+    return {
+      planned: lang==="zh" ? `本週預計（共 ${total(planned)} 堂）：${fmt(planned)}` : `Planned this week (${total(planned)} total): ${fmt(planned)}`,
+      done:    lang==="zh" ? `目前已完成（共 ${total(done)} 堂）：${fmt(done)}` : `Completed so far (${total(done)} total): ${fmt(done)}`,
+      leave:   lang==="zh" ? `請假 ${lv} 堂（師：${leave.teacher} 堂／學生：${leave.student} 堂；已過 ${leave.past}、未到 ${lv-leave.past}）` : `On leave: ${lv} (teacher: ${leave.teacher} / student: ${leave.student}; past ${leave.past}, upcoming ${lv-leave.past})`,
+    };
   })() : null;
 
   const btnStyle = (active) => ({padding:"6px 13px",borderRadius:6,border:active?"none":"0.5px solid #CFD8DC",background:active?"#1A6B8A":"transparent",color:active?"#fff":"#546E7A",fontSize:12,cursor:"pointer"});
@@ -2879,8 +2905,10 @@ function ScheduleView({ currentUser, users, courses, lang, absences, setAbsences
       </div>
 
       {weekSummary && (
-        <div style={{background:"#EEF6FB",border:"1px solid #B3D9EA",borderRadius:8,padding:"8px 12px",marginBottom:"0.75rem",fontSize:12.5,color:"#172F39",lineHeight:1.6}}>
-          📊 {weekSummary}
+        <div style={{background:"#EEF6FB",border:"1px solid #B3D9EA",borderRadius:8,padding:"8px 12px",marginBottom:"0.75rem",fontSize:12.5,color:"#172F39",lineHeight:1.75}}>
+          <div>📊 {weekSummary.planned}</div>
+          <div>✅ {weekSummary.done}</div>
+          <div>🏖 {weekSummary.leave}</div>
         </div>
       )}
 
@@ -4147,6 +4175,70 @@ function UserManager({ users, setUsers, lang, setToast, onImpersonate }) {
 
   const delTargetUser = users.find(u=>u.id===confirmDelUserId);
 
+  // ── Account grouping: built-in role sections + admin-made custom categories,
+  // with suspended accounts auto-collected into a fixed section at the bottom.
+  // Layout (custom categories, section order, collapsed state) is stored in
+  // cp3_user_groups; each account's category is user.groupId (invalid/missing
+  // → falls back to its role section); order within a section is simply the
+  // account's position in the users array.
+  const [grpCfgRaw, setGrpCfg] = useStorage("cp3_user_groups", { custom:[], order:[], collapsed:{} });
+  const grpCfg = { custom: grpCfgRaw?.custom||[], order: grpCfgRaw?.order||[], collapsed: grpCfgRaw?.collapsed||{} };
+  const [newGroupName, setNewGroupName] = useState("");
+  const [renamingGroup, setRenamingGroup] = useState(null); // {id, val}
+  const BUILTIN_GROUPS = [
+    {id:"role_admin",     name: lang==="zh"?"管理員":"Admins",     builtin:true},
+    {id:"role_teacher",   name: lang==="zh"?"老師":"Teachers",     builtin:true},
+    {id:"role_assistant", name: lang==="zh"?"助教":"Assistants",   builtin:true},
+    {id:"role_student",   name: lang==="zh"?"學生":"Students",     builtin:true},
+  ];
+  const allGroups = [...BUILTIN_GROUPS, ...grpCfg.custom];
+  const orderedGroups = [
+    ...grpCfg.order.map(id=>allGroups.find(g=>g.id===id)).filter(Boolean),
+    ...allGroups.filter(g=>!grpCfg.order.includes(g.id)),
+  ];
+  const groupOf = (u) => {
+    if (u.suspended && u.role!=="admin") return "suspended";
+    if (u.groupId && allGroups.some(g=>g.id===u.groupId)) return u.groupId;
+    return allGroups.some(g=>g.id===`role_${u.role}`) ? `role_${u.role}` : "role_student";
+  };
+  const sections = [
+    ...orderedGroups.map(g => ({...g, members: users.filter(u=>groupOf(u)===g.id)})),
+    { id:"suspended", name: lang==="zh"?"⛔ 已停用帳號":"⛔ Suspended accounts", fixed:true, members: users.filter(u=>groupOf(u)==="suspended") },
+  ].filter(sec => sec.fixed ? sec.members.length>0 : (!sec.builtin || sec.members.length>0));
+  const saveCfg = (patch) => setGrpCfg({ ...grpCfg, ...patch });
+  const toggleCollapse = (id) => saveCfg({ collapsed: { ...grpCfg.collapsed, [id]: !grpCfg.collapsed[id] } });
+  const moveGroup = (id, dir) => {
+    const ids = orderedGroups.map(g=>g.id);
+    const i = ids.indexOf(id), j = i+dir;
+    if (i<0 || j<0 || j>=ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    saveCfg({ order: ids });
+  };
+  const addGroup = () => {
+    const name = newGroupName.trim(); if (!name) return;
+    saveCfg({ custom: [...grpCfg.custom, { id:"grp_"+genId(), name }] });
+    setNewGroupName("");
+  };
+  const renameGroup = () => {
+    if (!renamingGroup) return;
+    const name = renamingGroup.val.trim();
+    if (name) saveCfg({ custom: grpCfg.custom.map(g=>g.id===renamingGroup.id?{...g,name}:g) });
+    setRenamingGroup(null);
+  };
+  const deleteGroup = (id) => {
+    saveCfg({ custom: grpCfg.custom.filter(g=>g.id!==id), order: grpCfg.order.filter(x=>x!==id) });
+    setToast(lang==="zh"?"已刪除分類（帳號回到原身分分區）":"Category deleted (accounts returned to their role section)");
+  };
+  const setUserGroup = (uid, gid) => setUsers(users.map(u=>u.id===uid ? {...u, groupId:gid} : u));
+  const moveUser = (uid, dir, members) => {
+    const i = members.findIndex(m=>m.id===uid), j = i+dir;
+    if (i<0 || j<0 || j>=members.length) return;
+    const a = users.findIndex(u=>u.id===members[i].id), b = users.findIndex(u=>u.id===members[j].id);
+    const next = [...users]; [next[a], next[b]] = [next[b], next[a]];
+    setUsers(next);
+  };
+  const arrowBtn = (disabled) => ({fontSize:11,lineHeight:1,width:22,height:22,borderRadius:4,border:"0.5px solid #CFD8DC",background:"#fff",color:disabled?"#CFD8DC":"#546E7A",cursor:disabled?"default":"pointer",padding:0});
+
   return (
     <div>
       {confirmDelUserId && <ConfirmModal title={lang==="zh"?"刪除帳號":"Delete User"} message={lang==="zh"?`確認刪除「${delTargetUser?.name}」的帳號？此操作無法復原。`:`Delete user "${delTargetUser?.name}"? This cannot be undone.`} confirmLabel={lang==="zh"?"確認刪除":"Delete"} onConfirm={doDelUser} onCancel={()=>setConfirmDelUserId(null)} danger/>}
@@ -4218,9 +4310,44 @@ function UserManager({ users, setUsers, lang, setToast, onImpersonate }) {
           </div>
         </div>
       )}
-      <div style={{display:"flex",flexDirection:"column",gap:8}}>
-        {users.map(u=>(
-          <div key={u.id} style={{background:"#FFFFFF",border:"0.5px solid #E0E0E0",borderRadius:10,padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+      <div style={{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
+        <input value={newGroupName} onChange={e=>setNewGroupName(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addGroup();}} placeholder={lang==="zh"?"新增分類名稱（例如：2026 春季班）":"New category name"} style={{...iStyle,width:220}}/>
+        <button onClick={addGroup} disabled={!newGroupName.trim()} style={{fontSize:12,padding:"7px 14px",borderRadius:6,border:"none",background:newGroupName.trim()?"#1A6B8A":"#B0BEC5",color:"#fff",cursor:newGroupName.trim()?"pointer":"default"}}>＋ {lang==="zh"?"新增分類":"Add category"}</button>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:14}}>
+        {sections.map(sec => {
+          const collapsed = !!grpCfg.collapsed[sec.id];
+          const isCustom = !sec.builtin && !sec.fixed;
+          const gi = orderedGroups.findIndex(g=>g.id===sec.id);
+          const secMembers = sec.members;
+          return (
+            <div key={sec.id}>
+              <div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderRadius:8,background:sec.fixed?"#FFEBEE":"#ECEFF1",marginBottom:collapsed?0:8}}>
+                <button onClick={()=>toggleCollapse(sec.id)} title={collapsed?(lang==="zh"?"展開":"Expand"):(lang==="zh"?"收合":"Collapse")} style={{background:"transparent",border:"none",cursor:"pointer",fontSize:13,color:"#546E7A",padding:"0 2px"}}>{collapsed?"▶":"▼"}</button>
+                {renamingGroup?.id===sec.id ? (
+                  <>
+                    <input autoFocus value={renamingGroup.val} onChange={e=>setRenamingGroup({id:sec.id,val:e.target.value})} onKeyDown={e=>{if(e.key==="Enter")renameGroup(); if(e.key==="Escape")setRenamingGroup(null);}} style={{...iStyle,width:180,padding:"4px 8px"}}/>
+                    <button onClick={renameGroup} style={{fontSize:11,padding:"3px 10px",borderRadius:5,border:"none",background:"#1A6B8A",color:"#fff",cursor:"pointer"}}>{t.save}</button>
+                  </>
+                ) : (
+                  <span style={{fontWeight:600,fontSize:13,color:sec.fixed?"#C62828":"#172F39"}}>{sec.name}</span>
+                )}
+                <span style={{fontSize:11,color:"#78909C"}}>({secMembers.length})</span>
+                <span style={{flex:1}}/>
+                {!sec.fixed && <>
+                  <button disabled={gi<=0} onClick={()=>moveGroup(sec.id,-1)} title={lang==="zh"?"分區上移":"Move section up"} style={arrowBtn(gi<=0)}>▲</button>
+                  <button disabled={gi<0||gi>=orderedGroups.length-1} onClick={()=>moveGroup(sec.id,1)} title={lang==="zh"?"分區下移":"Move section down"} style={arrowBtn(gi<0||gi>=orderedGroups.length-1)}>▼</button>
+                </>}
+                {isCustom && <>
+                  <button onClick={()=>setRenamingGroup({id:sec.id,val:sec.name})} style={{fontSize:11,padding:"3px 9px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"#fff",color:"#546E7A",cursor:"pointer"}}>{lang==="zh"?"改名":"Rename"}</button>
+                  <button onClick={()=>deleteGroup(sec.id)} style={{fontSize:11,padding:"3px 9px",borderRadius:5,border:"0.5px solid #C0392B",background:"#fff",color:"#D32F2F",cursor:"pointer"}}>{lang==="zh"?"刪除分類":"Delete"}</button>
+                </>}
+              </div>
+              {!collapsed && (
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {secMembers.length===0 && <div style={{fontSize:12,color:"#9E9E9E",padding:"6px 12px"}}>{lang==="zh"?"（此分類目前沒有帳號 — 從帳號右側的分類下拉選單移進來）":"(empty — move accounts here using the category dropdown on each account)"}</div>}
+                  {secMembers.map((u, secIdx) => (
+                    <div key={u.id} style={{background:"#FFFFFF",border:"0.5px solid #E0E0E0",borderRadius:10,padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap"}}>
             <div>
               <span style={{fontWeight:500,fontSize:14,color:"#172F39"}}>{u.name}</span>
               <span style={{fontSize:12,color:"#546E7A",marginLeft:8}}>@{u.username}</span>
@@ -4229,13 +4356,23 @@ function UserManager({ users, setUsers, lang, setToast, onImpersonate }) {
               {u.suspended && <span style={{fontSize:11,marginLeft:6,background:"#FFEBEE",color:"#C62828",borderRadius:4,padding:"2px 7px",fontWeight:600}}>⛔ {lang==="zh"?"已停用":"Suspended"}</span>}
               {u.suspended && u.resumeRequest?.date && <span style={{fontSize:11,marginLeft:6,background:"#E3F2FD",color:"#1565C0",borderRadius:4,padding:"2px 7px",fontWeight:600}}>📩 {lang==="zh"?`申請復課：${u.resumeRequest.date}`:`Resume request: ${u.resumeRequest.date}`}</span>}
             </div>
-            <div style={{display:"flex",gap:6}}>
+            <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+              <select value={allGroups.some(g=>g.id===u.groupId)?u.groupId:`role_${u.role}`} onChange={e=>setUserGroup(u.id,e.target.value)} title={lang==="zh"?"移到其他分類":"Move to category"} style={{fontSize:11,padding:"4px 6px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"#fff",color:"#546E7A",maxWidth:110}}>
+                {orderedGroups.map(g=><option key={g.id} value={g.id}>{g.name}</option>)}
+              </select>
+              <button disabled={secIdx===0} onClick={()=>moveUser(u.id,-1,secMembers)} title={lang==="zh"?"上移":"Move up"} style={arrowBtn(secIdx===0)}>▲</button>
+              <button disabled={secIdx===secMembers.length-1} onClick={()=>moveUser(u.id,1,secMembers)} title={lang==="zh"?"下移":"Move down"} style={arrowBtn(secIdx===secMembers.length-1)}>▼</button>
               {u.role!=="admin"&&<button onClick={()=>onImpersonate(u)} title={lang==="zh"?"不需密碼，直接切換成此帳號的視角":"No password needed — switch straight into this account's view"} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"0.5px solid #4A9FD4",background:"transparent",color:"#1A6B8A",cursor:"pointer",fontWeight:500}}>🔑 {lang==="zh"?"以此身分登入":"Login as"}</button>}
               {u.role!=="admin"&&<button onClick={()=>{setEditing({...u,newPwd:""});setShowAdd(false);}} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"0.5px solid #CFD8DC",background:"transparent",color:"#546E7A",cursor:"pointer"}}>{t.editUser}</button>}
               {u.role!=="admin"&&<button onClick={()=>delUser(u.id)} style={{fontSize:12,padding:"5px 12px",borderRadius:5,border:"0.5px solid #C0392B",background:"transparent",color:"#D32F2F",cursor:"pointer"}}>{t.deleteUser}</button>}
             </div>
           </div>
-        ))}
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -5178,6 +5315,43 @@ function extendSchedule(course, enrollment, addCount) {
 // session there. If that day has more than one time slot, the compensation
 // uses the first (earliest) one — it's a placeholder the admin can move to
 // an exact time via 更換時間補課 anyway.
+// ── Single source of truth for a student's "remaining sessions" ──
+// Used by BOTH the sidebar teaser and the 課程紀錄 page (they used to each
+// carry their own copy and disagreed).
+//   status per session: completed | upcoming | absent(扣課) | excused | teacher_leave
+//   • attendance "other" is a normal, attended session (it was previously
+//     counted as neither done nor upcoming → remaining came out too high)
+//   • self-reported leave (absences table) is leave, NOT a completed session
+//     (previously it silently counted as completed → remaining too low)
+//   consumed = completed + absent; leave sessions are NOT consumed.
+//   remaining is computed PER enrollment cycle (never lets one cycle's surplus
+//   offset another's) and is 0 for discontinued enrollments / ended courses.
+function sessionStatusFor(course, s, attRec, absRec) {
+  if (attRec && attRec.type!=="other") return attRec.type;
+  if (absRec) return absRec.requesterRole==="teacher" ? "teacher_leave" : "excused";
+  return isSessionOver(s.date, resolveSessionStart(course, s), course.duration) ? "completed" : "upcoming";
+}
+function calcStudentRemaining(studentId, enrollments, courses, attendance, absences) {
+  const out = { purchased:0, completed:0, absent:0, leave:0, remaining:0 };
+  (enrollments||[]).filter(e=>e.studentId===studentId).forEach(e => {
+    const c = (courses||[]).find(x=>x.id===e.courseId);
+    if (!c) return; // orphaned enrollment (course deleted) — nothing real to count
+    const total = parseInt(e.totalSessions)||0;
+    let done = 0, abs = 0;
+    (e.scheduledDates||[]).forEach(s => {
+      const attRec = (attendance||[]).find(a=>a.enrollmentId===e.id && a.date===s.date);
+      const absRec = (absences||[]).find(a=>a.courseId===c.id && a.dateStr===s.date);
+      const st = sessionStatusFor(c, s, attRec, absRec);
+      if (st==="completed") done++;
+      else if (st==="absent") abs++;
+      else if (st==="excused" || st==="teacher_leave") out.leave++;
+    });
+    out.purchased += total; out.completed += done; out.absent += abs;
+    const inactive = e.status==="discontinued" || c.status==="archived";
+    out.remaining += inactive ? 0 : Math.max(0, total - done - abs);
+  });
+  return out;
+}
 function deferExcusedSession(course, enrollment, excusedDate) {
   const existingDates = new Set((enrollment.scheduledDates||[]).map(s=>s.date));
   const patternMap = inferActivePattern(course, enrollment);
@@ -10335,7 +10509,7 @@ function TeacherStudentsPanel({ currentUser, users, courses, enrollments, attend
 
 // ─── Student Class History ────────────────────────────────────────────────────
 // ─── Student Class History ────────────────────────────────────────────────────
-function StudentClassHistory({ currentUser, enrollments, attendance, courses, users, lang, dirLoaded, feedback }) {
+function StudentClassHistory({ currentUser, enrollments, attendance, courses, users, lang, dirLoaded, feedback, absences }) {
   const t = T[lang];
   const today = new Date().toISOString().slice(0,10);
 
@@ -10360,9 +10534,8 @@ function StudentClassHistory({ currentUser, enrollments, attendance, courses, us
     const sessVal = course.duration===25 ? 1 : 2;
     (enr.scheduledDates||[]).forEach(s => {
       const attRec = attendance.find(a=>a.enrollmentId===enr.id&&a.date===s.date);
-      const status = attRec
-        ? attRec.type   // "absent" | "excused" | "teacher_leave"
-        : isSessionOver(s.date, resolveSessionStart(course, s), course.duration) ? "completed" : "upcoming";
+      const absRec = (absences||[]).find(a=>a.courseId===course.id && a.dateStr===s.date);
+      const status = sessionStatusFor(course, s, attRec, absRec);
       sessions.push({
         date: s.date,
         dayIndex: s.dayIndex,
@@ -10388,14 +10561,14 @@ function StudentClassHistory({ currentUser, enrollments, attendance, courses, us
   // into 付費與排課's 購買堂數 field. completedCount/absentCount are counted
   // directly from that same enrollment's scheduledDates, so the numbers are
   // guaranteed to reconcile: purchased = completed + absent + upcoming.
-  const totalPurchased = myEnrollments.reduce((n,e)=>n+(e.totalSessions||0),0);
-  const completedCount = past.filter(s=>s.status==="completed").length;
-  const excusedCount   = past.filter(s=>s.status==="excused"||s.status==="teacher_leave").length;
-  const absentCount    = past.filter(s=>s.status==="absent").length;
-  // Remaining = purchased − everything already consumed (completed or absent).
-  // Excused/teacher-leave sessions don't consume a slot — they get automatically
-  // deferred to a later date by 付費與排課, so they're not subtracted here.
-  const remainingCount = Math.max(0, totalPurchased - completedCount - absentCount);
+  const _calc = calcStudentRemaining(currentUser.id, enrollments, courses, attendance, absences);
+  const totalPurchased = _calc.purchased;
+  const completedCount = _calc.completed;
+  const excusedCount   = _calc.leave;
+  const absentCount    = _calc.absent;
+  // Remaining = purchased − (completed + absent 扣課), per enrollment cycle;
+  // leave sessions aren't consumed; ended/discontinued cycles contribute 0.
+  const remainingCount = _calc.remaining;
 
   const STATUS_STYLE = {
     completed:     {bg:"#E8F5E9",color:"#2E7D32",label:lang==="zh"?"完課":"Done"},
@@ -12175,19 +12348,7 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, setCourse
               // "剩餘堂數" (bottom box) — literal, non-weighted count anchored 1:1 to
               // 付費與排課 payment records: purchased − (completed + absent).
               // Deliberately independent from the medal number above.
-              const myEnr=enrollments.filter(e=>e.studentId===currentUser.id);
-              const totalPurchased=myEnr.reduce((n,e)=>n+(e.totalSessions||0),0);
-              let usedCount=0;
-              myEnr.forEach(e=>{
-                const c=courses.find(x=>x.id===e.courseId);
-                if(!c) return;
-                (e.scheduledDates||[]).forEach(s=>{
-                  const attRec=attendance.find(a=>a.enrollmentId===e.id&&a.date===s.date);
-                  if(attRec?.type==="absent"){ usedCount++; return; }
-                  if(!attRec && isSessionOver(s.date,resolveSessionStart(c,s),c.duration)){ usedCount++; }
-                });
-              });
-              const remaining=Math.max(0, totalPurchased - usedCount);
+              const remaining=calcStudentRemaining(currentUser.id,enrollments,courses,attendance,absences).remaining;
               return (
                 <div style={{margin:"6px 10px",display:"flex",flexDirection:"column",gap:5}}>
                   <div onClick={()=>setSideTab("progress")} style={{background:medal.bg,borderRadius:8,padding:"9px 11px",cursor:"pointer",border:`1px solid ${medal.color}33`}}>
@@ -12228,7 +12389,7 @@ function StudentTeacherLayout({ currentUser, users, setUsers, courses, setCourse
           {isStudent && sideTab==="progress"
             ? <StudentProgressPanel currentUser={currentUser} enrollments={enrollments} attendance={attendance} courses={courses} lang={lang} dirLoaded={dirLoaded} confirmedOverride={myConfirmedOverride} absences={absences}/>
             : isStudent && sideTab==="history"
-              ? <StudentClassHistory currentUser={currentUser} enrollments={enrollments} attendance={attendance} courses={courses} users={users} lang={lang} dirLoaded={dirLoaded} feedback={feedback}/>
+              ? <StudentClassHistory currentUser={currentUser} enrollments={enrollments} attendance={attendance} courses={courses} users={users} lang={lang} dirLoaded={dirLoaded} feedback={feedback} absences={absences}/>
             : isStudent && sideTab==="teacherIntro"
               ? <StudentTeacherIntroPanel currentUser={currentUser} users={users} courses={courses} teacherDirEntries={teacherDirEntries} dirLoaded={dirLoaded} lang={lang}/>
             : isStudent && currentUser.canSubmitMaterials && sideTab==="submitMaterials"
@@ -12492,7 +12653,6 @@ export default function App() {
     ? computeMissingFeedback(courses, enrollments, feedback, attendance, absences).filter(m => isTeacherRole ? m.course.teacherId===currentUser.id : true)
     : [];
   const endingSoonList = isAdmin ? computeEndingSoon(courses, enrollments, Number(endingAlertDays)||7) : [];
-  const endingBannerH = endingSoonList.length>0 ? 40 : 0;
   const goToEnrollmentReminder = () => { setActiveTab("admin"); setAdminInitialTab("enroll"); };
   const goToFeedbackReminder = () => {
     if (isAdmin) { setActiveTab("admin"); setAdminInitialTab("feedback"); }
@@ -12565,8 +12725,9 @@ export default function App() {
           <button className="es-logout-btn" onClick={()=>{setCurrentUser(null);setImpersonatorAdmin(null);}} style={{background:"transparent",border:"1px solid rgba(255,255,255,0.15)",color:"rgba(255,255,255,0.7)",borderRadius:6,padding:"5px 10px",cursor:"pointer",fontSize:12,flexShrink:0}}>{t.logout}</button>
         </div>
       </header>
+      <div style={{position:"sticky",top:58,zIndex:99}}>
       {impersonatorAdmin && (
-        <div style={{background:"#7B1FA2",color:"#fff",padding:"7px 1.25rem",display:"flex",alignItems:"center",justifyContent:"center",gap:10,flexWrap:"wrap",fontSize:12,position:"sticky",top:58,zIndex:99}}>
+        <div style={{background:"#7B1FA2",color:"#fff",padding:"7px 1.25rem",display:"flex",alignItems:"center",justifyContent:"center",gap:10,flexWrap:"wrap",fontSize:12}}>
           <span>👁 {lang==="zh"?`你正在以「${currentUser.name}」（${roleLabel}）的身分檢視 — 這不是你自己的帳號`:`You're viewing as "${currentUser.name}" (${roleLabel}) — this isn't your own account`}</span>
           <button onClick={stopImpersonating} style={{background:"#fff",color:"#7B1FA2",border:"none",borderRadius:5,padding:"3px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
             ← {lang==="zh"?"返回管理員帳號":"Return to admin"}
@@ -12574,18 +12735,25 @@ export default function App() {
         </div>
       )}
       {endingSoonList.length > 0 && (
-        <div style={{background:"#B71C1C",color:"#fff",padding:"8px 1.25rem",display:"flex",alignItems:"center",justifyContent:"center",gap:10,flexWrap:"wrap",fontSize:13,fontWeight:600,position:"sticky",top:58+(impersonatorAdmin?48:0),zIndex:101,borderBottom:"2px solid #FF8A80",minHeight:40,boxSizing:"border-box"}}>
-          <span>🚨 {lang==="zh"
-            ? `${endingSoonList.length} 位學生的課程即將結束：${endingSoonList.slice(0,3).map(x=>`${(users.find(u=>u.id===x.enrollment.studentId)||{}).name||"?"}（${x.lastDate}，剩 ${x.daysLeft} 天）`).join("、")}${endingSoonList.length>3?" …":""}，請盡快聯繫續約`
-            : `${endingSoonList.length} student course(s) ending soon: ${endingSoonList.slice(0,3).map(x=>`${(users.find(u=>u.id===x.enrollment.studentId)||{}).name||"?"} (${x.lastDate}, ${x.daysLeft}d left)`).join(", ")}${endingSoonList.length>3?" …":""} — follow up on renewal`}</span>
-          <button onClick={goToEnrollmentReminder} style={{background:"#fff",color:"#B71C1C",border:"none",borderRadius:5,padding:"3px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>{lang==="zh"?"前往處理 →":"Go →"}</button>
-          <select value={endingAlertDays} onChange={e=>setEndingAlertDays(Number(e.target.value))} title={lang==="zh"?"提前提醒天數":"Alert window"} style={{fontSize:11,borderRadius:4,border:"none",padding:"2px 4px"}}>
-            {[3,7,10,14,21].map(n=><option key={n} value={n}>{lang==="zh"?`提前 ${n} 天`:`${n} days ahead`}</option>)}
-          </select>
+        <div style={{background:"#B71C1C",color:"#fff",padding:"8px 1.25rem",fontSize:13,borderBottom:"2px solid #FF8A80",boxSizing:"border-box"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,flexWrap:"wrap",fontWeight:700}}>
+            <span>🚨 {lang==="zh"?`${endingSoonList.length} 位學生的課程即將結束，請盡快聯繫續約`:`${endingSoonList.length} student course(s) ending soon — follow up on renewal`}</span>
+            <button onClick={goToEnrollmentReminder} style={{background:"#fff",color:"#B71C1C",border:"none",borderRadius:5,padding:"3px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>{lang==="zh"?"前往處理 →":"Go →"}</button>
+            <select value={endingAlertDays} onChange={e=>setEndingAlertDays(Number(e.target.value))} title={lang==="zh"?"提前提醒天數":"Alert window"} style={{fontSize:12,borderRadius:5,border:"none",padding:"3px 6px",background:"#fff",color:"#B71C1C",fontWeight:600,colorScheme:"light"}}>
+              {[3,7,10,14,21].map(n=><option key={n} value={n} style={{color:"#172F39",background:"#fff"}}>{lang==="zh"?`提前 ${n} 天`:`${n} days ahead`}</option>)}
+            </select>
+          </div>
+          <div style={{display:"flex",flexWrap:"wrap",justifyContent:"center",gap:6,marginTop:6}}>
+            {endingSoonList.map(x=>(
+              <span key={x.enrollment.id} style={{background:"rgba(255,255,255,0.18)",borderRadius:12,padding:"2px 10px",fontSize:12,fontWeight:500,whiteSpace:"nowrap"}}>
+                {(users.find(u=>u.id===x.enrollment.studentId)||{}).name||"?"}（{x.lastDate}{lang==="zh"?`・剩 ${x.daysLeft} 天`:`, ${x.daysLeft}d left`}）
+              </span>
+            ))}
+          </div>
         </div>
       )}
       {globalMissingFeedback.length > 0 && (
-        <div style={{background:"#FFF3E0",color:"#E65100",padding:"7px 1.25rem",display:"flex",alignItems:"center",justifyContent:"center",gap:10,flexWrap:"wrap",fontSize:12,position:"sticky",top:(impersonatorAdmin?106:58)+endingBannerH,zIndex:98,borderBottom:"1px solid #FFCC80"}}>
+        <div style={{background:"#FFF3E0",color:"#E65100",padding:"7px 1.25rem",display:"flex",alignItems:"center",justifyContent:"center",gap:10,flexWrap:"wrap",fontSize:12,borderBottom:"1px solid #FFCC80"}}>
           <span>⚠️ {isTeacherRole
             ? (lang==="zh"?`你有 ${globalMissingFeedback.length} 堂課尚未填寫課後反饋`:`You have ${globalMissingFeedback.length} session(s) still needing feedback`)
             : (lang==="zh"?`全站共有 ${globalMissingFeedback.length} 堂課尚未填寫課後反饋`:`${globalMissingFeedback.length} session(s) across all classes still need feedback`)}</span>
@@ -12595,7 +12763,7 @@ export default function App() {
         </div>
       )}
       {newStudentLeaveCount > 0 && (
-        <div style={{background:"#E3F2FD",color:"#1565C0",padding:"7px 1.25rem",display:"flex",alignItems:"center",justifyContent:"center",gap:10,flexWrap:"wrap",fontSize:12,position:"sticky",top:58+(impersonatorAdmin?48:0)+endingBannerH+(globalMissingFeedback.length>0?36:0),zIndex:97,borderBottom:"1px solid #90CAF9"}}>
+        <div style={{background:"#E3F2FD",color:"#1565C0",padding:"7px 1.25rem",display:"flex",alignItems:"center",justifyContent:"center",gap:10,flexWrap:"wrap",fontSize:12,borderBottom:"1px solid #90CAF9"}}>
           <span>🔔 {lang==="zh"?`有 ${newStudentLeaveCount} 筆學生請假通知（無須審核，僅供知悉）`:`${newStudentLeaveCount} new student leave notice(s) (no action needed, awareness only)`}</span>
           {isAdmin && (
             <button onClick={goToLeaveReminder} style={{background:"#1565C0",color:"#fff",border:"none",borderRadius:5,padding:"3px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
@@ -12604,6 +12772,7 @@ export default function App() {
           )}
         </div>
       )}
+      </div>
       {showPwdModal && <ChangePasswordModal currentUser={currentUser} setUsers={setUsers} lang={lang} setToast={setToast} onClose={()=>setShowPwdModal(false)}/>}
       {(isAdmin||isAssistant)&&(
         <div style={{background:"#172F39",borderBottom:"1px solid rgba(26,107,138,0.1)",padding:"0 1.25rem",display:"flex",gap:4,alignItems:"center",justifyContent:"space-between"}}>
