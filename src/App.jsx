@@ -501,7 +501,7 @@ const TRIAL_COLOR = {bg:"#FFFDE7",border:"#F9A825",text:"#F57F17"};
 // Bumped whenever a meaningful set of changes ships. Shown low-key on the
 // login page so version can be confirmed at a glance; also called out
 // whenever a new file is delivered.
-const APP_VERSION = "v1.2.9.3";
+const APP_VERSION = "v1.2.9.5";
 
 const genId = () => "id_" + Math.random().toString(36).slice(2,9);
 
@@ -1079,6 +1079,180 @@ function DiscontinueModal({ course, student, futureCount, lang, onConfirm, onCan
 // ─── Material Panel (modal — full course, all sessions) ──────────────────────
 // Shows ALL materials for a course, optionally pre-filtered to a specific day.
 // Each entry stores: courseId, dayIndex (0-6), date (YYYY-MM-DD), title, url, desc
+// ─── 教材順延 (admin only) — shift a course's materials N sessions later ──────
+// "N sessions" is counted along the course's FULL scheduled timeline (leave
+// dates and make-up sessions included), so "student took 3 leaves → shift 3"
+// does exactly what it says. Every material dated on/after the chosen start
+// date moves N positions later. A landing spot must be a future, normally-held
+// session; otherwise (or if the schedule runs out) the shift is blocked and
+// explained in the preview — nothing is ever half-applied.
+function planMaterialShift({ course, enrollments, materials, attendance, absences, feedback, startDate, n }) {
+  const enrs = (enrollments||[]).filter(e => e.courseId===course.id);
+  const seen = new Set();
+  const sessions = enrs.flatMap(e => (e.scheduledDates||[]).map(s => ({ date:s.date, dayIndex:s.dayIndex, start:resolveSessionStart(course, s) })))
+    .filter(s => { if (!s.date) return false; const k=s.date+"|"+s.start; if (seen.has(k)) return false; seen.add(k); return true; })
+    .sort((a,b) => a.date.localeCompare(b.date) || (a.start||"").localeCompare(b.start||""));
+  const isLeave = d => enrs.some(e => (attendance||[]).some(a => a.enrollmentId===e.id && a.date===d && a.type!=="other")) || (absences||[]).some(a => a.courseId===course.id && a.dateStr===d);
+  const info = sessions.map(s => ({ ...s, leave:isLeave(s.date), over:isSessionOver(s.date, s.start, course.duration) }));
+  const firstIdx = new Map(); info.forEach((s,i) => { if (!firstIdx.has(s.date)) firstIdx.set(s.date, i); });
+  const movable = (materials||[]).filter(m => m.courseId===course.id && m.date && m.date>=startDate)
+    .sort((a,b) => a.date.localeCompare(b.date) || (a.addedAt||"").localeCompare(b.addedAt||""));
+  let shortfall = 0, errors = 0, orphans = 0, warns = 0;
+  const moves = [];
+  movable.forEach(m => {
+    const pos = firstIdx.get(m.date);
+    if (pos===undefined) { orphans++; return; } // date isn't in the schedule at all — never touched
+    const target = info[pos + n];
+    const hasFeedback = (feedback||[]).some(f => enrs.some(e=>e.id===f.enrollmentId) && f.date===m.date);
+    const fromHeld = info[pos].over && !info[pos].leave;
+    let err = null;
+    if (!target) { err = "none"; shortfall++; }
+    else if (target.leave) { err = "leave"; errors++; }
+    else if (target.over) { err = "past"; errors++; }
+    if (hasFeedback || fromHeld) warns++;
+    moves.push({ m, from:m.date, to:target?.date||null, toDayIndex:target?.dayIndex, err, hasFeedback, fromHeld });
+  });
+  return { moves, shortfall, errors, orphans, warns, blocked: shortfall>0 || errors>0 || moves.length===0 };
+}
+async function materialShiftLogRead() {
+  try { const r = await window.storage.get("cp3_material_shift_log"); return r?.value ? JSON.parse(r.value) : []; } catch { return []; }
+}
+async function materialShiftLogWrite(list) {
+  try { await window.storage.set("cp3_material_shift_log", JSON.stringify(list.slice(0,60))); return true; } catch { return false; }
+}
+
+function MaterialShiftModal({ course, startDate:presetStart, presetN, materials, setMaterials, enrollments, attendance, absences, feedback, currentUser, lang, setToast, onClose }) {
+  const zh = lang==="zh";
+  const courseMats = (materials||[]).filter(m => m.courseId===course.id && m.date);
+  const datesWithMat = [...new Set(courseMats.map(m=>m.date))].sort();
+  const today = new Date().toISOString().slice(0,10);
+  const defaultStart = presetStart || datesWithMat.find(d=>d>=today) || datesWithMat[datesWithMat.length-1] || "";
+  const [startDate, setStartDate] = useState(defaultStart);
+  const [n, setN] = useState(presetN||1);
+  const [log, setLog] = useState([]);
+  const [busy, setBusy] = useState(false);
+  useEffect(()=>{ materialShiftLogRead().then(setLog); },[]);
+  const myLog = log.filter(l=>l.courseId===course.id).slice(0,10);
+  const nn = Math.max(1, Math.min(60, parseInt(n)||1));
+  const plan = startDate ? planMaterialShift({ course, enrollments, materials, attendance, absences, feedback, startDate, n:nn }) : null;
+  const wd = d => T[lang].days[(new Date(d+"T00:00:00").getDay()+6)%7];
+  const errText = e => e==="none" ? (zh?"後面沒有排課了":"No session left") : e==="leave" ? (zh?"落點是請假日":"Lands on a leave day") : (zh?"落點已上完":"Lands on a past class");
+
+  if (currentUser?.role!=="admin") return null; // admin only
+
+  const execute = async () => {
+    if (!plan || plan.blocked || busy) return;
+    setBusy(true);
+    const moveMap = new Map(plan.moves.map(x=>[x.m.id, x]));
+    setMaterials(prev => prev.map(m => { const mv = moveMap.get(m.id); return mv ? { ...m, date:mv.to, dayIndex:mv.toDayIndex } : m; }));
+    const entry = { id:genId(), courseId:course.id, at:new Date().toISOString(), by:currentUser.name||"admin", startDate, n:nn,
+      moves: plan.moves.map(x=>({ id:x.m.id, title:x.m.title||"", from:x.from, to:x.to, fromDayIndex:x.m.dayIndex, toDayIndex:x.toDayIndex })) };
+    const fresh = await materialShiftLogRead();
+    await materialShiftLogWrite([entry, ...fresh]);
+    setLog([entry, ...fresh]);
+    setToast(zh?`已將 ${plan.moves.length} 筆教材往後挪 ${nn} 堂`:`Shifted ${plan.moves.length} material(s) ${nn} session(s) later`);
+    setBusy(false);
+  };
+  const undoLast = async () => {
+    const last = myLog[0]; if (!last || busy) return;
+    setBusy(true);
+    let restored = 0, skipped = 0;
+    const byId = new Map(last.moves.map(x=>[x.id,x]));
+    setMaterials(prev => prev.map(m => {
+      const mv = byId.get(m.id);
+      if (!mv) return m;
+      if (m.date===mv.to) { restored++; return { ...m, date:mv.from, dayIndex:mv.fromDayIndex ?? m.dayIndex }; }
+      skipped++; return m; // edited since — leave it alone
+    }));
+    const fresh = await materialShiftLogRead();
+    const next = fresh.filter(l=>l.id!==last.id);
+    await materialShiftLogWrite(next); setLog(next);
+    setToast(zh?`已復原 ${last.moves.length-skipped} 筆${skipped?`（${skipped} 筆之後被改過，未動）`:""}`:`Undone: ${last.moves.length-skipped}${skipped?` (${skipped} edited since, left alone)`:""}`);
+    setBusy(false);
+  };
+  const iStyle = {padding:"7px 9px",borderRadius:6,border:"0.5px solid #CFD8DC",fontSize:13,background:"#fff",color:"#172F39"};
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9400,padding:"1rem"}}>
+      <div style={{background:"#fff",borderRadius:16,width:"100%",maxWidth:560,maxHeight:"90vh",display:"flex",flexDirection:"column",overflow:"hidden",boxShadow:"0 8px 36px rgba(23,47,57,0.3)"}}>
+        <div style={{background:"#172F39",padding:"13px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+          <span style={{fontSize:14,fontWeight:600,color:"#fff"}}>⏭ {zh?"教材順延":"Shift Materials"} · <span style={{fontWeight:400,fontSize:12}}>{course.subject}</span></span>
+          <button onClick={onClose} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",color:"#fff",fontSize:16}}>×</button>
+        </div>
+        <div style={{padding:"14px 18px",overflowY:"auto",flex:1,minHeight:0}}>
+          <p style={{fontSize:11.5,color:"#546E7A",margin:"0 0 10px",lineHeight:1.6}}>
+            {zh?"從「起點日期」開始，當天與之後的每份教材，整串往後平移 N 堂（照這門課的完整排課順序算，請假日也算一堂，所以學生請 3 堂就挪 3）。落點必須是未來、會正常上的課。":"From the start date, that day's and every later material shifts N sessions later along the course's full schedule (leave days count as a position — 3 leaves → shift 3). A landing spot must be a future, normally-held session."}
+          </p>
+          {datesWithMat.length===0 ? <div style={{color:"#9E9E9E",fontSize:13,padding:"1rem 0"}}>{zh?"這門課目前沒有任何教材。":"No materials for this course yet."}</div> : (
+            <>
+              <div style={{display:"flex",gap:12,flexWrap:"wrap",alignItems:"flex-end",marginBottom:12}}>
+                <div>
+                  <div style={{fontSize:11,color:"#546E7A",marginBottom:3}}>{zh?"起點日期（有教材的日子）":"Start date (days with material)"}</div>
+                  <select value={startDate} onChange={e=>setStartDate(e.target.value)} style={iStyle}>
+                    {datesWithMat.map(d=><option key={d} value={d}>{d}（{wd(d)}）</option>)}
+                  </select>
+                </div>
+                <div>
+                  <div style={{fontSize:11,color:"#546E7A",marginBottom:3}}>{zh?"往後挪幾堂":"Shift by (sessions)"}</div>
+                  <div style={{display:"flex",gap:4,alignItems:"center"}}>
+                    {[1,2,3].map(k=><button key={k} onClick={()=>setN(k)} style={{padding:"6px 11px",borderRadius:6,border:nn===k?"none":"0.5px solid #CFD8DC",background:nn===k?"#1A6B8A":"#fff",color:nn===k?"#fff":"#546E7A",fontSize:12,cursor:"pointer"}}>{k}</button>)}
+                    <input type="number" min={1} max={60} value={n} onChange={e=>setN(e.target.value)} style={{...iStyle,width:64}}/>
+                  </div>
+                </div>
+              </div>
+
+              {plan && (
+                <>
+                  <div style={{fontSize:12.5,fontWeight:600,color:"#172F39",marginBottom:6}}>👀 {zh?`預覽（共 ${plan.moves.length} 份教材）`:`Preview (${plan.moves.length} material(s))`}</div>
+                  {plan.moves.length===0 && <div style={{fontSize:12,color:"#9E9E9E"}}>{zh?"起點日期之後沒有可挪的教材。":"Nothing to shift from that date."}</div>}
+                  <div style={{maxHeight:230,overflowY:"auto",border:"0.5px solid #E0E0E0",borderRadius:8}}>
+                    {plan.moves.map(x=>(
+                      <div key={x.m.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",borderBottom:"0.5px solid #F0F0F0",background:x.err?"#FFF5F5":"#fff",fontSize:12,flexWrap:"wrap"}}>
+                        <span style={{flex:1,minWidth:90,color:"#172F39",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{x.m.title||"—"}</span>
+                        <span style={{color:"#546E7A",whiteSpace:"nowrap"}}>{x.from}（{wd(x.from)}）→ <b style={{color:x.err?"#D32F2F":"#1A6B8A"}}>{x.to?`${x.to}（${wd(x.to)}）`:"✕"}</b></span>
+                        {x.err && <span style={{fontSize:10.5,color:"#D32F2F",fontWeight:600}}>⛔ {errText(x.err)}</span>}
+                        {!x.err && x.hasFeedback && <span style={{fontSize:10.5,color:"#E65100"}}>⚠ {zh?"有反饋（反饋留在原日期）":"has feedback (stays on old date)"}</span>}
+                        {!x.err && !x.hasFeedback && x.fromHeld && <span style={{fontSize:10.5,color:"#E65100"}}>⚠ {zh?"原課堂已上完":"original class already held"}</span>}
+                      </div>
+                    ))}
+                  </div>
+                  {plan.shortfall>0 && (
+                    <div style={{marginTop:8,background:"#FFEBEE",border:"1px solid #EF9A9A",borderRadius:8,padding:"8px 11px",fontSize:12,color:"#C62828",lineHeight:1.6}}>
+                      ⛔ {zh?`排課不夠：缺 ${plan.shortfall} 堂。請先到「付費與排課」用「➕ 加開課堂」補排，再回來挪。`:`Not enough sessions: short by ${plan.shortfall}. Add sessions first via ➕ in 付費與排課, then come back.`}
+                    </div>
+                  )}
+                  {plan.errors>0 && (
+                    <div style={{marginTop:8,background:"#FFEBEE",border:"1px solid #EF9A9A",borderRadius:8,padding:"8px 11px",fontSize:12,color:"#C62828",lineHeight:1.6}}>
+                      ⛔ {zh?`有 ${plan.errors} 份教材會落在請假日或已上完的課上。請調整「往後挪幾堂」或換一個起點日期。`:`${plan.errors} material(s) would land on a leave day or an already-held class. Adjust the number or the start date.`}
+                    </div>
+                  )}
+                  {plan.orphans>0 && <div style={{marginTop:8,fontSize:11.5,color:"#8D6E00"}}>ℹ️ {zh?`有 ${plan.orphans} 份教材的日期不在排課裡，不會被挪動。`:`${plan.orphans} material(s) dated outside the schedule are left untouched.`}</div>}
+                  {plan.warns>0 && !plan.blocked && <div style={{marginTop:8,fontSize:11.5,color:"#8D6E00"}}>⚠ {zh?"標示 ⚠ 的教材一樣會被挪動；老師反饋是寫給原日期那堂課的，不會跟著移動。":"Items marked ⚠ are still moved; teacher feedback belongs to the original day and does not move."}</div>}
+                  <div style={{marginTop:6,fontSize:11,color:"#9E9E9E"}}>{zh?"教材本身的「已上完／沿用」狀態會跟著教材一起挪。起點到落點之間會空出幾堂沒有教材，可以事後手動補。":"A material's own done/reuse status moves with it. The sessions vacated in between will have no material — fill them in manually."}</div>
+                </>
+              )}
+              <button onClick={execute} disabled={!plan||plan.blocked||busy} style={{width:"100%",marginTop:12,padding:"10px",borderRadius:8,border:"none",background:(!plan||plan.blocked||busy)?"#B0BEC5":"#1A6B8A",color:"#fff",fontSize:14,fontWeight:600,cursor:(!plan||plan.blocked||busy)?"default":"pointer"}}>
+                {zh?`確認順延（${plan?.moves.length||0} 份 ×${nn} 堂）`:`Confirm shift (${plan?.moves.length||0} × ${nn})`}
+              </button>
+            </>
+          )}
+
+          {myLog.length>0 && (
+            <div style={{marginTop:18}}>
+              <div style={{fontSize:12.5,fontWeight:600,color:"#172F39",marginBottom:6}}>🕘 {zh?"順延紀錄（這門課，最近 10 次）":"Shift history (this course, last 10)"}</div>
+              {myLog.map((l,i)=>(
+                <div key={l.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,padding:"5px 0",borderTop:"0.5px solid #F0F0F0",fontSize:11.5,color:"#546E7A",flexWrap:"wrap"}}>
+                  <span>{new Date(l.at).toLocaleString()} · {l.by} — {zh?`從 ${l.startDate} 起，${l.moves.length} 份往後 ${l.n} 堂`:`from ${l.startDate}: ${l.moves.length} item(s) × ${l.n}`}</span>
+                  {i===0 ? <button onClick={undoLast} disabled={busy} style={{fontSize:11,padding:"4px 10px",borderRadius:5,border:"0.5px solid #E65100",background:"transparent",color:"#E65100",cursor:"pointer"}}>↩ {zh?"復原這次":"Undo"}</button> : <span style={{fontSize:10,color:"#B0BEC5"}}>{zh?"（只能依序從最新的開始復原）":"(undo newest first)"}</span>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MaterialPanel({ course, initialDate, users, lang, currentUser, materials, setMaterials, setToast, onClose, enrollments, attendance, absences, feedback }) {
   const t = T[lang];
   const canEdit = currentUser.role === "admin" || currentUser.role === "teacher";
@@ -1152,38 +1326,9 @@ function MaterialPanel({ course, initialDate, users, lang, currentUser, material
     return {classStatus, matLabel, isLeave: !!(attRec || selfAbs)};
   };
 
-  // ── 教材依序順延 — when a class didn't happen (leave), whatever material
-  // was assigned to that date never got used. This shifts it — and every
-  // material after it — forward by one slot in the course's actual
-  // scheduled-date sequence, so the sequence stays in order without the
-  // admin having to manually re-date every material one by one.
-  const [cascadeConfirm, setCascadeConfirm] = useState(null); // dateStr being confirmed
-  const cascadeMaterialsForward = (leaveDate) => {
-    const futureDates = [...new Set(
-      courseEnrs.flatMap(e => (e.scheduledDates||[]).map(s=>s.date)).filter(d => d >= leaveDate)
-    )].sort();
-    const matForDate = (d) => (materials||[]).find(m=>m.courseId===course.id && m.date===d);
-    // Walk from the END backward so each move target is free before we place
-    // something new there (otherwise an earlier move could get overwritten).
-    const moves = [];
-    for (let i = futureDates.length - 1; i >= 0; i--) {
-      const mat = matForDate(futureDates[i]);
-      if (!mat) continue;
-      if (i + 1 >= futureDates.length) continue; // nothing after it — leave in place, nowhere to push to
-      moves.push({ id: mat.id, newDate: futureDates[i+1], newDayIndex: dateDayIndex(futureDates[i+1]) });
-    }
-    if (!moves.length) {
-      setToast(lang==="zh"?"沒有後續可挪動的堂次（已經是最後一堂）":"Nothing to shift — this was already the last scheduled session");
-      setCascadeConfirm(null);
-      return;
-    }
-    setMaterials(prev => prev.map(m => {
-      const mv = moves.find(x=>x.id===m.id);
-      return mv ? {...m, date:mv.newDate, dayIndex:mv.newDayIndex} : m;
-    }));
-    setToast(lang==="zh"?`已將 ${moves.length} 筆教材依序順延一堂`:`Shifted ${moves.length} material(s) forward by one session`);
-    setCascadeConfirm(null);
-  };
+  // 教材順延 (admin only) — opens MaterialShiftModal. `shiftTarget` = {startDate, n} or {} for "pick it yourself".
+  const [shiftTarget, setShiftTarget] = useState(null);
+  const isAdminUser = currentUser.role==="admin";
 
   // ── filter / sort state ──
   // initialDate: "YYYY-MM-DD" for one specific class occurrence, or null (show all)
@@ -1335,23 +1480,7 @@ function MaterialPanel({ course, initialDate, users, lang, currentUser, material
           </div>
         );
       })()}
-      {cascadeConfirm && (() => {
-        const futureDates = [...new Set(
-          courseEnrs.flatMap(e => (e.scheduledDates||[]).map(s=>s.date)).filter(d => d >= cascadeConfirm)
-        )].sort();
-        const affectedCount = futureDates.filter(d => (materials||[]).some(m=>m.courseId===course.id && m.date===d)).length;
-        return (
-          <ConfirmModal
-            title={lang==="zh"?"確認教材順延":"Confirm Material Shift"}
-            message={lang==="zh"
-              ? `確認 ${cascadeConfirm} 這堂課沒上到、教材沒被使用？確認後這堂（如果有教材）跟之後每一筆有教材的堂次，都會依序往後挪一堂（影響約 ${affectedCount} 筆教材）。此操作可以之後再手動調整回來，但不會自動復原。`
-              : `Confirm the class on ${cascadeConfirm} didn't happen and its material wasn't used? This will shift it (if any) and every material after it forward by one session (affects about ${affectedCount} material(s)). You can manually adjust dates back later, but there's no automatic undo.`}
-            confirmLabel={lang==="zh"?"確認順延":"Confirm Shift"}
-            onConfirm={()=>cascadeMaterialsForward(cascadeConfirm)}
-            onCancel={()=>setCascadeConfirm(null)}
-          />
-        );
-      })()}
+      {shiftTarget && isAdminUser && <MaterialShiftModal course={course} startDate={shiftTarget.startDate} presetN={shiftTarget.n} materials={materials} setMaterials={setMaterials} enrollments={enrollments} attendance={attendance} absences={absences} feedback={feedback} currentUser={currentUser} lang={lang} setToast={setToast} onClose={()=>setShiftTarget(null)}/>}
       <div style={{background:"#FFFFFF",borderRadius:"18px 18px 0 0",width:"100%",maxWidth:560,maxHeight:"90vh",display:"flex",flexDirection:"column",boxSizing:"border-box"}}>
 
         {/* ── Header ── */}
@@ -1390,6 +1519,11 @@ function MaterialPanel({ course, initialDate, users, lang, currentUser, material
             </div>
             {canEdit && !showForm && (
               <div style={{display:"flex",gap:6}}>
+                {isAdminUser && (
+                  <button onClick={()=>setShiftTarget({})} title={lang==="zh"?"把教材整串往後平移幾堂":"Shift materials N sessions later"} style={{display:"flex",alignItems:"center",gap:5,padding:"6px 12px",borderRadius:7,background:"transparent",border:"1px solid #E65100",color:"#E65100",fontSize:12,cursor:"pointer"}}>
+                    ⏭ {lang==="zh"?"教材順延":"Shift"}
+                  </button>
+                )}
                 <button onClick={()=>setShowBatchInPanel(true)} style={{display:"flex",alignItems:"center",gap:5,padding:"6px 12px",borderRadius:7,background:"transparent",border:"1px solid #4A9FD4",color:"#1A6B8A",fontSize:12,cursor:"pointer",fontWeight:500}}>
                   📦 {lang==="zh"?"批次輸入":"Batch Input"}
                 </button>
@@ -1476,8 +1610,8 @@ function MaterialPanel({ course, initialDate, users, lang, currentUser, material
                 {info?.matLabel && (
                   <span title={lang==="zh"?"老師反饋回報的教材狀況":"Material status reported via teacher feedback"} style={{fontSize:9,background:"#EEF6FB",color:"#1A6B8A",borderRadius:4,padding:"1px 7px",fontWeight:600,whiteSpace:"nowrap"}}>📋 {info.matLabel}</span>
                 )}
-                {canEdit && info?.isLeave && dateKey!=="—" && (grouped[dateKey]||[]).length>0 && (
-                  <button onClick={()=>setCascadeConfirm(dateKey)} title={lang==="zh"?"這堂課沒上到，這裡的教材沒被用過——確認後這筆跟之後每一筆教材都會往後挪一堂":"This class didn't happen — the material here was never used. Confirming shifts it, and everything after it, forward by one session"} style={{fontSize:9,padding:"2px 8px",borderRadius:4,border:"1px solid #7B1FA2",background:"transparent",color:"#7B1FA2",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>
+                {isAdminUser && info?.isLeave && dateKey!=="—" && (grouped[dateKey]||[]).length>0 && (
+                  <button onClick={()=>setShiftTarget({startDate:dateKey,n:1})} title={lang==="zh"?"這堂課沒上到，這裡的教材沒被用過——確認後這筆跟之後每一筆教材都會往後挪一堂":"This class didn't happen — the material here was never used. Confirming shifts it, and everything after it, forward by one session"} style={{fontSize:9,padding:"2px 8px",borderRadius:4,border:"1px solid #7B1FA2",background:"transparent",color:"#7B1FA2",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>
                     ⏭ {lang==="zh"?"確認未使用，教材順延":"Confirm unused, shift forward"}
                   </button>
                 )}
@@ -4965,29 +5099,21 @@ Thank you!`;
               </div>
             </button>
             {!collapsed && (
-              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-                <thead style={{background:"#FAFAFA"}}>
-                  <tr>
-                    {[lang==="zh"?"日期":"Date", lang==="zh"?"時間":"Time", lang==="zh"?"課程":"Course", lang==="zh"?"狀態":"Status", lang==="zh"?"備註":"Note"].map((h,i)=>(
-                      <th key={i} style={{textAlign:"left",padding:"7px 10px",color:"#546E7A",fontWeight:600,borderBottom:"0.5px solid #E0E0E0"}}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((s,i)=>{
-                    const meta = STATUS_META[s.status]||STATUS_META.upcoming;
-                    return (
-                      <tr key={i} style={{borderBottom:"0.5px solid #F0F0F0"}}>
-                        <td style={{padding:"7px 10px",color:"#172F39",whiteSpace:"nowrap"}}>{s.date} ({T[lang].days[s.dayIndex]})</td>
-                        <td style={{padding:"7px 10px",color:"#546E7A",whiteSpace:"nowrap"}}>{s.start}–{addMins(s.start,s.duration)} <span style={{color:"#B0B0B0"}}>({s.duration}{lang==="zh"?"分":"m"})</span></td>
-                        <td style={{padding:"7px 10px",color:"#172F39"}}>{s.course.subject}{s.course.isTrial&&<span style={{marginLeft:5,fontSize:10,background:"#FFFDE7",color:"#F57F17",borderRadius:4,padding:"1px 6px"}}>Trial</span>}</td>
-                        <td style={{padding:"7px 10px"}}><span style={{background:meta.bg,color:meta.color,borderRadius:4,padding:"2px 8px",fontWeight:600,whiteSpace:"nowrap"}}>{meta.label}</span></td>
-                        <td style={{padding:"7px 10px",color:"#9E9E9E"}}>{s.note||"—"}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+              <div>
+                {items.map((s,i)=>{
+                  const meta = STATUS_META[s.status]||STATUS_META.upcoming;
+                  return (
+                    <div key={i} style={{padding:"9px 12px",borderBottom:i<items.length-1?"0.5px solid #F0F0F0":"none",display:"flex",gap:10,alignItems:"flex-start",justifyContent:"space-between"}}>
+                      <div style={{minWidth:0,flex:1}}>
+                        <div style={{fontSize:13,color:"#172F39",fontWeight:600}}>{s.date} ({T[lang].days[s.dayIndex]}) <span style={{fontWeight:400,color:"#546E7A"}}>{s.start}–{addMins(s.start,s.duration)}</span> <span style={{fontWeight:400,color:"#B0B0B0",fontSize:11}}>({s.duration}{lang==="zh"?"分":"m"})</span></div>
+                        <div style={{fontSize:11,color:"#78909C",marginTop:2,wordBreak:"break-word"}}>{s.course.subject}{s.course.isTrial&&<span style={{marginLeft:5,fontSize:10,background:"#FFFDE7",color:"#F57F17",borderRadius:4,padding:"1px 6px"}}>Trial</span>}</div>
+                        {s.note&&<div style={{fontSize:11,color:"#9E9E9E",marginTop:2,wordBreak:"break-word"}}>{s.note}</div>}
+                      </div>
+                      <span style={{background:meta.bg,color:meta.color,borderRadius:4,padding:"3px 9px",fontWeight:600,fontSize:12,whiteSpace:"nowrap",flexShrink:0}}>{meta.label}</span>
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
         );
@@ -4997,8 +5123,8 @@ Thank you!`;
 
   if (!onClose) return content; // legacy standalone-page path (no longer used, kept for safety)
   return (
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9300,padding:"1rem"}}>
-      <div style={{background:"#FFFFFF",borderRadius:16,width:"100%",maxWidth:900,boxSizing:"border-box",maxHeight:"88vh",display:"flex",flexDirection:"column",boxShadow:"0 8px 36px rgba(23,47,57,0.2)",overflow:"hidden"}}>
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9300,padding:"8px"}}>
+      <div style={{background:"#FFFFFF",borderRadius:16,width:"100%",maxWidth:900,boxSizing:"border-box",maxHeight:"94vh",display:"flex",flexDirection:"column",boxShadow:"0 8px 36px rgba(23,47,57,0.2)",overflow:"hidden"}}>
         <div style={{background:"#172F39",padding:"13px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
           <span style={{fontSize:14,fontWeight:600,color:"#fff"}}>📊 {t.teacherStats}</span>
           <button onClick={onClose} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",color:"#fff",fontSize:16}}>×</button>
@@ -11117,7 +11243,7 @@ function StudentClassHistory({ currentUser, enrollments, attendance, courses, us
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
               <span style={{fontSize:12,fontWeight:600,color:"#546E7A",whiteSpace:"nowrap"}}>{moLabel}</span>
               <div style={{flex:1,height:"0.5px",background:"#E0E0E0"}}/>
-              <span style={{fontSize:11,color:"#4CAF50",whiteSpace:"nowrap"}}>✓ {monthCompleted} {lang==="zh"?"堂":""}</span>
+              <span style={{fontSize:11,color:"#4CAF50",whiteSpace:"nowrap"}}>✓ {monthCompleted} {lang==="zh"?"堂（以25分鐘計）":"(25-min units)"}</span>
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:5}}>
               {monthSessions.map((s,i)=>{
