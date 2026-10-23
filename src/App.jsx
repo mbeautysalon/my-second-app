@@ -9285,6 +9285,66 @@ function ClassInfoTemplateEditor({ lang, setToast }) {
   );
 }
 
+// ─── Ending follow-up tracker (admin) ────────────────────────────────────────
+// Once a student's last session has passed, the red "ending soon" alert would
+// normally vanish. Admin still needs to chase renewal, so expired cycles stay
+// here (and in the red banner for FOLLOWUP_BANNER_DAYS) until marked handled.
+const FOLLOWUP_BANNER_DAYS = 30;
+const FOLLOWUP_STATUS = {
+  pending:   {zh:"待追蹤", en:"To follow up", color:"#B71C1C", bg:"#FFEBEE"},
+  contacted: {zh:"已聯繫・等回覆", en:"Contacted", color:"#E65100", bg:"#FFF3E0"},
+  done:      {zh:"已續約", en:"Renewed", color:"#2E7D32", bg:"#E8F5E9"},
+  lost:      {zh:"不續約", en:"Not renewing", color:"#546E7A", bg:"#ECEFF1"},
+};
+function EndingFollowupPanel({ users, courses, enrollments, followups, setFollowups, alertDays, lang }) {
+  const zh = lang==="zh";
+  const [filter, setFilter] = useState("open"); // open | upcoming | closed
+  const all = computeEndingSoon(courses, enrollments, Number(alertDays)||7, {expired:true});
+  const stOf = x => (followups||{})[x.enrollment.id]?.status || "pending";
+  const isOpen = x => x.expired && (stOf(x)==="pending"||stOf(x)==="contacted");
+  const rows = all.filter(x => filter==="upcoming" ? !x.expired : filter==="closed" ? x.expired && !isOpen(x) : isOpen(x));
+  const cnt = { open: all.filter(isOpen).length, upcoming: all.filter(x=>!x.expired).length, closed: all.filter(x=>x.expired && !isOpen(x)).length };
+  const setRec = (id, patch) => setFollowups(prev => ({...(prev||{}), [id]: {...((prev||{})[id]||{}), ...patch, at:new Date().toISOString()}}));
+  const nameOf = id => (users.find(u=>u.id===id)||{}).name || "?";
+  return (
+    <div>
+      <p style={{fontSize:12,color:"#78909C",margin:"0 0 10px"}}>{zh?"課程最後一堂結束後，學生仍會留在這裡（以及最上方紅色提醒 30 天），直到你標記為「已續約」或「不續約」。":"After a student's last session, they stay here (and in the red banner for 30 days) until you mark them Renewed or Not renewing."}</p>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
+        {[["open",zh?"待追蹤（已到期）":"Expired – open"],["upcoming",zh?"即將到期":"Ending soon"],["closed",zh?"已處理":"Handled"]].map(([k,l])=>(
+          <button key={k} onClick={()=>setFilter(k)} style={{padding:"5px 12px",borderRadius:16,border:"0.5px solid "+(filter===k?"#1A6B8A":"#CFD8DC"),background:filter===k?"#1A6B8A":"#fff",color:filter===k?"#fff":"#546E7A",fontSize:12,cursor:"pointer"}}>{l} ({cnt[k]})</button>
+        ))}
+      </div>
+      {rows.length===0 && <div style={{textAlign:"center",color:"#9E9E9E",padding:"2rem 0",fontSize:13}}>—</div>}
+      {rows.map(x=>{
+        const id = x.enrollment.id, rec = (followups||{})[id]||{}, st = x.expired ? stOf(x) : "upcoming";
+        const meta = FOLLOWUP_STATUS[st];
+        return (
+          <div key={id} style={{border:"0.5px solid #E0E0E0",borderRadius:8,padding:"10px 12px",marginBottom:8,background:"#fff"}}>
+            <div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"flex-start",flexWrap:"wrap"}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontWeight:600,fontSize:14,color:"#172F39"}}>{nameOf(x.enrollment.studentId)} <span style={{fontWeight:400,fontSize:12,color:"#78909C"}}>· {x.course.subject}</span></div>
+                <div style={{fontSize:12,color:"#546E7A",marginTop:2}}>{zh?"最後一堂":"Last session"}：{x.lastDate} {x.expired ? <b style={{color:"#B71C1C"}}>{zh?`（已到期 ${x.daysAgo} 天）`:` (expired ${x.daysAgo}d ago)`}</b> : <b style={{color:"#E65100"}}>{zh?`（剩 ${x.daysLeft} 天）`:` (${x.daysLeft}d left)`}</b>}</div>
+              </div>
+              {meta && <span style={{background:meta.bg,color:meta.color,borderRadius:4,padding:"3px 9px",fontSize:12,fontWeight:600,whiteSpace:"nowrap"}}>{zh?meta.zh:meta.en}</span>}
+            </div>
+            {x.expired && (
+              <div style={{marginTop:8}}>
+                <input defaultValue={rec.note||""} onBlur={e=>{ if((e.target.value||"")!==(rec.note||"")) setRec(id,{note:e.target.value}); }} placeholder={zh?"追蹤備註（例如：已 LINE 聯繫，下週回覆）":"Follow-up note"} style={{width:"100%",boxSizing:"border-box",padding:"6px 9px",borderRadius:6,border:"0.5px solid #CFD8DC",fontSize:12,color:"#172F39",background:"#fff"}}/>
+                <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6}}>
+                  {["pending","contacted","done","lost"].map(k=>(
+                    <button key={k} onClick={()=>setRec(id,{status:k})} style={{padding:"4px 10px",borderRadius:5,border:"0.5px solid "+FOLLOWUP_STATUS[k].color,background:st===k?FOLLOWUP_STATUS[k].color:"transparent",color:st===k?"#fff":FOLLOWUP_STATUS[k].color,fontSize:11,cursor:"pointer"}}>{zh?FOLLOWUP_STATUS[k].zh:FOLLOWUP_STATUS[k].en}</button>
+                  ))}
+                </div>
+                {rec.at && <div style={{fontSize:10,color:"#B0BEC5",marginTop:4}}>{zh?"最後更新":"Updated"}：{rec.at.slice(0,16).replace("T"," ")}</div>}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── Recycle bin panel (admin) ───────────────────────────────────────────────
 function RecycleBinPanel({ lang, setToast, courses, setCourses, enrollments, setEnrollments, attendance, setAttendance }) {
   const zh = lang==="zh";
@@ -9350,9 +9410,10 @@ function RecycleBinPanel({ lang, setToast, courses, setCourses, enrollments, set
   );
 }
 
-function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, lang, setToast, introText, setIntroText, feedback, setFeedback, teacherAvailability, setTeacherAvailability, availabilityOverrides, setAvailabilityOverrides, profileChanges, setProfileChanges, onImpersonate, trialApplications, setTrialApplications, englishLevels, setEnglishLevels, learningPurposes, setLearningPurposes, initialTab, currentUser, studentMatSubs, setStudentMatSubs, teacherGuidelines, setTeacherGuidelines }) {
+function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsences, materials, setMaterials, enrollments, setEnrollments, attendance, setAttendance, lang, setToast, introText, setIntroText, feedback, setFeedback, teacherAvailability, setTeacherAvailability, availabilityOverrides, setAvailabilityOverrides, profileChanges, setProfileChanges, onImpersonate, trialApplications, setTrialApplications, englishLevels, setEnglishLevels, learningPurposes, setLearningPurposes, initialTab, currentUser, studentMatSubs, setStudentMatSubs, teacherGuidelines, setTeacherGuidelines, endingFollowups, setEndingFollowups, endingAlertDays }) {
   const t = T[lang];
   const [tab, setTab] = useState(initialTab || "courses");
+  const openFollowupCount = computeEndingSoon(courses, enrollments, Number(endingAlertDays)||7, {expired:true}).filter(x=>x.expired && !["done","lost"].includes((endingFollowups||{})[x.enrollment.id]?.status)).length;
   const pendingFbCount = (feedback||[]).filter(f=>f.status==="pending").length;
   const pendingChangeCount = (profileChanges||[]).filter(c=>c.status==="pending").length;
   const pendingTrialCount = (trialApplications||[]).filter(a=>a.status==="pending").length;
@@ -9361,6 +9422,7 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
   const tabs = [
     {key:"courses", label:t.courses},
     {key:"enroll",  label:t.enrollments},
+    {key:"followup", label:lang==="zh"?"📌 到期追蹤":"📌 Renewal Follow-up", badge:openFollowupCount},
     {key:"leave",   label:t.leaveReview},
     {key:"feedback",label:t.feedbackCenterTitle, badge:pendingFbCount},
     {key:"matedit", label:lang==="zh"?"教材編輯審核":"Material Edit Review", badge:pendingMatEditCount},
@@ -9400,6 +9462,7 @@ function AdminPanel({ users, setUsers, courses, setCourses, absences, setAbsence
       {tab==="sstats" &&<StudentStats users={users} courses={courses} absences={absences} attendance={attendance} enrollments={enrollments} setEnrollments={setEnrollments} lang={lang}/>}
       {tab==="studentOverview" &&<AdminStudentOverview currentUser={currentUser} users={users} courses={courses} enrollments={enrollments} materials={materials} setMaterials={setMaterials} feedback={feedback} setFeedback={setFeedback} attendance={attendance} absences={absences} lang={lang} setToast={setToast}/>}
       {tab==="recycle"&&<RecycleBinPanel lang={lang} setToast={setToast} courses={courses} setCourses={setCourses} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance}/>}
+      {tab==="followup"&&<EndingFollowupPanel users={users} courses={courses} enrollments={enrollments} followups={endingFollowups||{}} setFollowups={setEndingFollowups} alertDays={endingAlertDays} lang={lang}/>}
       {tab==="classinfo"&&<ClassInfoTemplateEditor lang={lang} setToast={setToast}/>}
       {tab==="teacherGuidelines"&&<TeacherGuidelinesEditor teacherGuidelines={teacherGuidelines} setTeacherGuidelines={setTeacherGuidelines} lang={lang} setToast={setToast}/>}
       {tab==="settings"&&<SiteSettings introText={introText} setIntroText={setIntroText} lang={lang} setToast={setToast}/>}
@@ -9458,7 +9521,8 @@ function AssistantPanel({ users, setUsers, courses, setCourses, materials, setMa
 // (and hasn't ended yet). Skips discontinued enrollments, archived courses,
 // trial lessons, and cycles already renewed by a later enrollment for the
 // same student + course. Sorted soonest-ending first.
-function computeEndingSoon(courses, enrollments, withinDays) {
+function computeEndingSoon(courses, enrollments, withinDays, opts) {
+  const wantExpired = !!(opts && opts.expired); // also return cycles whose last session already ended (for follow-up tracking)
   const now = Date.now();
   const lastEndOf = (enr, course) => {
     let best = null;
@@ -9480,12 +9544,14 @@ function computeEndingSoon(courses, enrollments, withinDays) {
     const renewed = (enrollments||[]).some(o => o.id!==enr.id && o.courseId===enr.courseId && o.studentId===enr.studentId
       && o.status!=="discontinued" && (lastEndOf(o, course)||0) > end);
     if (renewed) return;
+    const lastDate = [...(enr.scheduledDates||[])].map(x=>x.date).sort().slice(-1)[0];
     if (end > now && end - now <= withinDays*86400000) {
-      const lastDate = [...(enr.scheduledDates||[])].map(x=>x.date).sort().slice(-1)[0];
-      list.push({ enrollment: enr, course, endMs: end, lastDate, daysLeft: Math.ceil((end-now)/86400000) });
+      list.push({ enrollment: enr, course, endMs: end, lastDate, daysLeft: Math.ceil((end-now)/86400000), expired:false });
+    } else if (wantExpired && end <= now) {
+      list.push({ enrollment: enr, course, endMs: end, lastDate, daysLeft: 0, daysAgo: Math.floor((now-end)/86400000), expired:true });
     }
   });
-  return list.sort((a,b)=>a.endMs-b.endMs);
+  return list.sort((a,b)=>a.expired===b.expired ? (a.expired ? b.endMs-a.endMs : a.endMs-b.endMs) : (a.expired?1:-1));
 }
 
 function computeMissingFeedback(courses, enrollments, feedback, attendance, absences) {
@@ -13195,6 +13261,7 @@ export default function App() {
   const [introText,setIntroText,introLoaded]=useStorage("cp3_intro_text","");
   const [teacherGuidelines,setTeacherGuidelines]=useStorage("cp3_teacher_guidelines","");
   const [endingAlertDays,setEndingAlertDays]=useStorage("cp3_ending_alert_days",7);
+  const [endingFollowups,setEndingFollowups]=useStorage("cp3_ending_followup",{});
   // Trial-lesson applications submitted from the public login page, plus the
   // two admin-editable dropdown option lists used on that form.
   const [trialApplications,setTrialApplications,trialLoaded]=useStorage("cp3_trial_applications",[]);
@@ -13240,7 +13307,9 @@ export default function App() {
     ? computeMissingFeedback(courses, enrollments, feedback, attendance, absences).filter(m => isTeacherRole ? m.course.teacherId===currentUser.id : true)
     : [];
   const endingSoonList = isAdmin ? computeEndingSoon(courses, enrollments, Number(endingAlertDays)||7) : [];
-  const goToEnrollmentReminder = () => { setActiveTab("admin"); setAdminInitialTab("enroll"); };
+  // Cycles whose last session already ended: stay in the banner (up to FOLLOWUP_BANNER_DAYS) until admin marks them Renewed / Not renewing
+  const endedFollowList = isAdmin ? computeEndingSoon(courses, enrollments, 0, {expired:true}).filter(x=>x.expired && x.daysAgo<=FOLLOWUP_BANNER_DAYS && !["done","lost"].includes((endingFollowups||{})[x.enrollment.id]?.status)) : [];
+  const goToEnrollmentReminder = () => { setActiveTab("admin"); setAdminInitialTab("followup"); };
   const goToFeedbackReminder = () => {
     if (isAdmin) { setActiveTab("admin"); setAdminInitialTab("feedback"); }
     else if (isAssistant) { setActiveTab("assistant"); }
@@ -13321,16 +13390,23 @@ export default function App() {
           </button>
         </div>
       )}
-      {endingSoonList.length > 0 && (
+      {(endingSoonList.length > 0 || endedFollowList.length > 0) && (
         <div style={{background:"#B71C1C",color:"#fff",padding:"8px 1.25rem",fontSize:13,borderBottom:"2px solid #FF8A80",boxSizing:"border-box"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,flexWrap:"wrap",fontWeight:700}}>
-            <span>🚨 {lang==="zh"?`${endingSoonList.length} 位學生的課程即將結束，請盡快聯繫續約`:`${endingSoonList.length} student course(s) ending soon — follow up on renewal`}</span>
+            <span>🚨 {lang==="zh"?`${endingSoonList.length>0?`${endingSoonList.length} 位學生的課程即將結束`:""}${endingSoonList.length>0&&endedFollowList.length>0?"、":""}${endedFollowList.length>0?`${endedFollowList.length} 位已到期待追蹤`:""}，請盡快聯繫續約`:`${endingSoonList.length} ending soon${endedFollowList.length>0?`, ${endedFollowList.length} expired & awaiting follow-up`:""} — follow up on renewal`}</span>
             <button onClick={goToEnrollmentReminder} style={{background:"#fff",color:"#B71C1C",border:"none",borderRadius:5,padding:"3px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>{lang==="zh"?"前往處理 →":"Go →"}</button>
             <select value={endingAlertDays} onChange={e=>setEndingAlertDays(Number(e.target.value))} title={lang==="zh"?"提前提醒天數":"Alert window"} style={{fontSize:12,borderRadius:5,border:"none",padding:"3px 6px",background:"#fff",color:"#B71C1C",fontWeight:600,colorScheme:"light"}}>
               {[3,7,10,14,21].map(n=><option key={n} value={n} style={{color:"#172F39",background:"#fff"}}>{lang==="zh"?`提前 ${n} 天`:`${n} days ahead`}</option>)}
             </select>
           </div>
           <div style={{display:"flex",flexWrap:"wrap",justifyContent:"center",gap:6,marginTop:6}}>
+            {endedFollowList.map(x=>(
+              <span key={x.enrollment.id} style={{background:"#FFEB3B",color:"#7F0000",borderRadius:12,padding:"2px 6px 2px 10px",fontSize:12,fontWeight:600,whiteSpace:"nowrap",display:"inline-flex",alignItems:"center",gap:6}}>
+                {(users.find(u=>u.id===x.enrollment.studentId)||{}).name||"?"}（{x.lastDate}{lang==="zh"?`・已到期 ${x.daysAgo} 天`:`, expired ${x.daysAgo}d`}）
+                <button onClick={()=>setEndingFollowups(prev=>({...(prev||{}),[x.enrollment.id]:{...((prev||{})[x.enrollment.id]||{}),status:"contacted",at:new Date().toISOString()}}))} title={lang==="zh"?"標記為已聯繫":"Mark contacted"} style={{display:(endingFollowups||{})[x.enrollment.id]?.status==="contacted"?"none":"inline",background:"#7F0000",color:"#fff",border:"none",borderRadius:8,fontSize:10,padding:"1px 6px",cursor:"pointer"}}>{lang==="zh"?"已聯繫":"Contacted"}</button>
+                {(endingFollowups||{})[x.enrollment.id]?.status==="contacted" && <span style={{fontSize:10}}>{lang==="zh"?"✓已聯繫":"✓ contacted"}</span>}
+              </span>
+            ))}
             {endingSoonList.map(x=>(
               <span key={x.enrollment.id} style={{background:"rgba(255,255,255,0.18)",borderRadius:12,padding:"2px 10px",fontSize:12,fontWeight:500,whiteSpace:"nowrap"}}>
                 {(users.find(u=>u.id===x.enrollment.studentId)||{}).name||"?"}（{x.lastDate}{lang==="zh"?`・剩 ${x.daysLeft} 天`:`, ${x.daysLeft}d left`}）
@@ -13380,7 +13456,7 @@ export default function App() {
         {isAdmin && (
           <div className="es-content-card" style={{background:"#FFFFFF",borderRadius:14,border:"0.5px solid #E0E0E0",boxShadow:"0 2px 12px rgba(23,47,57,0.06)",padding:"1.5rem"}}>
             {activeTab==="schedule"&&<ScheduleView currentUser={currentUser} users={users} courses={courses} lang={lang} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} setToast={setToast} feedback={feedback} setFeedback={setFeedback}/>}
-            {activeTab==="admin"&&<AdminPanel users={users} setUsers={setUsers} courses={courses} setCourses={setCourses} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} lang={lang} setToast={setToast} introText={introText} setIntroText={setIntroText} feedback={feedback} setFeedback={setFeedback} teacherAvailability={teacherAvailability} setTeacherAvailability={setTeacherAvailability} availabilityOverrides={availabilityOverrides} setAvailabilityOverrides={setAvailabilityOverrides} profileChanges={profileChanges} setProfileChanges={setProfileChanges} onImpersonate={startImpersonating} trialApplications={trialApplications} setTrialApplications={setTrialApplications} englishLevels={englishLevels} setEnglishLevels={setEnglishLevels} learningPurposes={learningPurposes} setLearningPurposes={setLearningPurposes} initialTab={adminInitialTab} currentUser={currentUser} studentMatSubs={studentMatSubs} setStudentMatSubs={setStudentMatSubs} teacherGuidelines={teacherGuidelines} setTeacherGuidelines={setTeacherGuidelines}/>}
+            {activeTab==="admin"&&<AdminPanel users={users} setUsers={setUsers} courses={courses} setCourses={setCourses} absences={absences} setAbsences={setAbsences} materials={materials} setMaterials={setMaterials} enrollments={enrollments} setEnrollments={setEnrollments} attendance={attendance} setAttendance={setAttendance} lang={lang} setToast={setToast} introText={introText} setIntroText={setIntroText} feedback={feedback} setFeedback={setFeedback} teacherAvailability={teacherAvailability} setTeacherAvailability={setTeacherAvailability} availabilityOverrides={availabilityOverrides} setAvailabilityOverrides={setAvailabilityOverrides} profileChanges={profileChanges} setProfileChanges={setProfileChanges} onImpersonate={startImpersonating} trialApplications={trialApplications} setTrialApplications={setTrialApplications} englishLevels={englishLevels} setEnglishLevels={setEnglishLevels} learningPurposes={learningPurposes} setLearningPurposes={setLearningPurposes} initialTab={adminInitialTab} currentUser={currentUser} studentMatSubs={studentMatSubs} setStudentMatSubs={setStudentMatSubs} teacherGuidelines={teacherGuidelines} setTeacherGuidelines={setTeacherGuidelines} endingFollowups={endingFollowups} setEndingFollowups={setEndingFollowups} endingAlertDays={endingAlertDays}/>}
           </div>
         )}
 
