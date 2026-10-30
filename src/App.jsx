@@ -501,7 +501,7 @@ const TRIAL_COLOR = {bg:"#FFFDE7",border:"#F9A825",text:"#F57F17"};
 // Bumped whenever a meaningful set of changes ships. Shown low-key on the
 // login page so version can be confirmed at a glance; also called out
 // whenever a new file is delivered.
-const APP_VERSION = "v1.2.9.5";
+const APP_VERSION = "v1.2.9.7";
 
 const genId = () => "id_" + Math.random().toString(36).slice(2,9);
 
@@ -1121,6 +1121,42 @@ async function materialShiftLogWrite(list) {
   try { await window.storage.set("cp3_material_shift_log", JSON.stringify(list.slice(0,60))); return true; } catch { return false; }
 }
 
+// A leave counts as "approved" only once admin/assistant has recorded it
+// (attendance type excused / teacher_leave). A self-reported leave request
+// that nobody has reviewed yet (absences entry only) does NOT qualify.
+function isApprovedLeaveDate(course, date, enrollments, attendance) {
+  const ids = new Set((enrollments||[]).filter(e=>e.courseId===course.id).map(e=>e.id));
+  return (attendance||[]).some(a => ids.has(a.enrollmentId) && a.date===date && (a.type==="excused"||a.type==="teacher_leave"));
+}
+const canUseMaterialShift = u => u?.role==="admin" || u?.role==="assistant";
+// Reads the shift log; `reload()` after the modal closes so "already shifted" is current.
+function useMaterialShiftLog() {
+  const [log, setLog] = useState([]);
+  const reload = () => { materialShiftLogRead().then(setLog); };
+  useEffect(()=>{ reload(); },[]);
+  return [log, reload];
+}
+// Shown inside the class-info window: approved leave + unused material on that
+// date + not shifted yet → one button that opens the normal 教材順延 modal.
+function LeaveShiftPrompt({ course, date, materials, setMaterials, enrollments, attendance, absences, feedback, currentUser, lang, setToast }) {
+  const zh = lang==="zh";
+  const [log, reload] = useMaterialShiftLog();
+  const [open, setOpen] = useState(false);
+  if (!canUseMaterialShift(currentUser) || !date) return null;
+  if (!isApprovedLeaveDate(course, date, enrollments, attendance)) return null;
+  if (!(materials||[]).some(m => m.courseId===course.id && m.date===date)) return null;
+  if (log.some(l => l.courseId===course.id && l.startDate===date)) return null;
+  return (
+    <>
+      <div style={{background:"#F3E5F5",border:"1px solid #CE93D8",borderRadius:8,padding:"9px 12px",marginBottom:12,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+        <span style={{fontSize:12,color:"#4A148C",flex:1,minWidth:150}}>{zh?"這堂課已核准請假，當天的教材沒有被使用。要順延嗎？":"This class's leave is approved and its material went unused. Shift it forward?"}</span>
+        <button onClick={()=>setOpen(true)} style={{fontSize:12,fontWeight:600,padding:"5px 12px",borderRadius:6,border:"none",background:"#7B1FA2",color:"#fff",cursor:"pointer",whiteSpace:"nowrap"}}>⏭ {zh?"教材順延":"Shift materials"}</button>
+      </div>
+      {open && <MaterialShiftModal course={course} startDate={date} presetN={1} materials={materials} setMaterials={setMaterials} enrollments={enrollments} attendance={attendance} absences={absences} feedback={feedback} currentUser={currentUser} lang={lang} setToast={setToast} onClose={()=>{ setOpen(false); reload(); }}/>}
+    </>
+  );
+}
+
 function MaterialShiftModal({ course, startDate:presetStart, presetN, materials, setMaterials, enrollments, attendance, absences, feedback, currentUser, lang, setToast, onClose }) {
   const zh = lang==="zh";
   const courseMats = (materials||[]).filter(m => m.courseId===course.id && m.date);
@@ -1138,7 +1174,7 @@ function MaterialShiftModal({ course, startDate:presetStart, presetN, materials,
   const wd = d => T[lang].days[(new Date(d+"T00:00:00").getDay()+6)%7];
   const errText = e => e==="none" ? (zh?"後面沒有排課了":"No session left") : e==="leave" ? (zh?"落點是請假日":"Lands on a leave day") : (zh?"落點已上完":"Lands on a past class");
 
-  if (currentUser?.role!=="admin") return null; // admin only
+  if (!canUseMaterialShift(currentUser)) return null; // admin / assistant only
 
   const execute = async () => {
     if (!plan || plan.blocked || busy) return;
@@ -1328,7 +1364,8 @@ function MaterialPanel({ course, initialDate, users, lang, currentUser, material
 
   // 教材順延 (admin only) — opens MaterialShiftModal. `shiftTarget` = {startDate, n} or {} for "pick it yourself".
   const [shiftTarget, setShiftTarget] = useState(null);
-  const isAdminUser = currentUser.role==="admin";
+  const isAdminUser = canUseMaterialShift(currentUser);
+  const [shiftLog, reloadShiftLog] = useMaterialShiftLog();
 
   // ── filter / sort state ──
   // initialDate: "YYYY-MM-DD" for one specific class occurrence, or null (show all)
@@ -1480,7 +1517,7 @@ function MaterialPanel({ course, initialDate, users, lang, currentUser, material
           </div>
         );
       })()}
-      {shiftTarget && isAdminUser && <MaterialShiftModal course={course} startDate={shiftTarget.startDate} presetN={shiftTarget.n} materials={materials} setMaterials={setMaterials} enrollments={enrollments} attendance={attendance} absences={absences} feedback={feedback} currentUser={currentUser} lang={lang} setToast={setToast} onClose={()=>setShiftTarget(null)}/>}
+      {shiftTarget && isAdminUser && <MaterialShiftModal course={course} startDate={shiftTarget.startDate} presetN={shiftTarget.n} materials={materials} setMaterials={setMaterials} enrollments={enrollments} attendance={attendance} absences={absences} feedback={feedback} currentUser={currentUser} lang={lang} setToast={setToast} onClose={()=>{ setShiftTarget(null); reloadShiftLog(); }}/>}
       <div style={{background:"#FFFFFF",borderRadius:"18px 18px 0 0",width:"100%",maxWidth:560,maxHeight:"90vh",display:"flex",flexDirection:"column",boxSizing:"border-box"}}>
 
         {/* ── Header ── */}
@@ -1610,7 +1647,7 @@ function MaterialPanel({ course, initialDate, users, lang, currentUser, material
                 {info?.matLabel && (
                   <span title={lang==="zh"?"老師反饋回報的教材狀況":"Material status reported via teacher feedback"} style={{fontSize:9,background:"#EEF6FB",color:"#1A6B8A",borderRadius:4,padding:"1px 7px",fontWeight:600,whiteSpace:"nowrap"}}>📋 {info.matLabel}</span>
                 )}
-                {isAdminUser && info?.isLeave && dateKey!=="—" && (grouped[dateKey]||[]).length>0 && (
+                {isAdminUser && dateKey!=="—" && (grouped[dateKey]||[]).length>0 && isApprovedLeaveDate(course, dateKey, enrollments, attendance) && !shiftLog.some(l=>l.courseId===course.id && l.startDate===dateKey) && (
                   <button onClick={()=>setShiftTarget({startDate:dateKey,n:1})} title={lang==="zh"?"這堂課沒上到，這裡的教材沒被用過——確認後這筆跟之後每一筆教材都會往後挪一堂":"This class didn't happen — the material here was never used. Confirming shifts it, and everything after it, forward by one session"} style={{fontSize:9,padding:"2px 8px",borderRadius:4,border:"1px solid #7B1FA2",background:"transparent",color:"#7B1FA2",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>
                     ⏭ {lang==="zh"?"確認未使用，教材順延":"Confirm unused, shift forward"}
                   </button>
@@ -1696,7 +1733,7 @@ function pickGreetingIndex(list, seedStr) {
   return (h >>> 0) % list.length;
 }
 
-function CourseDetailModal({ course, dayIndex, date, sessionNo, users, lang, materials, setMaterials, onClose, currentUser, enrollments, attendance, absences, setToast }) {
+function CourseDetailModal({ course, dayIndex, date, sessionNo, users, lang, materials, setMaterials, onClose, currentUser, enrollments, attendance, absences, setToast, feedback }) {
   const t = T[lang];
   const teacher = users.find(u=>u.id===course.teacherId);
   const student  = users.find(u=>u.id===course.studentId);
@@ -1849,6 +1886,7 @@ ${tpl.footer}`;
         </div>
 
         <div style={{padding:"16px 18px"}}>
+          <LeaveShiftPrompt course={course} date={date} materials={materials} setMaterials={setMaterials} enrollments={enrollments} attendance={attendance} absences={absences} feedback={feedback} currentUser={currentUser} lang={lang} setToast={setToast}/>
           {/* Info grid */}
           {[
             {icon:"📅", label: lang==="zh"?"日期":"Date",      val: classDate},
@@ -2055,7 +2093,7 @@ function SlotCalendarView({ slots, users, lang, currentUser, absences, materials
   return (
     <div style={{overflowX:"auto"}}>
       {matTarget&&<MaterialPanel course={matTarget.course} initialDate={matTarget.date} users={users} lang={lang} currentUser={currentUser} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setMatTarget(null)} enrollments={enrollments} attendance={attendance} absences={absences} feedback={feedback}/>}
-      {detTarget&&<CourseDetailModal course={detTarget.course} dayIndex={detTarget.dayIndex} date={detTarget.date} sessionNo={detTarget.sessionNo} users={users} lang={lang} materials={materials} setMaterials={setMaterials} onClose={()=>setDetTarget(null)} currentUser={currentUser} enrollments={enrollments} attendance={attendance} absences={absences} setToast={setToast}/>}
+      {detTarget&&<CourseDetailModal course={detTarget.course} dayIndex={detTarget.dayIndex} date={detTarget.date} sessionNo={detTarget.sessionNo} users={users} lang={lang} materials={materials} setMaterials={setMaterials} onClose={()=>setDetTarget(null)} currentUser={currentUser} enrollments={enrollments} attendance={attendance} absences={absences} setToast={setToast} feedback={feedback}/>}
       {adminEditTarget&&<AdminSessionModal slot={adminEditTarget} users={users} lang={lang} attendance={attendance||[]} setAttendance={setAttendance} enrollments={enrollments||[]} setEnrollments={setEnrollments} courses={courses||[]} setToast={setToast} onClose={()=>setAdminEditTarget(null)}/>}
       {fbTarget&&<FeedbackModal slot={fbTarget} currentUser={currentUser} users={users} lang={lang} feedback={feedback||[]} setFeedback={setFeedback} setToast={setToast} onClose={()=>setFbTarget(null)} readOnly={isStudent}/>}
       <div style={{minWidth:520}}>
@@ -2639,7 +2677,7 @@ function SlotCourseCard({ slot, colorIdx, users, lang, currentUser, absences, ma
 
   return (
     <>
-      {showDetail&&<CourseDetailModal course={course} dayIndex={dayIndex} date={date} sessionNo={sessionNo} users={users} lang={lang} materials={materials} setMaterials={setMaterials} onClose={()=>setShowDetail(false)} currentUser={currentUser} enrollments={enrollments} attendance={attendance} absences={absences} setToast={setToast}/>}
+      {showDetail&&<CourseDetailModal course={course} dayIndex={dayIndex} date={date} sessionNo={sessionNo} users={users} lang={lang} materials={materials} setMaterials={setMaterials} onClose={()=>setShowDetail(false)} currentUser={currentUser} enrollments={enrollments} attendance={attendance} absences={absences} setToast={setToast} feedback={feedback}/>}
       {showMat&&<MaterialPanel course={course} initialDate={matInitDate} users={users} lang={lang} currentUser={currentUser} materials={materials} setMaterials={setMaterials} setToast={setToast} onClose={()=>setShowMat(false)} enrollments={enrollments} attendance={attendance} absences={absences} feedback={feedback}/>}
       {showAdminEdit&&<AdminSessionModal slot={slot} users={users} lang={lang} attendance={attendance||[]} setAttendance={setAttendance} enrollments={enrollments||[]} setEnrollments={setEnrollments} courses={courses||[]} setToast={setToast} onClose={()=>setShowAdminEdit(false)}/>}
       {showFeedback&&<FeedbackModal slot={slot} currentUser={currentUser} users={users} lang={lang} feedback={feedback||[]} setFeedback={setFeedback} setToast={setToast} onClose={()=>setShowFeedback(false)} readOnly={isStudent}/>}
@@ -10678,45 +10716,149 @@ function LoginPage({ onLogin, lang, setLang, users, setUsers, introText, trialAp
   const submitTrial = (data) => {
     setTrialApplications(prev => [...prev, { id:genId(), ...data, status:"pending", submittedAt:new Date().toISOString() }]);
   };
+  // Welcome message = the admin-editable `introText` (unchanged data source).
+  // If its last line looks like a sign-off ("- John"), show that line as the attribution.
+  const introLines = (introText||"").replace(/\s+$/,"").split("\n");
+  const lastLine = introLines.length>1 ? introLines[introLines.length-1] : "";
+  const hasAttribution = /^\s*[-–—~]\s*\S/.test(lastLine);
+  const welcomeBody = (hasAttribution ? introLines.slice(0,-1) : introLines).join("\n").trim();
+  const welcomeAuthor = hasAttribution ? lastLine.trim() : "";
+  const zh = lang==="zh";
   return (
-    <div style={{minHeight:"100vh",background:"#172F39",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:"system-ui, -apple-system, sans-serif",padding:"2rem"}}>
-      <button onClick={()=>setLang(lang==="zh"?"en":"zh")} style={{position:"absolute",top:"1.5rem",right:"1.5rem",background:"rgba(26,107,138,0.15)",border:"1px solid rgba(26,107,138,0.4)",color:"#1A6B8A",borderRadius:"6px",padding:"6px 14px",cursor:"pointer",fontSize:"13px"}}>{t.langToggle}</button>
-      <div style={{marginBottom:"1.25rem",textAlign:"center"}}>
-        <div style={{width:56,height:56,borderRadius:14,background:"#1A6B8A",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 1rem",fontSize:26}}>📚</div>
-        <h1 style={{color:"#FFFFFF",fontSize:22,fontWeight:500,margin:0}}>{t.appName}</h1>
+    <div className="es-login">
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap');
+        .es-login{min-height:100vh;display:flex;font-family:Inter,"Noto Sans TC",system-ui,-apple-system,sans-serif;color:#343C42;position:relative;background:#F5F4EF}
+        .es-login *{box-sizing:border-box}
+        .es-login h1,.es-login h2,.es-login .es-display{font-family:"Plus Jakarta Sans","Noto Sans TC",Inter,system-ui,sans-serif}
+        .es-left{flex:0 0 48%;background:#1F3948;color:#F5F4EF;position:relative;overflow:hidden;display:flex;flex-direction:column;padding:48px 56px;animation:es-fade .6s ease-out both}
+        .es-right{flex:1 1 52%;background:#F5F4EF;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:72px 32px 56px;gap:18px;position:relative}
+        .es-brand{display:flex;align-items:center;gap:14px;position:relative;z-index:2}
+        .es-logo{width:48px;height:48px;border-radius:12px;background:#31566B;border:1px solid rgba(155,189,179,0.45);display:flex;align-items:center;justify-content:center;font-size:23px}
+        .es-brand-name{font-size:19px;font-weight:600;color:#fff;line-height:1.25;margin:0;letter-spacing:.2px}
+        .es-brand-sub{font-size:12px;color:#9BBDB3;letter-spacing:1.6px;text-transform:uppercase;margin-top:2px}
+        .es-welcome{flex:1;display:flex;flex-direction:column;justify-content:center;max-width:460px;position:relative;z-index:2;padding:40px 0}
+        .es-welcome-bar{width:36px;height:3px;border-radius:2px;background:#E9B989;margin-bottom:22px}
+        .es-welcome-text{font-size:22px;line-height:1.7;color:#F5F4EF;white-space:pre-wrap;margin:0;font-weight:400}
+        .es-welcome-author{font-size:15px;color:#9BBDB3;margin-top:16px;text-align:right}
+        .es-deco{position:absolute;pointer-events:none;z-index:1}
+        .es-float-a{animation:es-float 8s ease-in-out infinite}
+        .es-float-b{animation:es-float 10s ease-in-out infinite reverse}
+        .es-float-c{animation:es-float 7s ease-in-out infinite}
+        .es-card{width:100%;max-width:420px;background:#fff;border:1px solid #E5E9E8;border-radius:16px;padding:40px;box-shadow:0 2px 14px rgba(31,57,72,0.06);animation:es-rise .5s ease-out .1s both}
+        .es-card h2{font-size:24px;font-weight:700;color:#31566B;margin:0 0 6px}
+        .es-card .es-sub{font-size:14px;color:#87939A;margin:0 0 26px;line-height:1.5}
+        .es-label{display:block;font-size:13px;font-weight:500;color:#343C42;margin-bottom:6px}
+        .es-input{width:100%;height:46px;padding:0 14px;font-size:15px;font-family:inherit;color:#343C42;background:#fff;border:1px solid #D5DCDB;border-radius:8px;outline:none;transition:border-color .18s,box-shadow .18s}
+        .es-input:focus{border-color:#31566B;box-shadow:0 0 0 3px rgba(49,86,107,0.18)}
+        .es-btn{width:100%;height:50px;border:none;border-radius:8px;background:#31566B;color:#fff;font-size:15px;font-weight:600;font-family:inherit;cursor:pointer;transition:background .18s,transform .18s}
+        .es-btn:hover:not(:disabled){background:#264559;transform:translateY(-1px)}
+        .es-btn:focus-visible,.es-trial:focus-visible,.es-lang:focus-visible{outline:2px solid #31566B;outline-offset:2px}
+        .es-btn:disabled{background:#9AA7AD;cursor:not-allowed}
+        .es-err{color:#B3402F;font-size:13px;margin:0 0 14px;text-align:center}
+        .es-hint{color:#87939A;font-size:11px;text-align:center;margin:18px 0 0;line-height:1.5}
+        .es-trial{background:transparent;border:1px solid #31566B;border-radius:8px;color:#31566B;padding:10px 20px;font-size:14px;font-weight:500;font-family:inherit;cursor:pointer;display:inline-flex;align-items:center;gap:8px;transition:background .18s,transform .18s}
+        .es-trial:hover{background:rgba(49,86,107,0.07);transform:translateY(-1px)}
+        .es-lang{position:absolute;top:24px;right:28px;z-index:5;background:transparent;border:1px solid #31566B;color:#31566B;border-radius:8px;padding:6px 14px;font-size:13px;font-family:inherit;cursor:pointer;transition:background .18s}
+        .es-lang:hover{background:rgba(49,86,107,0.08)}
+        .es-ver{position:absolute;bottom:12px;right:16px;color:#87939A;font-size:10px;letter-spacing:.3px}
+        @keyframes es-fade{from{opacity:0}to{opacity:1}}
+        @keyframes es-rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes es-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+        @media (max-width:1024px){.es-left{padding:40px 36px}.es-welcome-text{font-size:20px}}
+        @media (max-width:820px){
+          .es-login{flex-direction:column}
+          .es-left{flex:0 0 auto;padding:62px 22px 26px}
+          .es-float-a,.es-float-b,.es-float-c{display:none}
+          .es-welcome{padding:22px 0 0;max-width:none}
+          .es-welcome-bar{margin-bottom:14px}
+          .es-welcome-text{font-size:18px;line-height:1.6}
+          .es-welcome-author{font-size:14px;margin-top:10px}
+          .es-right{flex:1 0 auto;padding:28px 16px 48px;justify-content:flex-start}
+          .es-card{padding:28px 22px}
+          .es-lang{top:16px;right:16px;border-color:rgba(245,244,239,0.55);color:#F5F4EF}
+          .es-lang:hover{background:rgba(245,244,239,0.12)}
+          .es-lang:focus-visible{outline-color:#F5F4EF}
+          .es-ver{color:#87939A}
+        }
+        @media (prefers-reduced-motion:reduce){
+          .es-left,.es-card{animation:none}
+          .es-float-a,.es-float-b,.es-float-c{animation:none}
+          .es-btn,.es-trial,.es-input,.es-lang{transition:none}
+          .es-btn:hover:not(:disabled),.es-trial:hover{transform:none}
+        }
+      `}</style>
+
+      <button className="es-lang" onClick={()=>setLang(lang==="zh"?"en":"zh")}>{t.langToggle}</button>
+
+      {/* ── Left: brand + the existing, admin-editable welcome message ── */}
+      <div className="es-left">
+        {/* low-opacity decorative shapes (pure SVG/CSS) */}
+        <svg className="es-deco" style={{right:-70,bottom:-70,opacity:0.16}} width="360" height="360" viewBox="0 0 360 360" fill="none" aria-hidden="true">
+          <circle cx="180" cy="180" r="170" stroke="#9BBDB3" strokeWidth="1"/>
+          <circle cx="180" cy="180" r="120" stroke="#9BBDB3" strokeWidth="1"/>
+          <circle cx="180" cy="180" r="70" stroke="#9BBDB3" strokeWidth="1"/>
+        </svg>
+        <svg className="es-deco es-float-a" style={{right:70,top:110,opacity:0.22}} width="120" height="90" viewBox="0 0 120 90" fill="none" stroke="#9BBDB3" strokeWidth="1.4" aria-hidden="true">
+          <path d="M8 18c18-8 36-8 52 2v58c-16-10-34-10-52-2V18z"/><path d="M112 18c-18-8-36-8-52 2v58c16-10 34-10 52-2V18z"/>
+        </svg>
+        <svg className="es-deco es-float-b" style={{left:44,bottom:120,opacity:0.2}} width="110" height="70" viewBox="0 0 110 70" fill="none" stroke="#9BBDB3" strokeWidth="1.4" aria-hidden="true">
+          <path d="M6 8h58a6 6 0 016 6v22a6 6 0 01-6 6H34l-14 12V42H6a6 6 0 01-6-6V14a6 6 0 016-6z" transform="translate(4 0)"/>
+          <circle cx="92" cy="52" r="5" fill="#E9B989" stroke="none"/>
+        </svg>
+        <svg className="es-deco" style={{right:90,top:260,opacity:0.18}} width="150" height="150" viewBox="0 0 150 150" fill="none" aria-hidden="true">
+          <circle cx="20" cy="30" r="4" fill="#9BBDB3"/><circle cx="110" cy="20" r="3" fill="#E9B989"/><circle cx="75" cy="95" r="5" fill="#9BBDB3"/><circle cx="130" cy="120" r="3" fill="#9BBDB3"/>
+          <path d="M20 30L75 95L110 20M75 95L130 120" stroke="#9BBDB3" strokeWidth="1"/>
+        </svg>
+        <div className="es-deco es-float-c" style={{left:"46%",top:"58%",width:10,height:10,borderRadius:"50%",background:"#E9B989",opacity:0.5}}/>
+
+        <div className="es-brand">
+          <div className="es-logo">📚</div>
+          <div>
+            <h1 className="es-brand-name">{t.appName}</h1>
+            <div className="es-brand-sub">ENJOY STUDY</div>
+          </div>
+        </div>
+
+        {welcomeBody && (
+          <div className="es-welcome">
+            <div className="es-welcome-bar"/>
+            <p className="es-welcome-text">{welcomeBody}</p>
+            {welcomeAuthor && <div className="es-welcome-author">{welcomeAuthor}</div>}
+          </div>
+        )}
       </div>
 
-      {/* ── Admin-editable intro / announcement block ── */}
-      {introText && introText.trim() && !showTrial && (
-        <div style={{maxWidth:420,width:"100%",textAlign:"center",color:"rgba(255,255,255,0.75)",fontSize:13,lineHeight:1.7,marginBottom:"1.5rem",padding:"0 1rem",whiteSpace:"pre-wrap"}}>
-          {introText}
-        </div>
-      )}
-
-      {showTrial ? (
-        <TrialApplicationForm englishLevels={englishLevels} learningPurposes={learningPurposes} onSubmit={submitTrial} onBack={()=>setShowTrial(false)} lang={lang}/>
-      ) : (
-        <>
-          {/* ── Login card — shrunk ~20% and shifted down relative to the title/intro above ── */}
-          <div style={{background:"#FFFFFF",borderRadius:13,border:"1px solid rgba(26,107,138,0.25)",boxShadow:"0 4px 24px rgba(23,47,57,0.15)",padding:"1.6rem",width:"100%",maxWidth:288,marginTop:"0.5rem"}}>
-            <div style={{marginBottom:"0.8rem"}}>
-              <label style={{display:"block",fontSize:11,color:"#546E7A",marginBottom:5}}>{t.username}</label>
-              <input value={u} onChange={e=>setU(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()} style={{width:"100%",boxSizing:"border-box",background:"#FAFAFA",border:"1px solid rgba(26,107,138,0.25)",borderRadius:7,color:"#172F39",padding:"8px 10px",fontSize:12,outline:"none"}}/>
-            </div>
-            <div style={{marginBottom:"1.2rem"}}>
-              <label style={{display:"block",fontSize:11,color:"#546E7A",marginBottom:5}}>{t.password}</label>
-              <input type="password" value={p} onChange={e=>setP(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()} style={{width:"100%",boxSizing:"border-box",background:"#FAFAFA",border:"1px solid rgba(26,107,138,0.25)",borderRadius:7,color:"#172F39",padding:"8px 10px",fontSize:12,outline:"none"}}/>
-            </div>
-            {err&&<p style={{color:"#F0A0A0",fontSize:11,margin:"0 0 0.8rem",textAlign:"center"}}>{err}</p>}
-            <button onClick={go} disabled={checking} style={{width:"100%",background:checking?"#9E9E9E":"#1A6B8A",border:"none",borderRadius:7,color:"#fff",padding:"9px",fontSize:13,fontWeight:500,cursor:checking?"not-allowed":"pointer"}}>{checking?(lang==="zh"?"驗證中…":"Checking…"):t.loginBtn}</button>
-            <p style={{color:"rgba(255,255,255,0.5)",fontSize:10,textAlign:"center",marginTop:"0.8rem",marginBottom:0}}>admin/admin123 · teacher1/pass123 · student1/pass123</p>
+      {/* ── Right: login card / trial form (logic unchanged) ── */}
+      <div className="es-right">
+        {showTrial ? (
+          <div style={{animation:"es-rise .5s ease-out both",width:"100%",display:"flex",justifyContent:"center"}}>
+            <TrialApplicationForm englishLevels={englishLevels} learningPurposes={learningPurposes} onSubmit={submitTrial} onBack={()=>setShowTrial(false)} lang={lang}/>
           </div>
-          <button onClick={()=>setShowTrial(true)} style={{marginTop:16,background:"rgba(255,255,255,0.08)",border:"1px solid rgba(255,255,255,0.25)",borderRadius:8,color:"#fff",padding:"9px 20px",fontSize:13,cursor:"pointer",fontWeight:500}}>
-            📝 {lang==="zh"?"申請免費試聽課程":"Apply for a Free Trial Lesson"}
-          </button>
-        </>
-      )}
-      <div style={{position:"fixed",bottom:10,right:14,color:"rgba(255,255,255,0.25)",fontSize:10,letterSpacing:0.3}}>{APP_VERSION}</div>
+        ) : (
+          <>
+            <div className="es-card">
+              <h2>{zh?"歡迎回來":"Welcome Back"}</h2>
+              <p className="es-sub">{zh?"登入以進入您的學習平台。":"Sign in to access your learning portal."}</p>
+              <div style={{marginBottom:16}}>
+                <label className="es-label" htmlFor="es-user">{t.username}</label>
+                <input id="es-user" className="es-input" autoComplete="username" value={u} onChange={e=>setU(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()}/>
+              </div>
+              <div style={{marginBottom:22}}>
+                <label className="es-label" htmlFor="es-pass">{t.password}</label>
+                <input id="es-pass" className="es-input" type="password" autoComplete="current-password" value={p} onChange={e=>setP(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()}/>
+              </div>
+              {err&&<p className="es-err" role="alert">{err}</p>}
+              <button className="es-btn" onClick={go} disabled={checking}>{checking?(zh?"驗證中…":"Checking…"):t.loginBtn}</button>
+            </div>
+            <button className="es-trial" onClick={()=>setShowTrial(true)}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg>
+              {zh?"申請免費試聽課程":"Apply for a Free Trial Lesson"}
+            </button>
+          </>
+        )}
+        <div className="es-ver">{APP_VERSION}</div>
+      </div>
     </div>
   );
 }
